@@ -1,0 +1,41 @@
+{
+  "DISPLAY": {
+    "WIDTH": 800,
+    "HEIGHT": 480,
+    "FPS": 20,
+    "AA": false,
+    "ANIMATION": true,
+    "SHOW_FPS": false,
+    "SHOW_API_STATS": true,
+    "MOUSE": false
+  },
+  "WEATHERBIT_URL": "https://api.weatherbit.io/v2.0",
+  "WEATHERBIT_IO_KEY": "xxxxxxxxxxxxxxxxxxxxxxxxx",
+  "WEATHERBIT_COUNTRY": "de",
+  "WEATHERBIT_LANGUAGE": "en",
+  "WEATHERBIT_POSTALCODE": 14057,
+  "WEATHERBIT_HOURS": 1,
+  "WEATHERBIT_DAYS": 4,
+  "LOCALE": {
+    "ISO": "en_GB",
+    "RAIN_STR": "Rain",
+    "SNOW_STR": "Snow",
+    "PRECIP_STR": "Precipitation",
+    "METRIC": true
+  },
+  "BVG": {
+    "DEPARTURE_ID": "xxxxxxx",
+    "DIRECTION_ID": "yyyyyyy",
+    "LINE": "ABC",
+    "DURATION": 30
+  },
+  "THEME": "themes/example.json",
+  "TIMER": {
+    "WEATHER_UPDATE": 1800,
+    "WEATHER_RELOAD": 600,
+    "BVG_UPDATE": 15,
+    "DISPLAY_BLANK": 120
+  },
+  "ENV": "Pi",
+  "LOG_TO_FILES": false
+}
