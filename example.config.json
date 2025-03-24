@@ -24,8 +24,8 @@
     "METRIC": true
   },
   "BVG": {
-    "DEPARTURE_ID": "xxxxxxx",
-    "DIRECTION_ID": "yyyyyyy",
+    "DEPARTURE_ID": "XXXXXXXXX",
+    "DIRECTION_ID": "YYYYYYYYY",
     "LINE": "ABC",
     "DURATION": 30
   },

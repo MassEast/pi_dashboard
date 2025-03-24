@@ -95,7 +95,7 @@ and edit it using, e.g., `nano config.json`.
 #### Display options
 Our display is 800x480 (resp. 480x800, depending on how you turn it). These are the default settings in the example config file.
 Further options explained:
-- As long as you configure a 3:4 ratio, the dashboard will be scaled
+- As long as you configure a 3:4 ratio, the Dashboard will be scaled
 - `FPS` is used for pygame internal ticks - 30 fps is more than enough to render clock transitions and precipitation
 animations smoothly
 - `AA` turns antialiasing on and off (leave it on a Pi Zero off, it is performance heavy on higher FPS)
@@ -128,13 +128,14 @@ is from berlin city, germany)
 #### Settings for BVG (public transport in Berlin)
 ```json
   "BVG": {
-    "API_ENDPOINT": "https://v6.bvg.transport.rest/stops/900024151/departures",
-    "DIRECTION": "900024104",
+    "DEPARTURE_ID": "XXXXXXXXX",
+    "DIRECTION_ID": "YYYYYYYYY",
+    "LINE": "ABC",
     "DURATION": 30
-  },
+  }
 ```
-As of now, the Dashboard is designed to show one specific bus connection (the one closest to me). You can adjust this in the code as much as you want,
-but via the config here, you can select which bus this is. You can find the IDs as I did in `dev/bvg_departures.ipynb`. `DURATION` determines how many minutes into the future you check.
+As of now, the Dashboard is designed to show one specific connection (I chose the bus line stopping close my home, because that's the one I regularly check whenever I am leaving). In the config, you can set the departure station (`DEPARTURE_ID`) and direction (`DIRECTION_ID`) to find connections into the correct
+direction. Finally, you can filter this for the specific `LINE` you are interested in and how far you want to calculate into the future (DURATION). You can find the BVG IDs as I did in `dev/bvg_departures.ipynb` notebook.
 
 #### Theme file and options
 Set your theme file [darcula.json, light.json or example.json] in `config.json` via
@@ -180,9 +181,9 @@ xset dpms 60 60 60
 tmux set-environment -g DISPLAY $DISPLAY
 ```
 to enable the screen blanking in this session. Then, activate the venv in the `pi_dashboard` folder (`source venv/bin/activate`)
-and start the dashboard (`python3 PiDashboard.py`).
+and start the Dashboard (`python3 PiDashboard.py`).
 
-Then tmux disconnect (ctrlB + ctrlD) from that window and the dashboard will keep running if disconnected from ssh.
+Then tmux disconnect (ctrlB + ctrlD) from that window and the Dashboard will keep running if disconnected from ssh.
 
 
 ## TODO: Setting up the Dashboard as a Service
