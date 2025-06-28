@@ -6,23 +6,69 @@
     "SUNRISE_SUNSET": "%H:%M"
   },
   "COLOR": {
-    "BACKGROUND": [0, 0, 0],
-    "MAIN_FONT": [255, 255, 255],
-    "BLACK": [0, 0, 0],
-    "DARK_GRAY": [43, 43, 43],
-    "WHITE": [255, 255, 255],
-    "RED": [231, 76, 60],
-    "GREEN": [39, 174, 96],
-    "BLUE": [52, 152, 219],
-    "YELLOW": [241, 196, 15],
-    "ORANGE": [247, 147, 29],
-    "VIOLET": [186, 85, 211]
+    "BACKGROUND": [
+      0,
+      0,
+      0
+    ],
+    "MAIN_FONT": [
+      255,
+      255,
+      255
+    ],
+    "BLACK": [
+      0,
+      0,
+      0
+    ],
+    "DARK_GRAY": [
+      43,
+      43,
+      43
+    ],
+    "WHITE": [
+      255,
+      255,
+      255
+    ],
+    "RED": [
+      231,
+      76,
+      60
+    ],
+    "GREEN": [
+      39,
+      174,
+      96
+    ],
+    "BLUE": [
+      52,
+      152,
+      219
+    ],
+    "YELLOW": [
+      241,
+      196,
+      15
+    ],
+    "ORANGE": [
+      247,
+      147,
+      29
+    ],
+    "VIOLET": [
+      186,
+      85,
+      211
+    ]
   },
   "FONT": {
     "MEDIUM": "Roboto-Medium.ttf",
     "BOLD": "Roboto-Bold.ttf",
     "DATE_SIZE": 14,
     "CLOCK_SIZE": 30,
+    "SUPER_TINY_SIZE": 6,
+    "TINY_SIZE": 8,
     "SMALL_SIZE": 14,
     "BIG_SIZE": 30
   }
