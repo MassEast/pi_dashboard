@@ -100,17 +100,16 @@ METRIC = config["LOCALE"]["METRIC"]
 locale.setlocale(locale.LC_ALL, (config["LOCALE"]["ISO"], "UTF-8"))
 
 BVG_DEPARTURE_ID = config["BVG"]["DEPARTURE_ID"]
-BVG_DIRECTION_ID = config["BVG"]["DIRECTION_ID"]
+BVG_DIRECTION_ID_LEFT = config["BVG"]["DIRECTION_ID_LEFT"]
+BVG_DIRECTION_ID_RIGHT = config["BVG"]["DIRECTION_ID_RIGHT"]
 BVG_LINE = config["BVG"]["LINE"]
 BVG_DURATION = config["BVG"]["DURATION"]
 
 WEATHER_THREADS = []
 BVG_THREADS = []
 
-UPDATED_BVG_TIME = time.time()
-BVG_STOP_INFORMATION = pd.DataFrame(
-    columns=["type", "line", "departure", "delay", "direction"]
-)
+UPDATED_BVG_TIME = None
+BVG_STOP_INFORMATION = pd.DataFrame(columns=["type", "line", "departure", "delay", "direction"])
 
 LAST_TOUCH_TIME = time.time()
 DISPLAY_BLANK_AFTER = config["TIMER"]["DISPLAY_BLANK"]
@@ -127,6 +126,9 @@ try:
 
     elif config["ENV"] == "STAGE":
         WEATHERBIT_IO_KEY = config["WEATHERBIT_DEV_KEY"]
+        # Note: In this mode, we are not using any weather updates from API,
+        #  but instead simply showing the latest data from
+        #  logs/latest_weather.json.
 
     elif config["ENV"] == "Pi":
         LOG_PATH = "/mnt/ramdisk/"
@@ -217,9 +219,7 @@ if SCALE != 1:
         SURFACE_HEIGHT = int(320 * ZOOM)
         logger.info(f"surface correction caused by bigger display")
 
-    logger.info(
-        f"SURFACE_WIDTH: {SURFACE_WIDTH} SURFACE_HEIGHT: {SURFACE_HEIGHT} ZOOM: {ZOOM}"
-    )
+    logger.info(f"SURFACE_WIDTH: {SURFACE_WIDTH} SURFACE_HEIGHT: {SURFACE_HEIGHT} ZOOM: {ZOOM}")
 
 FIT_SCREEN = (
     int((DISPLAY_WIDTH - SURFACE_WIDTH) / 2),
@@ -270,9 +270,13 @@ FONT_MEDIUM = theme["FONT"]["MEDIUM"]
 FONT_BOLD = theme["FONT"]["BOLD"]
 DATE_SIZE = int(theme["FONT"]["DATE_SIZE"] * ZOOM)
 CLOCK_SIZE = int(theme["FONT"]["CLOCK_SIZE"] * ZOOM)
+SUPER_TINY_SIZE = int(theme["FONT"]["SUPER_TINY_SIZE"] * ZOOM)
+TINY_SIZE = int(theme["FONT"]["TINY_SIZE"] * ZOOM)
 SMALL_SIZE = int(theme["FONT"]["SMALL_SIZE"] * ZOOM)
 BIG_SIZE = int(theme["FONT"]["BIG_SIZE"] * ZOOM)
 
+FONT_SUPER_TINY = pygame.font.Font(FONT_PATH + FONT_MEDIUM, SUPER_TINY_SIZE)
+FONT_TINY = pygame.font.Font(FONT_PATH + FONT_MEDIUM, TINY_SIZE)
 FONT_SMALL = pygame.font.Font(FONT_PATH + FONT_MEDIUM, SMALL_SIZE)
 FONT_SMALL_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, SMALL_SIZE)
 FONT_BIG = pygame.font.Font(FONT_PATH + FONT_MEDIUM, BIG_SIZE)
@@ -350,9 +354,7 @@ class Particles(object):
                     pygame.draw.rect(self.surf, PRECIPCOLOR, (x, y, 2, 2), 0)
 
                 # Move the snow flake down one pixel
-                particle_list[i][1] += (
-                    speed if PRECIPTYPE == config["LOCALE"]["RAIN_STR"] else 1
-                )
+                particle_list[i][1] += speed if PRECIPTYPE == config["LOCALE"]["RAIN_STR"] else 1
                 if random.choice([True, False]):
                     if PRECIPTYPE == config["LOCALE"]["SNOW_STR"]:
                         particle_list[i][0] += 1 if direct else 0
@@ -428,9 +430,7 @@ class DrawString:
 
 
 class DrawImage:
-    def __init__(
-        self, surf, image=Image, y=None, size=None, fillcolor=None, angle=None
-    ):
+    def __init__(self, surf, image=Image, y=None, size=None, fillcolor=None, angle=None):
         """
         :param image: image from the image_factory()
         :param y: the y-position of the image you want to render
@@ -454,17 +454,13 @@ class DrawImage:
             else:
                 width, height = (int(self.size / width * height), self.size)
 
-            new_image = self.image.resize(
-                (width, height), Image.LANCZOS if AA else Image.BILINEAR
-            )
+            new_image = self.image.resize((width, height), Image.LANCZOS if AA else Image.BILINEAR)
             self.image = new_image
             self.img_size = new_image.size
 
         self.fillcolor = fillcolor
 
-        self.image = pygame.image.fromstring(
-            self.image.tobytes(), self.image.size, self.image.mode
-        )
+        self.image = pygame.image.fromstring(self.image.tobytes(), self.image.size, self.image.mode)
 
     @staticmethod
     def fill(surface, fillcolor: tuple):
@@ -518,11 +514,7 @@ class DrawImage:
     def draw_middle_position_icon(self):
 
         position_x = int(
-            (
-                SURFACE_WIDTH
-                - ((SURFACE_WIDTH / 3) / 2)
-                - (self.image.get_rect()[2] / 2)
-            )
+            (SURFACE_WIDTH - ((SURFACE_WIDTH / 3) / 2) - (self.image.get_rect()[2] / 2))
         )
 
         position_y = int((self.y - (self.image.get_rect()[3] / 2)))
@@ -569,15 +561,13 @@ class WeatherUpdate(object):
 
         global WEATHER_THREADS, CONNECTION_ERROR, CONNECTION
 
-        thread = threading.Timer(
-            config["TIMER"]["WEATHER_UPDATE"], WeatherUpdate.update_json
-        )
+        thread = threading.Timer(config["TIMER"]["WEATHER_UPDATE"], WeatherUpdate.update_json)
 
         thread.start()
 
         WEATHER_THREADS.append(thread)
 
-        if DISPLAY_BLANK:
+        if DISPLAY_BLANK or config["ENV"] == "STAGE":
             return
 
         CONNECTION = pygame.time.get_ticks() + 1500  # 1.5 seconds
@@ -598,9 +588,7 @@ class WeatherUpdate(object):
                 f"&units={units}"
             )
 
-            current_request_url = str(
-                f"{current_endpoint}?key={WEATHERBIT_IO_KEY}{options}"
-            )
+            current_request_url = str(f"{current_endpoint}?key={WEATHERBIT_IO_KEY}{options}")
             daily_request_url = str(
                 f"{daily_endpoint}?key={WEATHERBIT_IO_KEY}{options}&days={WEATHERBIT_DAYS}"
             )
@@ -628,8 +616,7 @@ class WeatherUpdate(object):
             CONNECTION_ERROR = True
 
             logger.warning(
-                "Failed updating latest_weather.json."
-                f"weatherbit connection ERROR: {update_ex}"
+                "Failed updating latest_weather.json." f"weatherbit connection ERROR: {update_ex}"
             )
 
     @staticmethod
@@ -637,9 +624,7 @@ class WeatherUpdate(object):
 
         global WEATHER_THREADS, WEATHER_JSON_DATA, REFRESH_ERROR, READING
 
-        thread = threading.Timer(
-            config["TIMER"]["WEATHER_RELOAD"], WeatherUpdate.read_json
-        )
+        thread = threading.Timer(config["TIMER"]["WEATHER_RELOAD"], WeatherUpdate.read_json)
 
         thread.start()
 
@@ -831,31 +816,27 @@ class WeatherUpdate(object):
             fillcolor=RED if PATH_ERROR else GREEN,
         ).right(-5)
 
-        DrawImage(new_surf, images[WEATHERICON], 68, size=100).center(2, 0, offset=10)
+        DrawImage(new_surf, images[WEATHERICON], 43, size=100).center(2, 0, offset=10)
 
         if not ANIMATION:
             if PRECIPTYPE == config["LOCALE"]["RAIN_STR"]:
 
-                DrawImage(new_surf, images["preciprain"], size=20).draw_position(
-                    pos=(155, 140)
-                )
+                DrawImage(new_surf, images["preciprain"], size=20).draw_position(pos=(155, 140))
 
             elif PRECIPTYPE == config["LOCALE"]["SNOW_STR"]:
 
-                DrawImage(new_surf, images["precipsnow"], size=20).draw_position(
-                    pos=(155, 140)
-                )
+                DrawImage(new_surf, images["precipsnow"], size=20).draw_position(pos=(155, 140))
 
-        DrawImage(new_surf, images[FORECASTICON_DAY_1], 195, size=50).center(3, 0)
-        DrawImage(new_surf, images[FORECASTICON_DAY_2], 195, size=50).center(3, 1)
-        DrawImage(new_surf, images[FORECASTICON_DAY_3], 195, size=50).center(3, 2)
+        DrawImage(new_surf, images[FORECASTICON_DAY_1], 157, size=50).center(3, 0)
+        DrawImage(new_surf, images[FORECASTICON_DAY_2], 157, size=50).center(3, 1)
+        DrawImage(new_surf, images[FORECASTICON_DAY_3], 157, size=50).center(3, 2)
 
-        DrawImage(new_surf, images["sunrise"], 255, size=20).left()
-        DrawImage(new_surf, images["sunset"], 275, size=20).left()
+        DrawImage(new_surf, images["sunrise"], 215, size=20).left()
+        DrawImage(new_surf, images["sunset"], 235, size=20).left()
 
-        draw_wind_layer(new_surf, current_forecast["wind_dir"], 265)
+        draw_wind_layer(new_surf, current_forecast["wind_dir"], 225)
 
-        draw_moon_layer(new_surf, int(255 * ZOOM), int(42 * ZOOM))
+        draw_moon_layer(new_surf, int(215 * ZOOM), int(42 * ZOOM))
 
         # draw all the strings
         if config["DISPLAY"]["SHOW_API_STATS"]:
@@ -863,36 +844,30 @@ class WeatherUpdate(object):
                 new_surf, str(stats_data["calls_remaining"]), FONT_SMALL_BOLD, BLUE, 20
             ).right(offset=-5)
 
-        DrawString(new_surf, summary_string, FONT_SMALL_BOLD, VIOLET, 50).center(1, 0)
+        # DrawString(new_surf, summary_string, FONT_SMALL_BOLD, VIOLET, 50).center(1, 0)
+        # Ignoring the summary string for now (like "Scattered clouds")
 
-        DrawString(new_surf, temp_out_string, FONT_BIG, ORANGE, 75).right()
+        DrawString(new_surf, temp_out_string, FONT_BIG, ORANGE, 50).right()
 
-        DrawString(new_surf, precip_string, FONT_BIG, PRECIPCOLOR, 105).right()
-        DrawString(new_surf, PRECIPTYPE, FONT_SMALL_BOLD, PRECIPCOLOR, 140).right()
+        DrawString(new_surf, precip_string, FONT_BIG, PRECIPCOLOR, 80).right()
+        # Ignoring the "Precipitation" label for now
+        # DrawString(new_surf, PRECIPTYPE, FONT_SMALL_BOLD, PRECIPCOLOR, 140).right()
 
-        DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 160).center(3, 0)
-        DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 160).center(3, 1)
-        DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 160).center(3, 2)
+        DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 123).center(3, 0)
+        DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 123).center(3, 1)
+        DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 123).center(3, 2)
 
-        DrawString(
-            new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 175
-        ).center(3, 0)
-        DrawString(
-            new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 175
-        ).center(3, 1)
-        DrawString(
-            new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 175
-        ).center(3, 2)
+        DrawString(new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 138).center(3, 0)
+        DrawString(new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 138).center(3, 1)
+        DrawString(new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 138).center(3, 2)
 
-        DrawString(new_surf, sunrise, FONT_SMALL_BOLD, MAIN_FONT, 258).left(30)
-        DrawString(new_surf, sunset, FONT_SMALL_BOLD, MAIN_FONT, 277).left(30)
+        DrawString(new_surf, sunrise, FONT_SMALL_BOLD, MAIN_FONT, 218).left(30)
+        DrawString(new_surf, sunset, FONT_SMALL_BOLD, MAIN_FONT, 237).left(30)
 
         # DrawString(new_surf, wind_direction, FONT_SMALL_BOLD, MAIN_FONT, 250).center(
         #     3, 2
         # )
-        DrawString(
-            new_surf, wind_speed_string, FONT_SMALL_BOLD, MAIN_FONT, 277
-        ).center(3, 2)
+        DrawString(new_surf, wind_speed_string, FONT_SMALL_BOLD, MAIN_FONT, 237).center(3, 2)
 
         weather_surf = new_surf
 
@@ -912,9 +887,7 @@ class WeatherUpdate(object):
         # remove the ended timer and weather threads
         global WEATHER_THREADS
         WEATHER_THREADS = [t for t in WEATHER_THREADS if t.is_alive()]
-        logging.info(
-            f"WEATHER_THREADS cleaned: {len(WEATHER_THREADS)} left in the queue"
-        )
+        logging.info(f"WEATHER_THREADS cleaned: {len(WEATHER_THREADS)} left in the queue")
 
         pygame.time.delay(1500)
         UPDATING = pygame.time.get_ticks() + 1500  # 1.5 seconds
@@ -959,7 +932,11 @@ class BVGUpdate(object):
 
         try:
             UPDATED_BVG_TIME, BVG_STOP_INFORMATION = get_stop_data(
-                BVG_DEPARTURE_ID, BVG_DIRECTION_ID, BVG_LINE, BVG_DURATION
+                BVG_DEPARTURE_ID,
+                BVG_DIRECTION_ID_LEFT,
+                BVG_DIRECTION_ID_RIGHT,
+                BVG_LINE,
+                BVG_DURATION,
             )
             # CONNECTION_ERROR = False
         except (requests.HTTPError, requests.ConnectionError) as update_ex:
@@ -976,21 +953,23 @@ class BVGUpdate(object):
         new_surf.set_colorkey(BACKGROUND)
         logger.info("Creating BVG surface")
 
-        # pygame.draw.line(new_surf, ORANGE, (10, 295), (230, 295), 1) # Doesn't scale well
-        DrawImage(
-            new_surf, images["bus"], 303, size=10
-        ).left()  # TODO: make this image variable here according to lane (resp. ask for it in the config file)
-        DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 300).left(12)
-        bvg_print = ""
         # Clear of cancelled stops
         if "cancelled" in BVG_STOP_INFORMATION.columns:
-            BVG_STOP_INFORMATION = BVG_STOP_INFORMATION[
-                ~BVG_STOP_INFORMATION["cancelled"]
-            ]
-        if len(BVG_STOP_INFORMATION) > 0:
-            # Print closest two connections
+            BVG_STOP_INFORMATION = BVG_STOP_INFORMATION[~BVG_STOP_INFORMATION["cancelled"]]
+
+        # Draw a line of bus information for direction to the left
+        DrawImage(new_surf, images["arrow"], 262, size=13, fillcolor=RED, angle=90).left(-3)
+        DrawImage(new_surf, images["bus"], 263, size=10).left(
+            10
+        )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+        DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 260).left(22)
+        bvg_print = ""
+        # Print closest two connections for each direction
+        if len(BVG_STOP_INFORMATION) and len(
+            results_left := BVG_STOP_INFORMATION[BVG_STOP_INFORMATION["direction_str"] == "left"]
+        ):
             departures_reported = 0
-            for _, departure in BVG_STOP_INFORMATION.iterrows():
+            for _, departure in results_left.iterrows():
                 if departures_reported >= 2:
                     break
                 delay = departure["delay"]
@@ -1006,23 +985,49 @@ class BVGUpdate(object):
         else:
             bvg_print = "none :("
 
-        DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 300).left(60)
-        DrawImage(new_surf, images["haltestelle"], 303, size=10).right()
+        DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 260).left(60)
+        DrawImage(new_surf, images["haltestelle"], 263, size=10).right()
 
-        # TODO: there is more space? add JW msg and latest bus API update time
-        # jw_msg = "JW likes you. Have a nice day!"
-        # actuality_msg = "API actuality: {}".format(
-        #     convert_timestamp(updated_time, "%H:%M:%S")
-        # )
-        # # show update on .right()?
-        # # add updated smybol 🔄
-        # DrawString(jw_msg, font_small, WHITE, 395).left(35)
-        # DrawString(actuality_msg, font_small, WHITE, 430).left(490)
+        # Perform same stuff for the right direction
+        DrawImage(new_surf, images["arrow"], 282, size=13, fillcolor=RED, angle=-90).left(-3)
+        DrawImage(new_surf, images["bus"], 283, size=10).left(
+            10
+        )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+        DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 280).left(22)
+        bvg_print = ""
+        # Print closest two connections for each direction
+        if len(BVG_STOP_INFORMATION) and len(
+            results_right := BVG_STOP_INFORMATION[BVG_STOP_INFORMATION["direction_str"] == "right"]
+        ):
+            departures_reported = 0
+            for _, departure in results_right.iterrows():
+                if departures_reported >= 2:
+                    break
+                delay = departure["delay"]
+                if delay > 0:
+                    delay = f"+{delay}'"
+                elif delay < 0:
+                    delay = f"{delay}'"
+                else:
+                    delay = ""
+                and_print = ", " if departures_reported > 0 else ""
+                bvg_print += f"{and_print}{departure['departure']}{delay}"
+                departures_reported += 1
+        else:
+            bvg_print = "none :("
 
-        # DrawImage(new_surf, images["bus"], 300, size=20).left()
+        DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 280).left(60)
+        DrawImage(new_surf, images["haltestelle"], 283, size=10).right()
 
-        # DrawString(new_surf, sunrise, FONT_SMALL_BOLD, MAIN_FONT, 263).left(30)
-        # DrawString(new_surf, sunset, FONT_SMALL_BOLD, MAIN_FONT, 282).left(30)
+        # Extra information
+        jw_msg = "JW likes you. Have a nice day!"
+        if UPDATED_BVG_TIME is not None:
+            actuality_msg = "BVG API: {}".format(convert_timestamp(UPDATED_BVG_TIME, "%H:%M:%S"))
+        else:
+            actuality_msg = "BVG API: no data"
+        DrawString(new_surf, jw_msg, FONT_TINY, WHITE, 307).left()
+        DrawImage(new_surf, images["refresh"], 308, size=10, fillcolor=YELLOW).right(55)
+        DrawString(new_surf, actuality_msg, FONT_SUPER_TINY, WHITE, 310).right(-3)
 
         bvg_surf = new_surf
 
@@ -1063,9 +1068,7 @@ def convert_timestamp(timestamp, param_string):
     :return: a converted string from timestamp
     """
     timestring = str(
-        datetime.datetime.fromtimestamp(int(timestamp))
-        .astimezone()
-        .strftime(param_string)
+        datetime.datetime.fromtimestamp(int(timestamp)).astimezone().strftime(param_string)
     )
 
     return timestring
@@ -1089,9 +1092,7 @@ def draw_moon_layer(surf, y, size):
     _size = 1000
     dt = datetime.datetime.fromtimestamp(WEATHER_JSON_DATA["daily"]["data"][0]["ts"])
     moon_age = (
-        ((dt.year - 11) % 19) * 11
-        + [0, 2, 0, 2, 2, 4, 5, 6, 7, 8, 9, 10][dt.month - 1]
-        + dt.day
+        ((dt.year - 11) % 19) * 11 + [0, 2, 0, 2, 2, 4, 5, 6, 7, 8, 9, 10][dt.month - 1] + dt.day
     ) % 30
 
     image = Image.new("RGBA", (_size + 2, _size + 2))
@@ -1137,9 +1138,7 @@ def draw_moon_layer(surf, y, size):
 
 def draw_wind_layer(surf, angle, y):
     # center the wind direction icon and circle on surface
-    DrawImage(
-        surf, images["circle"], y, size=20, fillcolor=WHITE
-    ).draw_middle_position_icon()
+    DrawImage(surf, images["circle"], y, size=20, fillcolor=WHITE).draw_middle_position_icon()
     DrawImage(
         surf, images["arrow"], y, size=20, fillcolor=RED, angle=-angle
     ).draw_middle_position_icon()
@@ -1167,9 +1166,7 @@ def draw_statusbar():
 
 
 def draw_fps():
-    DrawString(
-        dynamic_surf, str(int(clock.get_fps())), FONT_SMALL_BOLD, RED, 20
-    ).left()
+    DrawString(dynamic_surf, str(int(clock.get_fps())), FONT_SMALL_BOLD, RED, 20).left()
 
 
 # TODO: make this useful for touch events
@@ -1183,16 +1180,14 @@ def draw_event(color=RED):
         int(pos[0] - FIT_SCREEN[0] - (radius * ZOOM)),
         int(pos[1] - FIT_SCREEN[1] - (radius * ZOOM)),
     )
-    DrawImage(
-        mouse_surf, images["circle"], size=size, fillcolor=color
-    ).draw_absolut_position(new_pos)
+    DrawImage(mouse_surf, images["circle"], size=size, fillcolor=color).draw_absolut_position(
+        new_pos
+    )
 
 
 def create_scaled_surf(surf, aa=False):
     if aa:
-        scaled_surf = pygame.transform.smoothscale(
-            surf, (SURFACE_WIDTH, SURFACE_HEIGHT)
-        )
+        scaled_surf = pygame.transform.smoothscale(surf, (SURFACE_WIDTH, SURFACE_HEIGHT))
     else:
         scaled_surf = pygame.transform.scale(surf, (SURFACE_WIDTH, SURFACE_HEIGHT))
 
