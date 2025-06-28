@@ -4,11 +4,16 @@ import requests
 
 
 def get_stop_data(
-    departure_id="900024151", direction_id="900024104", line="M49", duration=30
+    departure_id="900024151",
+    direction_id_left="900024104",
+    direction_id_right="900024106",
+    line="M49",
+    duration=30,
 ):
     """
-    Returns stop data for a given departure, direction, and line for the next
-    selected minutes.
+    Returns stop data for a given departure, left and right directions, and
+    line for the next selected minutes.
+    TODO: look back into the past a bit? possible?
     """
 
     # API endpoint
@@ -16,21 +21,12 @@ def get_stop_data(
 
     # Query parameters (customize as needed)
     params = {
-        "direction": direction_id,  # Optional: Filter departures by a specific direction
+        # "when": datetime.datetime.now().isoformat(),  # Current time # TODO: substract 1min!
         "duration": duration,  # Show departures for the next selected minutes
         "remarks": True,  # Include warnings and hints
         "language": "en",  # Language of the results
         "pretty": True,  # Pretty-print JSON responses
     }
-
-    # Send GET request
-    response = requests.get(url, params=params)
-
-    # Check if the request was successful
-    if response.status_code == 200:
-        data = response.json()  # Parse JSON response
-    else:
-        raise requests.HTTPError(f"Error: {response.status_code} - {response.text}")
 
     result = {
         "type": [],
@@ -38,29 +34,45 @@ def get_stop_data(
         "departure": [],
         "delay": [],
         "direction": [],
+        "direction_str": [],
         "cancelled": [],
     }
 
-    for connection in data["departures"]:
-
-        if connection["line"]["name"] != line:
+    for direction_str, direction_id in zip(
+        ["left", "right"], [direction_id_left, direction_id_right]
+    ):
+        if direction_id is None:
             continue
+        params["direction"] = direction_id  # Optional: Filter departures by a specific direction
 
-        result["type"].append(connection["line"]["productName"])  # e.g., "Bus"
-        result["line"].append(connection["line"]["name"])
-        result["departure"].append(
-            datetime.datetime.fromisoformat(connection["plannedWhen"]).strftime(
-                "%H:%M"
-            )
-        )
-        delay = 0 if connection["delay"] is None else connection["delay"]
-        delay /= 60
-        result["delay"].append(int(delay))  # it's not finer than minutes anyway‚
-        result["direction"].append(connection["direction"])
-        if "cancelled" in connection:
-            result["cancelled"].append(connection["cancelled"])
+        # Send GET request
+        response = requests.get(url, params=params)
+
+        # Check if the request was successful
+        if response.status_code == 200:
+            data = response.json()  # Parse JSON response
         else:
-            result["cancelled"].append(False)
+            raise requests.HTTPError(f"Error: {response.status_code} - {response.text}")
+
+        for connection in data["departures"]:
+
+            if connection["line"]["name"] != line:
+                continue
+
+            result["type"].append(connection["line"]["productName"])  # e.g., "Bus"
+            result["line"].append(connection["line"]["name"])
+            result["departure"].append(
+                datetime.datetime.fromisoformat(connection["plannedWhen"]).strftime("%H:%M")
+            )
+            delay = 0 if connection["delay"] is None else connection["delay"]
+            delay /= 60
+            result["delay"].append(int(delay))  # it's not finer than minutes anyway‚
+            result["direction"].append(connection["direction"])
+            result["direction_str"].append(direction_str)
+            if "cancelled" in connection:
+                result["cancelled"].append(connection["cancelled"])
+            else:
+                result["cancelled"].append(False)
 
     updated_at_timestamp = data["realtimeDataUpdatedAt"]
 
