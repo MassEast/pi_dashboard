@@ -132,11 +132,12 @@ is from berlin city, germany)
     "DIRECTION_ID_LEFT": "YYYYYYYYY",
     "DIRECTION_ID_RIGHT": "ZZZZZZZZZ",
     "LINE": "ABC",
-    "DURATION": 30
+    "LOOKAHEAD_MIN": 30,
+    "LOOKBACK_MIN": 5
   }
 ```
 As of now, the Dashboard is designed to show one specific connection (I chose the bus line stopping close my home, because that's the one I regularly check whenever I am leaving), for both directions. Here, "left" means when looking at the device, the street behind that goes to the left is the direction that bus takes. This turned out to be convenient for visitors (likewise for right). In the config, you can set the departure station (`DEPARTURE_ID`) and directions (`DIRECTION_ID`) to find connections into the correct
-direction. Finally, you can filter this for the specific `LINE` you are interested in and how far you want to calculate into the future (DURATION). You can find the BVG IDs as I did in `dev/bvg_departures.ipynb` notebook.
+direction. Finally, you can filter this for the specific `LINE` you are interested in and how far you want to calculate into the past (LOOKBACK_MIN) future (LOOKAHEAD_MIN). You can find the BVG IDs as I did in `dev/bvg_departures.ipynb` notebook.
 
 #### Theme file and options
 Set your theme file [darcula.json, light.json or example.json] in `config.json` via

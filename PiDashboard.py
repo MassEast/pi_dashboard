@@ -103,7 +103,8 @@ BVG_DEPARTURE_ID = config["BVG"]["DEPARTURE_ID"]
 BVG_DIRECTION_ID_LEFT = config["BVG"]["DIRECTION_ID_LEFT"]
 BVG_DIRECTION_ID_RIGHT = config["BVG"]["DIRECTION_ID_RIGHT"]
 BVG_LINE = config["BVG"]["LINE"]
-BVG_DURATION = config["BVG"]["DURATION"]
+BVG_LOOKAHEAD_MIN = config["BVG"]["LOOKAHEAD_MIN"]
+BVG_LOOKBACK_MIN = config["BVG"]["LOOKBACK_MIN"]
 
 WEATHER_THREADS = []
 BVG_THREADS = []
@@ -936,7 +937,8 @@ class BVGUpdate(object):
                 BVG_DIRECTION_ID_LEFT,
                 BVG_DIRECTION_ID_RIGHT,
                 BVG_LINE,
-                BVG_DURATION,
+                BVG_LOOKAHEAD_MIN,
+                BVG_LOOKBACK_MIN,
             )
             # CONNECTION_ERROR = False
         except (requests.HTTPError, requests.ConnectionError) as update_ex:

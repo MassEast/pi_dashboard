@@ -1,6 +1,9 @@
 import pandas as pd
 import datetime
 import requests
+from zoneinfo import ZoneInfo
+
+berlin = ZoneInfo("Europe/Berlin")
 
 
 def get_stop_data(
@@ -8,12 +11,12 @@ def get_stop_data(
     direction_id_left="900024104",
     direction_id_right="900024106",
     line="M49",
-    duration=30,
+    lookahead_min=30,
+    lookback_min=5,
 ):
     """
     Returns stop data for a given departure, left and right directions, and
     line for the next selected minutes.
-    TODO: look back into the past a bit? possible?
     """
 
     # API endpoint
@@ -21,8 +24,10 @@ def get_stop_data(
 
     # Query parameters (customize as needed)
     params = {
-        # "when": datetime.datetime.now().isoformat(),  # Current time # TODO: substract 1min!
-        "duration": duration,  # Show departures for the next selected minutes
+        "when": (
+            datetime.datetime.now(berlin) + datetime.timedelta(minutes=-lookback_min)
+        ).isoformat(),
+        "duration": lookahead_min,  # Show departures for the next selected minutes
         "remarks": True,  # Include warnings and hints
         "language": "en",  # Language of the results
         "pretty": True,  # Pretty-print JSON responses
