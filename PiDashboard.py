@@ -108,6 +108,7 @@ BVG_LOOKBACK_MIN = config["BVG"]["LOOKBACK_MIN"]
 
 WEATHER_THREADS = []
 BVG_THREADS = []
+BVG_UPDATE_IN_PROGRESS = False
 
 UPDATED_BVG_TIME = None
 BVG_STOP_INFORMATION = pd.DataFrame(columns=["type", "line", "departure", "delay", "direction"])
@@ -155,12 +156,49 @@ def quit_all():
     pygame.display.quit()
     pygame.quit()
 
-    global WEATHER_THREADS, BVG_THREADS
+    global WEATHER_THREADS, BVG_THREADS, BVG_UPDATE_IN_PROGRESS
 
-    for thread in WEATHER_THREADS + BVG_THREADS:
-        logger.info(f"Thread killed {thread}")
-        thread.cancel()
-        thread.join()
+    logger.info("Shutting down - cancelling all threads")
+
+    # Stop any ongoing BVG updates
+    BVG_UPDATE_IN_PROGRESS = False
+
+    # Cancel all threads and wait for them to finish
+    all_threads = WEATHER_THREADS + BVG_THREADS
+
+    # First, cancel all threads
+    for thread in all_threads:
+        if thread.is_alive():
+            logger.info("Cancelling thread: %s", thread)
+            thread.cancel()
+
+    # Then wait for them to finish with timeout and track failures
+    failed_threads = []
+    for thread in all_threads:
+        if thread.is_alive():
+            try:
+                thread.join(timeout=2.0)  # Wait max 2 seconds per thread
+                if thread.is_alive():
+                    logger.warning("Thread %s failed to stop within timeout", thread)
+                    failed_threads.append(thread)
+                else:
+                    logger.info("Thread %s stopped successfully", thread)
+            except Exception as e:
+                logger.warning("Error joining thread %s: %s", thread, e)
+                failed_threads.append(thread)
+
+    # Report any threads that couldn't be stopped
+    if failed_threads:
+        logger.error(
+            "WARNING: %d threads failed to stop gracefully: %s", len(failed_threads), failed_threads
+        )
+        logger.error("These threads may continue running in the background!")
+    else:
+        logger.info("All threads stopped successfully")
+
+    # Clear the thread lists
+    WEATHER_THREADS.clear()
+    BVG_THREADS.clear()
 
     sys.exit()
 
@@ -562,10 +600,22 @@ class WeatherUpdate(object):
 
         global WEATHER_THREADS, CONNECTION_ERROR, CONNECTION
 
+        # Clean up finished threads and limit to 1 active weather API thread
+        WEATHER_THREADS = [t for t in WEATHER_THREADS if t.is_alive()]
+
+        # Check if we already have a weather update thread running
+        update_threads = [
+            t
+            for t in WEATHER_THREADS
+            if hasattr(t, "_target") and t._target.__name__ == "update_json"
+        ]
+        if len(update_threads) >= 1:
+            logger.info("Weather update thread already running, skipping new timer creation")
+            return
+
         thread = threading.Timer(config["TIMER"]["WEATHER_UPDATE"], WeatherUpdate.update_json)
 
         thread.start()
-
         WEATHER_THREADS.append(thread)
 
         if DISPLAY_BLANK or config["ENV"] == "STAGE":
@@ -595,9 +645,9 @@ class WeatherUpdate(object):
             )
             stats_request_url = str(f"{stats_endpoint}?key={WEATHERBIT_IO_KEY}")
 
-            current_data = requests.get(current_request_url, headers=HEADERS).json()
-            daily_data = requests.get(daily_request_url, headers=HEADERS).json()
-            stats_data = requests.get(stats_request_url, headers=HEADERS).json()
+            current_data = requests.get(current_request_url, headers=HEADERS, timeout=10).json()
+            daily_data = requests.get(daily_request_url, headers=HEADERS, timeout=10).json()
+            stats_data = requests.get(stats_request_url, headers=HEADERS, timeout=10).json()
 
             data = {"current": current_data, "daily": daily_data, "stats": stats_data}
 
@@ -611,13 +661,14 @@ class WeatherUpdate(object):
         except (
             requests.HTTPError,
             requests.ConnectionError,
+            requests.Timeout,
             requests.exceptions.JSONDecodeError,
         ) as update_ex:
 
             CONNECTION_ERROR = True
 
             logger.warning(
-                "Failed updating latest_weather.json." f"weatherbit connection ERROR: {update_ex}"
+                "Failed updating latest_weather.json. weatherbit connection ERROR: %s", update_ex
             )
 
     @staticmethod
@@ -625,10 +676,22 @@ class WeatherUpdate(object):
 
         global WEATHER_THREADS, WEATHER_JSON_DATA, REFRESH_ERROR, READING
 
+        # Clean up finished threads and limit to 1 active weather reload thread
+        WEATHER_THREADS = [t for t in WEATHER_THREADS if t.is_alive()]
+
+        # Check if we already have a weather reload thread running
+        reload_threads = [
+            t
+            for t in WEATHER_THREADS
+            if hasattr(t, "_target") and t._target.__name__ == "read_json"
+        ]
+        if len(reload_threads) >= 1:
+            logger.info("Weather reload thread already running, skipping new timer creation")
+            return
+
         thread = threading.Timer(config["TIMER"]["WEATHER_RELOAD"], WeatherUpdate.read_json)
 
         thread.start()
-
         WEATHER_THREADS.append(thread)
 
         if DISPLAY_BLANK:
@@ -888,7 +951,7 @@ class WeatherUpdate(object):
         # remove the ended timer and weather threads
         global WEATHER_THREADS
         WEATHER_THREADS = [t for t in WEATHER_THREADS if t.is_alive()]
-        logging.info(f"WEATHER_THREADS cleaned: {len(WEATHER_THREADS)} left in the queue")
+        logger.info("WEATHER_THREADS cleaned: %d left", len(WEATHER_THREADS))
 
         pygame.time.delay(1500)
         UPDATING = pygame.time.get_ticks() + 1500  # 1.5 seconds
@@ -904,10 +967,32 @@ class WeatherUpdate(object):
     def stop():
         """Stops all Weather threads (there should be only two, for two timers)."""
         global WEATHER_THREADS
+        logger.info("Stopping weather threads")
+
+        failed_threads = []
         for thread in WEATHER_THREADS:
-            logger.info(f"Thread killed {thread}")
-            thread.cancel()
-            thread.join()
+            if thread.is_alive():
+                logger.info("Cancelling weather thread: %s", thread)
+                thread.cancel()
+                try:
+                    thread.join(timeout=1.0)
+                    if thread.is_alive():
+                        logger.warning("Weather thread %s failed to stop within timeout", thread)
+                        failed_threads.append(thread)
+                    else:
+                        logger.info("Weather thread %s stopped successfully", thread)
+                except Exception as e:
+                    logger.warning("Error joining weather thread: %s", e)
+                    failed_threads.append(thread)
+
+        if failed_threads:
+            logger.error(
+                "WARNING: %d weather threads failed to stop: %s",
+                len(failed_threads),
+                failed_threads,
+            )
+
+        WEATHER_THREADS.clear()
 
 
 class BVGUpdate(object):
@@ -915,21 +1000,33 @@ class BVGUpdate(object):
     @staticmethod
     def update_bvg_stop_information():
 
-        global BVG_THREADS  # ,CONNECTION_ERROR, CONNECTION
+        global BVG_THREADS, BVG_UPDATE_IN_PROGRESS
         global UPDATED_BVG_TIME, BVG_STOP_INFORMATION
+
+        # Prevent multiple simultaneous updates
+        if BVG_UPDATE_IN_PROGRESS:
+            logger.info("BVG update already in progress, skipping this cycle")
+            return
+
+        BVG_UPDATE_IN_PROGRESS = True
+
+        # Clean up finished threads and limit to 1 active thread
+        BVG_THREADS = [t for t in BVG_THREADS if t.is_alive()]
+        if len(BVG_THREADS) >= 1:
+            logger.warning("BVG thread already running, skipping new timer creation")
+            BVG_UPDATE_IN_PROGRESS = False
+            return
 
         thread = threading.Timer(
             config["TIMER"]["BVG_UPDATE"], BVGUpdate.update_bvg_stop_information
         )
 
         thread.start()
-
         BVG_THREADS.append(thread)
 
         if DISPLAY_BLANK:
+            BVG_UPDATE_IN_PROGRESS = False
             return
-
-        # CONNECTION = pygame.time.get_ticks() + 1500  # 1.5 seconds
 
         try:
             UPDATED_BVG_TIME, BVG_STOP_INFORMATION = get_stop_data(
@@ -940,10 +1037,13 @@ class BVGUpdate(object):
                 BVG_LOOKAHEAD_MIN,
                 BVG_LOOKBACK_MIN,
             )
-            # CONNECTION_ERROR = False
-        except (requests.HTTPError, requests.ConnectionError) as update_ex:
-            # CONNECTION_ERROR = True
-            logger.warning(f"Connection ERROR: {update_ex}")
+            logger.info("BVG data updated successfully")
+        except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as update_ex:
+            logger.warning(f"BVG Connection ERROR: {update_ex}")
+        except Exception as e:
+            logger.error(f"Unexpected error in BVG update: {e}")
+        finally:
+            BVG_UPDATE_IN_PROGRESS = False
 
         BVGUpdate.create_surface()
 
@@ -1036,7 +1136,7 @@ class BVGUpdate(object):
         # remove the ended timer and BVG threads
         global BVG_THREADS
         BVG_THREADS = [t for t in BVG_THREADS if t.is_alive()]
-        logging.info(f"BVG_THREADS cleaned: {len(BVG_THREADS)} left in the queue")
+        logger.info("BVG_THREADS cleaned: %d left", len(BVG_THREADS))
 
         pygame.time.delay(1500)
         # UPDATING = pygame.time.get_ticks() + 1500  # 1.5 seconds
@@ -1047,13 +1147,37 @@ class BVGUpdate(object):
     def run():
         BVGUpdate.update_bvg_stop_information()
 
+    @staticmethod
     def stop():
         """Stops all Bus threads (there should be only one, for timing)."""
-        global BVG_THREADS
+        global BVG_THREADS, BVG_UPDATE_IN_PROGRESS
+        logger.info("Stopping BVG threads")
+
+        # Stop any ongoing updates
+        BVG_UPDATE_IN_PROGRESS = False
+
+        failed_threads = []
         for thread in BVG_THREADS:
-            logger.info(f"Thread killed {thread}")
-            thread.cancel()
-            thread.join()
+            if thread.is_alive():
+                logger.info("Cancelling BVG thread: %s", thread)
+                thread.cancel()
+                try:
+                    thread.join(timeout=1.0)
+                    if thread.is_alive():
+                        logger.warning("BVG thread %s failed to stop within timeout", thread)
+                        failed_threads.append(thread)
+                    else:
+                        logger.info("BVG thread %s stopped successfully", thread)
+                except Exception as e:
+                    logger.warning("Error joining BVG thread: %s", e)
+                    failed_threads.append(thread)
+
+        if failed_threads:
+            logger.error(
+                "WARNING: %d BVG threads failed to stop: %s", len(failed_threads), failed_threads
+            )
+
+        BVG_THREADS.clear()
 
 
 def get_brightness():
@@ -1130,7 +1254,7 @@ def draw_moon_layer(surf, y, size):
         f"moon phase age: {moon_age} percentage: {round(100 - (sum_length / sum_x) * 100, 1)}"
     )
 
-    image = image.resize((size, size), Image.LANCZOS if AA else Image.BILINEAR)
+    image = image.resize((size, size))
     image = pygame.image.fromstring(image.tobytes(), image.size, image.mode)
 
     x = (SURFACE_WIDTH / 2) - (size / 2)
@@ -1201,6 +1325,7 @@ def loop():
     BVGUpdate.run()
 
     running = True
+    frame_count = 0  # Counter for periodic thread health checks
 
     while running:
         global DISPLAY_BLANK
@@ -1301,6 +1426,12 @@ def loop():
         #  simulation, 15 runs fine too, 60 is overkill)
         clock.tick(FPS)
 
+        # Periodic thread health check (every ~10 seconds at 30 FPS)
+        frame_count += 1
+        if frame_count % (FPS * 10) == 0:
+            check_thread_health()
+            frame_count = 0  # Reset to prevent overflow
+
     quit_all()
 
 
@@ -1319,3 +1450,31 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
 
         quit_all()
+
+
+def check_thread_health():
+    """
+    Monitor thread health and clean up any dead threads.
+    With the new single-thread approach, we should only have 1 BVG and max 2 weather threads.
+    """
+    global BVG_THREADS, WEATHER_THREADS
+
+    # Clean up any dead threads
+    initial_bvg_count = len(BVG_THREADS)
+    BVG_THREADS = [t for t in BVG_THREADS if t.is_alive()]
+    cleaned_bvg = initial_bvg_count - len(BVG_THREADS)
+
+    initial_weather_count = len(WEATHER_THREADS)
+    WEATHER_THREADS = [t for t in WEATHER_THREADS if t.is_alive()]
+    cleaned_weather = initial_weather_count - len(WEATHER_THREADS)
+
+    if cleaned_bvg > 0 or cleaned_weather > 0:
+        logger.info(
+            f"Thread cleanup: removed {cleaned_bvg} BVG and {cleaned_weather} weather threads"
+        )
+
+    # Log warning if we have more threads than expected
+    if len(BVG_THREADS) > 1:
+        logger.warning(f"Unexpected: {len(BVG_THREADS)} BVG threads (should be 0-1)")
+    if len(WEATHER_THREADS) > 2:
+        logger.warning(f"Unexpected: {len(WEATHER_THREADS)} weather threads (should be 0-2)")

@@ -50,8 +50,8 @@ def get_stop_data(
             continue
         params["direction"] = direction_id  # Optional: Filter departures by a specific direction
 
-        # Send GET request
-        response = requests.get(url, params=params)
+        # Send GET request with timeout
+        response = requests.get(url, params=params, timeout=10)
 
         # Check if the request was successful
         if response.status_code == 200:
