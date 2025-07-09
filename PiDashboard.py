@@ -607,7 +607,9 @@ class WeatherUpdate(object):
         update_threads = [
             t
             for t in WEATHER_THREADS
-            if hasattr(t, "_target") and t._target.__name__ == "update_json"
+            if hasattr(t, "_target")
+            and t._target is not None
+            and t._target.__name__ == "update_json"
         ]
         if len(update_threads) >= 1:
             logger.info("Weather update thread already running, skipping new timer creation")
@@ -683,7 +685,7 @@ class WeatherUpdate(object):
         reload_threads = [
             t
             for t in WEATHER_THREADS
-            if hasattr(t, "_target") and t._target.__name__ == "read_json"
+            if hasattr(t, "_target") and t._target is not None and t._target.__name__ == "read_json"
         ]
         if len(reload_threads) >= 1:
             logger.info("Weather reload thread already running, skipping new timer creation")
