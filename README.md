@@ -161,13 +161,11 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 ```json
   "TIMER": {
     "WEATHER_UPDATE": 1800,
-    "WEATHER_RELOAD": 60,
     "BVG_UPDATE": 15,
     "DISPLAY_BLANK": 100
   }
 ```
-- the `WEATHER_UPDATE` timer defines how often the weatherbit API will be called in seconds - as of March 2025, Weatherbit offers 50 free calls per day, so 30min will give you enough API calls over the day
-- `WEATHER_RELOAD` defines how often the information on the display will be updated
+- the `WEATHER_UPDATE` timer defines how often the weatherbit API will be called in seconds - as of March 2025, Weatherbit offers 50 free calls per day, so 30min will give you enough API calls over the day.
 - `BVG_UPDATE` times the BVG API to get the recent public transport informaion
 - `DISPLAY_BLANK` is the time after which all the timed updates stop and the display blanks out. A single touch on the display restarts the timers and lightens up the display again.
 

@@ -34,7 +34,6 @@
   "THEME": "themes/example.json",
   "TIMER": {
     "WEATHER_UPDATE": 1800,
-    "WEATHER_RELOAD": 600,
     "BVG_UPDATE": 15,
     "DISPLAY_BLANK": 120
   },
