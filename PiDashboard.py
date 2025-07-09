@@ -1322,6 +1322,34 @@ def create_scaled_surf(surf, aa=False):
     return scaled_surf
 
 
+def check_thread_health():
+    """
+    Monitor thread health and clean up any dead threads.
+    With the new single-thread approach, we should only have 1 BVG and max 2 weather threads.
+    """
+    global BVG_THREADS, WEATHER_THREADS
+
+    # Clean up any dead threads
+    initial_bvg_count = len(BVG_THREADS)
+    BVG_THREADS = [t for t in BVG_THREADS if t.is_alive()]
+    cleaned_bvg = initial_bvg_count - len(BVG_THREADS)
+
+    initial_weather_count = len(WEATHER_THREADS)
+    WEATHER_THREADS = [t for t in WEATHER_THREADS if t.is_alive()]
+    cleaned_weather = initial_weather_count - len(WEATHER_THREADS)
+
+    if cleaned_bvg > 0 or cleaned_weather > 0:
+        logger.info(
+            f"Thread cleanup: removed {cleaned_bvg} BVG and {cleaned_weather} weather threads"
+        )
+
+    # Log warning if we have more threads than expected
+    if len(BVG_THREADS) > 1:
+        logger.warning(f"Unexpected: {len(BVG_THREADS)} BVG threads (should be 0-1)")
+    if len(WEATHER_THREADS) > 2:
+        logger.warning(f"Unexpected: {len(WEATHER_THREADS)} weather threads (should be 0-2)")
+
+
 def loop():
     WeatherUpdate.run()
     BVGUpdate.run()
@@ -1452,31 +1480,3 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
 
         quit_all()
-
-
-def check_thread_health():
-    """
-    Monitor thread health and clean up any dead threads.
-    With the new single-thread approach, we should only have 1 BVG and max 2 weather threads.
-    """
-    global BVG_THREADS, WEATHER_THREADS
-
-    # Clean up any dead threads
-    initial_bvg_count = len(BVG_THREADS)
-    BVG_THREADS = [t for t in BVG_THREADS if t.is_alive()]
-    cleaned_bvg = initial_bvg_count - len(BVG_THREADS)
-
-    initial_weather_count = len(WEATHER_THREADS)
-    WEATHER_THREADS = [t for t in WEATHER_THREADS if t.is_alive()]
-    cleaned_weather = initial_weather_count - len(WEATHER_THREADS)
-
-    if cleaned_bvg > 0 or cleaned_weather > 0:
-        logger.info(
-            f"Thread cleanup: removed {cleaned_bvg} BVG and {cleaned_weather} weather threads"
-        )
-
-    # Log warning if we have more threads than expected
-    if len(BVG_THREADS) > 1:
-        logger.warning(f"Unexpected: {len(BVG_THREADS)} BVG threads (should be 0-1)")
-    if len(WEATHER_THREADS) > 2:
-        logger.warning(f"Unexpected: {len(WEATHER_THREADS)} weather threads (should be 0-2)")
