@@ -1294,7 +1294,10 @@ def loop():
                 if DISPLAY_BLANK:
                     logger.info("Going from idle to active.")
                     DISPLAY_BLANK = False
-                    # Scheduler will automatically resume updates when DISPLAY_BLANK = False
+                    # Scheduler will automatically resume updates when DISPLAY_BLANK == False
+                    # But also update bus time update immediately (not waiting for the next cycle)
+                    BVGUpdate.update_bvg_stop_information()
+                    logger.info("BVG cycle completed successfully")
 
                 # Maybe need to use "stats": "calls_count": "28", "calls_remaining": 27,
                 #  answer from API here to decide whether to do new weather
