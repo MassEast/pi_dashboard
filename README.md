@@ -176,8 +176,8 @@ This is certinaly not the optimal solution, as any power failure or simply a reb
 To be able to at least exit the ssh connection, start a tmux (`sudo apt-get install tmux`) session (`tmux new`), and run
 ```bash
 export DISPLAY=:0
-xset s 60 60
-xset dpms 60 60 60
+xset s 240 240
+xset dpms 240 240 240
 tmux set-environment -g DISPLAY $DISPLAY
 ```
 to enable the screen blanking in this session. Then, activate the venv in the `pi_dashboard` folder (`source venv/bin/activate`)
