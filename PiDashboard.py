@@ -190,6 +190,7 @@ scheduler = SimpleScheduler()
 
 UPDATED_BVG_TIME = None
 BVG_STOP_INFORMATION = pd.DataFrame(columns=["type", "line", "departure", "delay", "direction"])
+UPDATE_BVG_IMMEDIATELY = False
 
 LAST_TOUCH_TIME = time.time()
 DISPLAY_BLANK_AFTER = config["TIMER"]["DISPLAY_BLANK"]
@@ -1281,6 +1282,14 @@ def loop():
             # update the display with all surfaces merged into the main one
             pygame.display.update()
 
+            # If screen just went from idle to active, we want to trigger BVG update here directly
+            global UPDATE_BVG_IMMEDIATELY
+            if UPDATE_BVG_IMMEDIATELY:
+                logger.info("BVG update triggered immediately (out of cycle).")
+                BVGUpdate.update_bvg_stop_information()
+                logger.info("BVG cycle completed successfully")
+                UPDATE_BVG_IMMEDIATELY = False
+
         for event in pygame.event.get():
 
             if event.type == pygame.QUIT:
@@ -1295,9 +1304,9 @@ def loop():
                     logger.info("Going from idle to active.")
                     DISPLAY_BLANK = False
                     # Scheduler will automatically resume updates when DISPLAY_BLANK == False
-                    # But also update bus time update immediately (not waiting for the next cycle)
-                    BVGUpdate.update_bvg_stop_information()
-                    logger.info("BVG cycle completed successfully")
+                    # But also want to update bus time update immediately (not waiting for the
+                    #  next cycle)
+                    UPDATE_BVG_IMMEDIATELY = True
 
                 # Maybe need to use "stats": "calls_count": "28", "calls_remaining": 27,
                 #  answer from API here to decide whether to do new weather
