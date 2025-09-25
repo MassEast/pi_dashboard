@@ -984,11 +984,13 @@ class BVGUpdate(object):
                 BVG_LOOKBACK_MIN,
             )
             logger.info("BVG data updated successfully")
-            BVGUpdate.create_surface()
         except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as update_ex:
             logger.warning(f"BVG Connection ERROR: {update_ex}")
         except Exception as e:
             logger.error(f"Unexpected error in BVG update: {e}")
+        if UPDATED_BVG_TIME is not None:
+            BVGUpdate.create_surface()
+            logger.info("BVG surface created")
 
     @staticmethod
     def create_surface():
