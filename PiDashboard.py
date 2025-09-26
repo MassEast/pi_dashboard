@@ -158,11 +158,7 @@ class SimpleScheduler:
                     self.bvg_timer.start()
                 return
 
-            try:
-                BVGUpdate.update_bvg_stop_information()
-                logger.info("BVG cycle completed successfully")
-            except Exception as e:
-                logger.error(f"BVG cycle failed: {e}")
+            BVGUpdate.update_bvg_stop_information()
 
             # Schedule next cycle
             if self.running:
@@ -189,7 +185,9 @@ class SimpleScheduler:
 scheduler = SimpleScheduler()
 
 UPDATED_BVG_TIME = None
-BVG_STOP_INFORMATION = pd.DataFrame(columns=["type", "line", "departure", "delay", "direction"])
+BVG_STOP_INFORMATION = pd.DataFrame(
+    columns=["type", "line", "departure", "delay", "direction", "direction_str", "cancelled"]
+)
 
 LAST_TOUCH_TIME = time.time()
 DISPLAY_BLANK_AFTER = config["TIMER"]["DISPLAY_BLANK"]
@@ -984,9 +982,11 @@ class BVGUpdate(object):
             )
             logger.info("BVG data updated successfully")
         except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as update_ex:
-            logger.warning(f"BVG Connection ERROR: {update_ex}")
+            UPDATED_BVG_TIME = False
+            logger.error(f"BVG cycle failed: BVG Connection ERROR: {update_ex}")
         except Exception as e:
-            logger.error(f"Unexpected error in BVG update: {e}")
+            UPDATED_BVG_TIME = False
+            logger.error(f"BVG cycle failed: Unexpected error in BVG update: {e}")
         if UPDATED_BVG_TIME is not None:
             BVGUpdate.create_surface()
             logger.info("BVG surface created")
@@ -999,75 +999,80 @@ class BVGUpdate(object):
         new_surf.set_colorkey(BACKGROUND)
         logger.info("Creating BVG surface")
 
-        # Clear of cancelled stops
-        if "cancelled" in BVG_STOP_INFORMATION.columns:
-            BVG_STOP_INFORMATION = BVG_STOP_INFORMATION[~BVG_STOP_INFORMATION["cancelled"]]
+        if len(BVG_STOP_INFORMATION) > 0:  # Make sure that API really gave something
+            # Clear of cancelled stops
+            if "cancelled" in BVG_STOP_INFORMATION.columns:
+                BVG_STOP_INFORMATION = BVG_STOP_INFORMATION[~BVG_STOP_INFORMATION["cancelled"]]
 
-        # Draw a line of bus information for direction to the left
-        DrawImage(new_surf, images["arrow"], 262, size=13, fillcolor=RED, angle=90).left(-3)
-        DrawImage(new_surf, images["bus"], 263, size=10).left(
-            10
-        )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
-        DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 260).left(22)
-        bvg_print = ""
-        # Print closest two connections for each direction
-        if len(BVG_STOP_INFORMATION) and len(
-            results_left := BVG_STOP_INFORMATION[BVG_STOP_INFORMATION["direction_str"] == "left"]
-        ):
-            departures_reported = 0
-            for _, departure in results_left.iterrows():
-                if departures_reported >= 2:
-                    break
-                delay = departure["delay"]
-                if delay > 0:
-                    delay = f"+{delay}'"
-                elif delay < 0:
-                    delay = f"{delay}'"
-                else:
-                    delay = ""
-                and_print = ", " if departures_reported > 0 else ""
-                bvg_print += f"{and_print}{departure['departure']}{delay}"
-                departures_reported += 1
-        else:
-            bvg_print = "none :("
+            # Draw a line of bus information for direction to the left
+            DrawImage(new_surf, images["arrow"], 262, size=13, fillcolor=RED, angle=90).left(-3)
+            DrawImage(new_surf, images["bus"], 263, size=10).left(
+                10
+            )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 260).left(22)
+            bvg_print = ""
+            # Print closest two connections for each direction
+            if len(BVG_STOP_INFORMATION) and len(
+                results_left := BVG_STOP_INFORMATION[
+                    BVG_STOP_INFORMATION["direction_str"] == "left"
+                ]
+            ):
+                departures_reported = 0
+                for _, departure in results_left.iterrows():
+                    if departures_reported >= 2:
+                        break
+                    delay = departure["delay"]
+                    if delay > 0:
+                        delay = f"+{delay}'"
+                    elif delay < 0:
+                        delay = f"{delay}'"
+                    else:
+                        delay = ""
+                    and_print = ", " if departures_reported > 0 else ""
+                    bvg_print += f"{and_print}{departure['departure']}{delay}"
+                    departures_reported += 1
+            else:
+                bvg_print = "none :("
 
-        DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 260).left(60)
-        DrawImage(new_surf, images["haltestelle"], 263, size=10).right()
+            DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 260).left(60)
+            DrawImage(new_surf, images["haltestelle"], 263, size=10).right()
 
-        # Perform same stuff for the right direction
-        DrawImage(new_surf, images["arrow"], 282, size=13, fillcolor=RED, angle=-90).left(-3)
-        DrawImage(new_surf, images["bus"], 283, size=10).left(
-            10
-        )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
-        DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 280).left(22)
-        bvg_print = ""
-        # Print closest two connections for each direction
-        if len(BVG_STOP_INFORMATION) and len(
-            results_right := BVG_STOP_INFORMATION[BVG_STOP_INFORMATION["direction_str"] == "right"]
-        ):
-            departures_reported = 0
-            for _, departure in results_right.iterrows():
-                if departures_reported >= 2:
-                    break
-                delay = departure["delay"]
-                if delay > 0:
-                    delay = f"+{delay}'"
-                elif delay < 0:
-                    delay = f"{delay}'"
-                else:
-                    delay = ""
-                and_print = ", " if departures_reported > 0 else ""
-                bvg_print += f"{and_print}{departure['departure']}{delay}"
-                departures_reported += 1
-        else:
-            bvg_print = "none :("
+            # Perform same stuff for the right direction
+            DrawImage(new_surf, images["arrow"], 282, size=13, fillcolor=RED, angle=-90).left(-3)
+            DrawImage(new_surf, images["bus"], 283, size=10).left(
+                10
+            )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 280).left(22)
+            bvg_print = ""
+            # Print closest two connections for each direction
+            if len(BVG_STOP_INFORMATION) and len(
+                results_right := BVG_STOP_INFORMATION[
+                    BVG_STOP_INFORMATION["direction_str"] == "right"
+                ]
+            ):
+                departures_reported = 0
+                for _, departure in results_right.iterrows():
+                    if departures_reported >= 2:
+                        break
+                    delay = departure["delay"]
+                    if delay > 0:
+                        delay = f"+{delay}'"
+                    elif delay < 0:
+                        delay = f"{delay}'"
+                    else:
+                        delay = ""
+                    and_print = ", " if departures_reported > 0 else ""
+                    bvg_print += f"{and_print}{departure['departure']}{delay}"
+                    departures_reported += 1
+            else:
+                bvg_print = "none :("
 
-        DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 280).left(60)
-        DrawImage(new_surf, images["haltestelle"], 283, size=10).right()
+            DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 280).left(60)
+            DrawImage(new_surf, images["haltestelle"], 283, size=10).right()
 
         # Extra information
         jw_msg = "JW likes you. Have a nice day!"
-        if UPDATED_BVG_TIME is not None:
+        if UPDATED_BVG_TIME is not None and UPDATED_BVG_TIME is not False:
             actuality_msg = "BVG API: {}".format(convert_timestamp(UPDATED_BVG_TIME, "%H:%M:%S"))
         else:
             actuality_msg = "BVG API: no data"
