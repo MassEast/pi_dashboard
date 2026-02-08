@@ -1303,17 +1303,26 @@ def loop():
         elif datetime.datetime.today().weekday() == CLEANING_DAY:
             tft_surf.fill(BLACK)
 
-            msg1 = CLEANING_FONT.render("IT'S CLEANING", True, WHITE)
-            rect1 = msg1.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 - 50))
+            msg1 = CLEANING_FONT.render("IT'S", True, WHITE)
+            rect1 = msg1.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 - 135))
             tft_surf.blit(msg1, rect1)
 
-            msg2 = CLEANING_FONT.render("DAY, YAY!", True, WHITE)
-            rect2 = msg2.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 + 50))
+            msg2 = CLEANING_FONT.render("CLEANING", True, WHITE)
+            rect2 = msg2.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 - 45))
             tft_surf.blit(msg2, rect2)
+
+            msg3 = CLEANING_FONT.render("DAY,", True, WHITE)
+            rect3 = msg3.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 + 45))
+            tft_surf.blit(msg3, rect3)
+
+            msg4 = CLEANING_FONT.render("YAY!", True, WHITE)
+            rect4 = msg4.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 + 135))
+            tft_surf.blit(msg4, rect4)
 
             pygame.display.update()
 
             if time.time() - last_xset_reset > 60:
+                # Reset the system idle timer to prevent screen blanking (set via xset s)
                 os.system("xset s reset")
                 last_xset_reset = time.time()
 
