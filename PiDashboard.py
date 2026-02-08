@@ -85,6 +85,15 @@ if config["LOG_TO_FILES"]:
 
 theme_config = config["THEME"]
 
+# Parse cleaning day config
+days_map = {
+    "Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3,
+    "Friday": 4, "Saturday": 5, "Sunday": 6
+}
+cleaning_day_name = config.get("CLEANING_DAY", "Monday")
+CLEANING_DAY = days_map.get(cleaning_day_name, 0)
+logger.info(f"Cleaning day set to {cleaning_day_name} ({CLEANING_DAY})")
+
 theme_settings = open(PATH + theme_config).read()
 theme = json.loads(theme_settings)
 
@@ -358,6 +367,8 @@ FONT_BIG = pygame.font.Font(FONT_PATH + FONT_MEDIUM, BIG_SIZE)
 FONT_BIG_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, BIG_SIZE)
 DATE_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, DATE_SIZE)
 CLOCK_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, CLOCK_SIZE)
+CLEANING_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, 80)
+
 
 WEATHERICON = "unknown"
 
@@ -1232,6 +1243,7 @@ def loop():
     scheduler.start_weather_updates()
     scheduler.start_bvg_updates()
 
+    last_xset_reset = 0
     running = True
 
     while running:
@@ -1287,6 +1299,23 @@ def loop():
 
             # update the display with all surfaces merged into the main one
             pygame.display.update()
+
+        elif datetime.datetime.today().weekday() == CLEANING_DAY:
+            tft_surf.fill(BLACK)
+
+            msg1 = CLEANING_FONT.render("IT'S CLEANING", True, WHITE)
+            rect1 = msg1.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 - 50))
+            tft_surf.blit(msg1, rect1)
+
+            msg2 = CLEANING_FONT.render("DAY, YAY!", True, WHITE)
+            rect2 = msg2.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 + 50))
+            tft_surf.blit(msg2, rect2)
+
+            pygame.display.update()
+
+            if time.time() - last_xset_reset > 60:
+                os.system("xset s reset")
+                last_xset_reset = time.time()
 
         for event in pygame.event.get():
 

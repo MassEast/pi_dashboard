@@ -169,6 +169,15 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 - `BVG_UPDATE` times the BVG API to get the recent public transport informaion
 - `DISPLAY_BLANK` is the time after which all the timed updates stop and the display blanks out. A single touch on the display restarts the timers and lightens up the display again.
 
+#### Cleaning Day
+```json
+"CLEANING_DAY": "Monday"
+```
+- Define a specific day of the week (e.g., "Monday", "Tuesday") where the screen functionality changes to remind you of your weekly chores.
+- On this day, instead of blanking out (going black) after the `DISPLAY_BLANK` timer expires, the screen will display a large "IT'S CLEANING DAY, YAY!" message.
+- The screen will stay on (preventing system blanking) to make sure the message is visible all day.
+- A simple touch on the display brings you back to the main dashboard.
+
 ## Starting the Dashboard without a Service
 
 This is certinaly not the optimal solution, as any power failure or simply a reboot of the Pi would mean you have to start things up manually again.
