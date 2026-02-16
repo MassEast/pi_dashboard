@@ -167,7 +167,7 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 ```
 - the `WEATHER_UPDATE` timer defines how often the weatherbit API will be called in seconds - as of March 2025, Weatherbit offers 50 free calls per day, so 30min will give you enough API calls over the day.
 - `BVG_UPDATE` times the BVG API to get the recent public transport informaion
-- `DISPLAY_BLANK` is the time after which all the timed updates stop and the display blanks out. A single touch on the display restarts the timers and lightens up the display again.
+- `DISPLAY_BLANK` is the time after which all the timed updates stop and the display blanks out (using X11 comannds (`xset`)). A single touch on the display restarts the timers and lightens up the display again.
 
 #### Cleaning Day
 ```json
@@ -185,8 +185,6 @@ This is certinaly not the optimal solution, as any power failure or simply a reb
 To be able to at least exit the ssh connection, start a tmux (`sudo apt-get install tmux`) session (`tmux new`), and run
 ```bash
 export DISPLAY=:0
-xset s 240 240
-xset dpms 240 240 240
 tmux set-environment -g DISPLAY $DISPLAY
 ```
 to enable the screen blanking in this session. Then, activate the venv in the `pi_dashboard` folder (`source venv/bin/activate`)
@@ -194,47 +192,28 @@ and start the Dashboard (`python3 PiDashboard.py`).
 
 Then tmux disconnect (ctrlB + ctrlD) from that window and the Dashboard will keep running if disconnected from ssh.
 
+## Setup Autostart on Boot
 
-## TODO: Setting up the Dashboard as a Service
+### 1. Safety Features
+To prevent being locked out or stuck in a reboot loop, there is a
+* **Emergency Exit**: Tap the **top-left corner** of the screen 5 times rapidly to close the dashboard and return to the desktop/CLI.
+* **Safe Reboot**: If the internet connection is lost, the Pi will auto-reboot to try and fix it, but **ONLY if the system has been running for at least 10 minutes**. This gives you a safety window to SSH in and fix things if a reboot loop occurs.
 
-TODO: have to put the display blank stuff in chron job thats also automatically starting for this app anyway
-have it automatically from the config file!
+### 2. Enable Autostart
+We use the standard Desktop autostart mechanism.
 
-sadly pygame doesn't like to work well with systemd... so it has to run as init.d service.
-maybe someone can help to solve this one time.
+1. Create the autostart directory:
+   ```bash
+   mkdir -p ~/.config/autostart
+   ```
 
-```bash
-cd
-cd pi_dashboard
-sudo cp PiDashboard.sh /etc/init.d/PiDashboard
-```
+2. Copy the provided desktop file:
+   ```bash
+   cp pidashboard.desktop ~/.config/autostart/
+   ```
 
-### run python with root privileges
-
-* this is useful if you like to run your python scripts on boot and with sudo support in python
-```bash
-sudo chown -v root:root /usr/bin/python3
-sudo chmod -v u+s /usr/bin/python3
-```
-
-TODO: keep going here: https://chatgpt.com/c/6741bd6c-7504-8003-95d4-f15392395b59
-vis simply doesnt show up when launched via service....
-
-### test the services
-
-* for the PiDashboard Service
-```bash
-sudo service PiDashboard start
-sudo service PiDashboard stop
-sudo service PiDashboard restart
-sudo service PiDashboard status
-```
-
-* if this is doing what it should you can run the service every time you boot your pi
-```bash
-sudo update-rc.d PiDashboardTFT defaults
-```
-
+3. **Reboot**: `sudo reboot`
+   The dashboard should now start automatically, and the screen should blank after the configured timeout.
 
 ## Credits
 - *[LoveBootCaptain](https://github.com/LoveBootCaptain) (Stephan Ansorge) for laying the foundation of this work in [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT). Subscredits by Stephan:
