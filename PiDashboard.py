@@ -46,10 +46,11 @@ from utils import get_stop_data
 # Allow the system to manage blanking
 os.environ["SDL_VIDEO_ALLOW_SCREENSAVER"] = "1"
 
-PATH = sys.path[0] + "/"
-ICON_PATH = PATH + "/icons/"
-FONT_PATH = PATH + "/fonts/"
-LOG_PATH = PATH + "/logs/"
+# Use absolute path handling to be safe in autostart contexts
+PATH = os.path.dirname(os.path.abspath(__file__)) + "/"
+ICON_PATH = PATH + "icons/"
+FONT_PATH = PATH + "fonts/"
+LOG_PATH = PATH + "logs/"
 
 # Load config file
 config_data = open(PATH + "config.json").read()
