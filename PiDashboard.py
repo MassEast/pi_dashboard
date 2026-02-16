@@ -193,6 +193,41 @@ class SimpleScheduler:
 # Global scheduler instance
 scheduler = SimpleScheduler()
 
+def safe_network_monitor():
+    """
+    Checks for internet connection.
+    Only allows reboot if system has been up for >10 minutes to prevent boot loops and give time to
+    SSH in.
+    """
+
+    logger.info("Network monitor started - 10min safety delay initiated...")
+    time.sleep(600)
+
+    while True:
+        try:
+            # Check connection using a reliable host (Google DNS)
+            requests.get("https://www.google.com", timeout=5)
+            # If we get here, internet is fine
+        except Exception:
+            logger.warning("Network check failed. Retrying in 30s...")
+            time.sleep(30)
+            try:
+                requests.get("https://www.google.com", timeout=5)
+            except Exception:
+                logger.error("Network definitively down. REBOOTING SYSTEM.")
+                # Sync logs before rebooting
+                if config["LOG_TO_FILES"]:
+                    os.system("sync")
+                os.system("sudo reboot")
+
+        # Check every 10 minutes
+        time.sleep(600)
+
+# Start the monitor in a background thread
+monitor_thread = threading.Thread(target=safe_network_monitor, daemon=True)
+monitor_thread.start()
+# ---------------------------
+
 UPDATED_BVG_TIME = None
 BVG_STOP_INFORMATION = pd.DataFrame(
     columns=["type", "line", "departure", "delay", "direction", "direction_str", "cancelled"]
@@ -1243,8 +1278,19 @@ def loop():
     scheduler.start_weather_updates()
     scheduler.start_bvg_updates()
 
+    # Set X11 display power management settings
+    # Sync OS blanking with app blanking timer
+    blank_seconds = config["TIMER"]["DISPLAY_BLANK"]
+    logger.info(f"Setting up X11 display power management to {blank_seconds}s...")
+    os.system(f"xset s {blank_seconds} {blank_seconds}")
+    os.system(f"xset dpms {blank_seconds} {blank_seconds} {blank_seconds}")
+
+
     last_xset_reset = 0
     running = True
+
+    # Counter for emergency exit
+    exit_clicks = 0
 
     while running:
         global DISPLAY_BLANK
@@ -1336,6 +1382,21 @@ def loop():
                 logger.info("Screen pressed.")
                 global LAST_TOUCH_TIME
                 LAST_TOUCH_TIME = time.time()
+
+                # Emergrency Exit logic
+                # Check if click is in top-left corner (50x50 pixels)
+                mx, my = pygame.mouse.get_pos()
+                if mx < 50 and my < 50:
+                    exit_clicks += 1
+                    logger.info(f"Emergency exit click: {exit_clicks}/5")
+                    if exit_clicks >= 5:
+                        logger.info("Emergency exit triggered!")
+                        running = False
+                        quit_all()
+                else:
+                    exit_clicks = 0 # Reset if they click elsewhere
+                # ----------------------------
+
                 if DISPLAY_BLANK:
                     logger.info("Going from idle to active.")
                     DISPLAY_BLANK = False
