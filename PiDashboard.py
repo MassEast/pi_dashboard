@@ -1379,13 +1379,13 @@ def loop():
                 quit_all()
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                logger.info("Screen pressed.")
+                mx, my = pygame.mouse.get_pos()
+                logger.info(f"Screen pressed at: ({mx}, {my})")
                 global LAST_TOUCH_TIME
                 LAST_TOUCH_TIME = time.time()
 
                 # Emergrency Exit logic
                 # Check if click is in top-left corner (50x50 pixels)
-                mx, my = pygame.mouse.get_pos()
                 if mx < 50 and my < 50:
                     exit_clicks += 1
                     logger.info(f"Emergency exit click: {exit_clicks}/5")
