@@ -8,8 +8,6 @@ In here, I explain (for my future me and anyone else reading this, feel free to 
 
 <img src="images/example_installation.jpg" alt="My Dashbboard installation" width="300">
 
-> NOTE: Major TODO: Get it running with services; as of now, one has to start and set a few things up manually in a tmux sesssion if a reboot happens...
-
 ## Problem Setting
 The classic issue: you're living in Berlin, juggling a dozen things at once, and checking the bus times for the stop right outside your door is the last thing on your mind. That’s exactly where this dashboard comes in. It shows you live info for your nearby bus or train stop (you can pick any line or station you want), plus real-time weather data. Basically, the stuff you’re probably already checking on your phone every day—but now it’s just there. Stick it in your hallway and make life easier for you and your flatmates.
 
