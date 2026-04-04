@@ -84,6 +84,15 @@ logger.addHandler(ch)
 if config["LOG_TO_FILES"]:
     logger.addHandler(fh)
 
+# PIR Sensor - try to import RPi.GPIO if on Raspberry Pi
+try:
+    import RPi.GPIO as GPIO
+    GPIO_AVAILABLE = True
+    logger.info("RPi.GPIO imported successfully - PIR Sensor support enabled")
+except ImportError:
+    GPIO_AVAILABLE = False
+    logger.warning("RPi.GPIO not available - PIR Sensor support disabled (must run on Raspberry Pi)")
+
 theme_config = config["THEME"]
 
 # Parse cleaning day config
@@ -280,6 +289,14 @@ def quit_all():
 
     # Stop the new scheduler
     scheduler.stop_all()
+    
+    # Cleanup GPIO
+    if GPIO_AVAILABLE:
+        try:
+            GPIO.cleanup()
+            logger.info("GPIO cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during GPIO cleanup: {e}")
 
     sys.exit()
 
@@ -1134,6 +1151,19 @@ class BVGUpdate(object):
         return bvg_surf
 
 
+def on_motion_detected():
+    """Callback function triggered when motion is detected by PIR sensor"""
+    global LAST_TOUCH_TIME, DISPLAY_BLANK
+    logger.info("🚨 PIR Sensor: Motion detected - waking display")
+    LAST_TOUCH_TIME = time.time()  # Reset touch timer
+    if DISPLAY_BLANK:
+        DISPLAY_BLANK = False
+        logger.info("Display woken up by motion sensor")
+        # Trigger immediate BVG update like touch does
+        threading.Thread(target=BVGUpdate.update_bvg_stop_information).start()
+        logger.info("BVG update triggered immediately (out of cycle) via PIR sensor.")
+
+
 def get_brightness():
     current_time = time.time()
     current_time = int(convert_timestamp(current_time, "%H"))
@@ -1286,6 +1316,71 @@ def loop():
     os.system(f"xset s {blank_seconds} {blank_seconds}")
     os.system(f"xset dpms {blank_seconds} {blank_seconds} {blank_seconds}")
 
+    # PIR Sensor setup - using RPi.GPIO directly
+    logger.info("Initializing PIR Motion Sensor...")
+    pir_config = config.get("PIR_SENSOR", {})
+    is_pir_enabled = pir_config.get("ENABLED", True) and GPIO_AVAILABLE
+    pir_gpio_pin = pir_config.get("GPIO_PIN", 17)
+    last_pir_state = 0
+    
+    if is_pir_enabled and GPIO_AVAILABLE:
+        try:
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(pir_gpio_pin, GPIO.IN)
+            logger.info(f"✓ PIR Sensor initialized on GPIO{pir_gpio_pin}")
+            
+            def pir_monitor_loop():
+                """Monitor PIR sensor in background thread"""
+                global last_pir_state
+                # HC-SR505 has ~8 sec trigger time, use 10 sec debounce to prevent false triggers
+                debounce = 10.0
+                last_motion_time = 0
+                motion_trigger_count = 0  # Track consecutive triggers
+                min_triggers = 2  # Require 2 rising edges to confirm motion (filter noise)
+                
+                while running and is_pir_enabled:
+                    try:
+                        current_state = GPIO.input(pir_gpio_pin)
+                        
+                        # Detect rising edge (motion attempt)
+                        if current_state == 1 and last_pir_state == 0:
+                            current_time = time.time()
+                            
+                            # Apply debounce timing
+                            if current_time - last_motion_time > debounce:
+                                motion_trigger_count += 1
+                                
+                                # Only trigger if we get consecutive detections
+                                if motion_trigger_count >= min_triggers:
+                                    logger.info("✓ Motion detected by PIR!")
+                                    on_motion_detected()
+                                    motion_trigger_count = 0
+                                
+                                last_motion_time = current_time
+                        
+                        # Reset count on falling edge
+                        elif current_state == 0 and last_pir_state == 1:
+                            motion_trigger_count = 0
+                        
+                        last_pir_state = current_state
+                        time.sleep(0.1)
+                    except Exception as e:
+                        logger.error(f"PIR monitoring error: {e}")
+                        time.sleep(1)
+            
+            # Start PIR monitoring in background thread
+            pir_thread = threading.Thread(target=pir_monitor_loop, daemon=True)
+            pir_thread.start()
+            logger.info("PIR Sensor monitoring started")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize PIR Sensor: {e}")
+            is_pir_enabled = False
+    else:
+        if not GPIO_AVAILABLE:
+            logger.info("PIR Sensor disabled (GPIO not available - not on Raspberry Pi?)")
+        else:
+            logger.info("PIR Sensor disabled in config")
 
     last_xset_reset = 0
     running = True

@@ -33,6 +33,34 @@ display of ~1.2W when it's on (I am not sure about numbers for when it's idling 
 - Luckily, with the Waveshare 4,3 Zoll QLED Touch Display, that we are using, everything works out of the box.
 - When you mounted your system, you might need to rotate it properly with the Pi Screen Configuration setting in the OS directly (and potentially manually rotate the touch via a `40-libinput.conf` file), see [this tutorial](https://www.waveshare.com/wiki/4.3inch_DSI_QLED )
 
+### Optional: HC-SR505 PIR Motion Sensor
+
+To enable the display to wake on motion detection (instead of touch only):
+
+**Wiring** (HC-SR505 has 3 pins):
+- VCC (+) → Pin 2 (5V)
+- GND (-) → Pin 6 (Ground)
+- OUT → Pin 11 (GPIO17)
+
+**Setup**:
+```bash
+pip install RPi.GPIO
+```
+
+**Configuration** in your `config.json`:
+```json
+"PIR_SENSOR": {
+    "ENABLED": true,
+    "GPIO_PIN": 17
+}
+```
+
+**Test** before running the dashboard:
+```bash
+python3 dev/test_pir_sensor.py
+```
+
+The HC-SR505 Mini has a fixed ~8 second trigger time and no adjustment potentiometers. The dashboard handles debouncing automatically.
 
 ## Software
 
