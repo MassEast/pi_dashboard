@@ -1468,6 +1468,7 @@ def loop():
             pygame.display.update()
 
             if time.time() - last_xset_reset > 60:
+                # When it's cleaning day, keep display always on :)
                 # Reset the system idle timer to prevent screen blanking (set via xset s)
                 os.system("xset s reset")
                 last_xset_reset = time.time()
