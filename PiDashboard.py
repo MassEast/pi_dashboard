@@ -1316,6 +1316,9 @@ def loop():
     os.system(f"xset s {blank_seconds} {blank_seconds}")
     os.system(f"xset dpms {blank_seconds} {blank_seconds} {blank_seconds}")
 
+    last_xset_reset = 0
+    running = True
+    
     # PIR Sensor setup - using RPi.GPIO directly
     logger.info("Initializing PIR Motion Sensor...")
     pir_config = config.get("PIR_SENSOR", {})
@@ -1381,9 +1384,6 @@ def loop():
             logger.info("PIR Sensor disabled (GPIO not available - not on Raspberry Pi?)")
         else:
             logger.info("PIR Sensor disabled in config")
-
-    last_xset_reset = 0
-    running = True
 
     # Counter for emergency exit
     exit_clicks = 0
