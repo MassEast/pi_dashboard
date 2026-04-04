@@ -89,24 +89,24 @@ def test_sensor_debounced(gpio_pin=17):
     print("Testing for 30 seconds.")
     print("Wave your hand in front of the sensor.\n")
     print("NOTE: Sensor will stay HIGH for ~8 seconds after motion!\n")
-    
+
     motion_count = 0
     last_state = 0
     last_motion_time = 0
     debounce = 9.0  # 9 seconds - longer than 8 sec trigger time
-    
+
     try:
         GPIO.setmode(GPIO.BCM)
         GPIO.setup(gpio_pin, GPIO.IN)
         print("Monitoring for motion...\n")
-        
+
         test_start = time.time()
         state_changes = []
-        
+
         while time.time() - test_start < 30:
             current_state = GPIO.input(gpio_pin)
             current_time = time.time()
-            
+
             # Detect rising edge (motion start) with long debounce (8+ seconds)
             if current_state == 1 and last_state == 0:
                 if current_time - last_motion_time > debounce:
@@ -117,20 +117,20 @@ def test_sensor_debounced(gpio_pin=17):
                     print(f"           (Will stay HIGH for ~8 seconds)")
                     state_changes.append((elapsed, 'MOTION'))
                     last_motion_time = current_time
-            
+
             # Detect falling edge (motion end) - important for next detection
             elif current_state == 0 and last_state == 1:
                 elapsed = int(current_time - test_start)
                 print(f"  [{elapsed}s] Motion timeout ended (HIGH→LOW)")
                 state_changes.append((elapsed, 'END'))
-            
+
             last_state = current_state
             time.sleep(0.1)
-        
+
         print("\n" + "-"*50)
         print(f"Test completed!")
         print(f"Total motion events detected: {motion_count}")
-        
+
         if motion_count > 0:
             print("✓ Sensor is working correctly!")
             print("\nTips for dashboard integration:")
@@ -143,6 +143,13 @@ def test_sensor_debounced(gpio_pin=17):
             print("  - Wait 30-60 seconds after powering on the sensor")
             print("  - Wave your hand directly in front of the sensor")
             print("  - Check wiring (VCC→5V, GND→GND, OUT→GPIO17)")
+
+        GPIO.cleanup(gpio_pin)
+        return motion_count > 0
+
+    except Exception as e:
+        print(f"\n✗ Error: {e}")
+        try:
             GPIO.cleanup()
         except:
             pass
