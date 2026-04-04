@@ -3,3 +3,5 @@ requests>=2.23.0
 Pillow>=7.1.2
 pandas
 RPi.GPIO
+Flask>=2.3.0
+qrcode>=7.4.2

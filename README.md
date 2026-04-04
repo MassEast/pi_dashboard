@@ -206,6 +206,36 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 - The screen will stay on (preventing system blanking) to make sure the message is visible all day.
 - A simple touch on the display brings you back to the main dashboard.
 
+#### Emotion Logging Prompt
+```json
+"EMOTION": {
+  "ENABLED": true,
+  "COOLDOWN_SECONDS": 1800,
+  "EMOTIONS": [
+    "stressed", "wild", "relaxed", "sad", "angry", "happy", "anxious", "tired"
+  ]
+}
+```
+- Whenever the display is reactivated from blank state (touch or PIR motion), an emotion popup can appear.
+- Prompt frequency is rate-limited by `COOLDOWN_SECONDS` (default: once every 30 minutes).
+- The popup has emotion buttons, plus `Skip` and `Show results` actions.
+- `Show results` opens a second overlay with a QR code to the web results page.
+- If nobody interacts, prompt dismissal follows `TIMER.DISPLAY_BLANK` timing and is not logged.
+
+#### Local Web Dashboard
+```json
+"WEB": {
+  "ENABLED": true,
+  "HOST": "0.0.0.0",
+  "PORT": 8080
+}
+```
+- Flask serves a local dashboard with Chart.js visualizations.
+- Access from the Pi: `http://localhost:8080`
+- Access from same Wi-Fi: `http://<pi-ip>:8080`
+- Emotion data is read from `logs/emotions.json` (or `/mnt/ramdisk/emotions.json` in Pi mode).
+- Web server file logging is controlled by `LOG_TO_FILES` in `config.json`.
+
 ## Starting the Dashboard without a Service
 
 This is certinaly not the optimal solution, as any power failure or simply a reboot of the Pi would mean you have to start things up manually again.
@@ -216,7 +246,12 @@ export DISPLAY=:0
 tmux set-environment -g DISPLAY $DISPLAY
 ```
 to enable the screen blanking in this session. Then, activate the venv in the `pi_dashboard` folder (`source venv/bin/activate`)
-and start the Dashboard (`python3 PiDashboard.py`).
+and start both dashboard and web host:
+
+```bash
+python3 web_server.py &
+python3 PiDashboard.py
+```
 
 Then tmux disconnect (ctrlB + ctrlD) from that window and the Dashboard will keep running if disconnected from ssh.
 
@@ -241,7 +276,7 @@ We use the standard Desktop autostart mechanism.
    ```
 
 3. **Reboot**: `sudo reboot`
-   The dashboard should now start automatically, and the screen should blank after the configured timeout.
+  The dashboard and local web server should now start automatically, and the screen should blank after the configured timeout.
 
 ## Credits
 - *[LoveBootCaptain](https://github.com/LoveBootCaptain) (Stephan Ansorge) for laying the foundation of this work in [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT). Subscredits by Stephan:

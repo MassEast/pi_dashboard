@@ -1,0 +1,121 @@
+:root {
+    --bg-1: #faf5ff;
+    --bg-2: #f3e8ff;
+    --ink: #22211f;
+    --card: rgba(255, 255, 255, 0.72);
+    --accent: #a855f7;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: "Avenir Next", "Segoe UI", sans-serif;
+    color: var(--ink);
+    background:
+        radial-gradient(1200px 500px at 8% -10%, #e9d5ff 0%, transparent 60%),
+        radial-gradient(900px 500px at 90% 110%, #d8b4fe 0%, transparent 60%),
+        linear-gradient(140deg, var(--bg-1), var(--bg-2));
+}
+
+.page {
+    width: min(980px, 94vw);
+    margin: 24px auto;
+}
+
+.hero {
+    background: linear-gradient(135deg, rgba(168, 85, 247, 0.1), rgba(196, 181, 253, 0.1));
+    padding: 28px 22px;
+    border-radius: 18px;
+    border: 1px solid rgba(168, 85, 247, 0.2);
+}
+
+.hero h1 {
+    margin: 0;
+    font-size: clamp(1.8rem, 3.5vw, 2.8rem);
+    letter-spacing: 0.01em;
+    font-weight: 600;
+}
+
+.hero p {
+    margin: 10px 0 0;
+    opacity: 0.68;
+    font-size: 0.95rem;
+}
+
+.controls {
+    margin-top: 18px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.window-btn {
+    border: 1px solid rgba(0, 0, 0, 0.18);
+    background: rgba(255, 255, 255, 0.68);
+    color: var(--ink);
+    padding: 10px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+}
+
+.window-btn.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+.card {
+    margin-top: 18px;
+    padding: 18px;
+    border-radius: 18px;
+    background: var(--card);
+    backdrop-filter: blur(5px);
+    box-shadow: 0 12px 26px rgba(20, 24, 32, 0.12);
+}
+
+.chart-wrap {
+    position: relative;
+    width: 100%;
+    height: min(56vh, 420px);
+    max-height: 420px;
+    min-height: 260px;
+    overflow: hidden;
+}
+
+#emotionChart {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+.meta {
+    margin-top: 14px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 0.92rem;
+}
+
+.footer {
+    margin-top: 24px;
+    padding: 14px 0;
+    text-align: center;
+    font-size: 0.85rem;
+    opacity: 0.62;
+    letter-spacing: 0.3px;
+}
+
+@media (max-width: 640px) {
+    .page {
+        margin: 14px auto;
+    }
+
+    .card {
+        padding: 12px;
+    }
+}

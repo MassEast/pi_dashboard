@@ -87,4 +87,5 @@ ENV/
 config.json
 logs/latest_weather.json
 *.log
+emotions.json
 .DS_Store
