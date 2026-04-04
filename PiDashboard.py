@@ -1160,6 +1160,8 @@ def on_motion_detected():
     if DISPLAY_BLANK:
         DISPLAY_BLANK = False
         logger.info("Display woken up by motion sensor")
+        os.system("xset s reset")
+        os.system("xset dpms force on")
         # Trigger immediate BVG update like touch does
         threading.Thread(target=BVGUpdate.update_bvg_stop_information).start()
         logger.info("BVG update triggered immediately (out of cycle) via PIR sensor.")
