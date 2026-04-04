@@ -244,6 +244,7 @@ BVG_STOP_INFORMATION = pd.DataFrame(
 )
 
 LAST_TOUCH_TIME = time.time()
+LAST_MOTION_DETECTED_TIME = time.time()
 DISPLAY_BLANK_AFTER = config["TIMER"]["DISPLAY_BLANK"]
 DISPLAY_BLANK = False
 
@@ -1150,11 +1151,11 @@ class BVGUpdate(object):
 
         return bvg_surf
 
-
 def on_motion_detected():
     """Callback function triggered when motion is detected by PIR sensor"""
-    global LAST_TOUCH_TIME, DISPLAY_BLANK
+    global LAST_TOUCH_TIME, LAST_MOTION_DETECTED_TIME, DISPLAY_BLANK
     logger.info("🚨 PIR Sensor: Motion detected - waking display")
+    LAST_MOTION_DETECTED_TIME = time.time()  # Update motion timestamp
     LAST_TOUCH_TIME = time.time()  # Reset touch timer
     if DISPLAY_BLANK:
         DISPLAY_BLANK = False
@@ -1273,8 +1274,6 @@ def draw_statusbar():
         DrawImage(dynamic_surf, images["path"], 5, size=15, fillcolor=BLUE).right(-5)
         if pygame.time.get_ticks() >= READING:
             READING = None
-
-
 def draw_fps():
     DrawString(dynamic_surf, str(int(clock.get_fps())), FONT_SMALL_BOLD, RED, 20).left()
 
@@ -1335,35 +1334,38 @@ def loop():
             def pir_monitor_loop():
                 """Monitor PIR sensor in background thread"""
                 nonlocal last_pir_state, is_pir_enabled
-                # HC-SR505 has ~8 sec trigger time, use 10 sec debounce to prevent false triggers
-                debounce = 10.0
+                # HC-SR505 has ~8 sec trigger time, use slightly longer debounce
+                debounce = 2.0  # Reduced: allow faster re-triggering
                 last_motion_time = 0
-                motion_trigger_count = 0  # Track consecutive triggers
-                min_triggers = 2  # Require 2 rising edges to confirm motion (filter noise)
+                pir_reads = 0  # Debug counter
+
+                logger.info(f"PIR Monitor started: GPIO{pir_gpio_pin}, debounce={debounce}s")
 
                 while running and is_pir_enabled:
                     try:
                         current_state = GPIO.input(pir_gpio_pin)
+                        pir_reads += 1
+
+                        # Debug: Log every 100 reads
+                        if pir_reads % 100 == 0:
+                            logger.debug(f"PIR state check #{pir_reads}: {current_state}")
 
                         # Detect rising edge (motion attempt)
                         if current_state == 1 and last_pir_state == 0:
                             current_time = time.time()
+                            logger.debug(f"PIR rising edge detected at {current_time}")
 
                             # Apply debounce timing
                             if current_time - last_motion_time > debounce:
-                                motion_trigger_count += 1
-
-                                # Only trigger if we get consecutive detections
-                                if motion_trigger_count >= min_triggers:
-                                    logger.info("✓ Motion detected by PIR!")
-                                    on_motion_detected()
-                                    motion_trigger_count = 0
-
+                                logger.info("✓ Motion detected by PIR! (debounce passed)")
+                                on_motion_detected()
                                 last_motion_time = current_time
+                            else:
+                                logger.debug(f"Motion ignored (within debounce window)")
 
-                        # Reset count on falling edge
+                        # Falling edge: log state change
                         elif current_state == 0 and last_pir_state == 1:
-                            motion_trigger_count = 0
+                            logger.debug("PIR falling edge")
 
                         last_pir_state = current_state
                         time.sleep(0.1)
