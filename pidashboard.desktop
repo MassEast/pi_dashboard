@@ -3,7 +3,7 @@ Type=Application
 Name=PiDashboard
 Comment=Start PiDashboard on boot
 # Assumes the project is cloned to /home/pi/pi_dashboard and venv is set up there
-Exec=/home/pi/pi_dashboard/venv/bin/python3 /home/pi/pi_dashboard/PiDashboard.py
+Exec=/bin/bash -lc 'nohup /home/pi/pi_dashboard/venv/bin/python3 /home/pi/pi_dashboard/web_server.py > /dev/null 2>&1 & /home/pi/pi_dashboard/venv/bin/python3 /home/pi/pi_dashboard/PiDashboard.py'
 WorkingDirectory=/home/pi/pi_dashboard
 Terminal=false
 X-KeepSoftware=true

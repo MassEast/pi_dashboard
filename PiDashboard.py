@@ -31,8 +31,10 @@ import logging
 import math
 import os
 import random
+import socket
 import sys
 import threading
+import uuid
 import pandas as pd
 import time
 
@@ -40,7 +42,9 @@ import pygame
 import pygame.gfxdraw
 import requests
 from PIL import Image, ImageDraw
+import qrcode
 
+from emotion_store import append_emotion_event
 from utils import get_stop_data
 
 # Allow the system to manage blanking
@@ -124,6 +128,19 @@ BVG_DIRECTION_ID_RIGHT = config["BVG"]["DIRECTION_ID_RIGHT"]
 BVG_LINE = config["BVG"]["LINE"]
 BVG_LOOKAHEAD_MIN = config["BVG"]["LOOKAHEAD_MIN"]
 BVG_LOOKBACK_MIN = config["BVG"]["LOOKBACK_MIN"]
+
+emotion_cfg = config.get("EMOTION", {})
+EMOTION_ENABLED = emotion_cfg.get("ENABLED", True)
+EMOTION_COOLDOWN_SECONDS = int(emotion_cfg.get("COOLDOWN_SECONDS", 1800))
+EMOTION_OPTIONS = emotion_cfg.get(
+    "EMOTIONS",
+    ["stressed", "wild", "relaxed", "sad", "angry", "happy", "anxious", "tired"],
+)
+
+web_cfg = config.get("WEB", {})
+WEB_ENABLED = web_cfg.get("ENABLED", True)
+WEB_HOST = web_cfg.get("HOST", "0.0.0.0")
+WEB_PORT = int(web_cfg.get("PORT", 8080))
 
 
 class SimpleScheduler:
@@ -247,6 +264,21 @@ LAST_TOUCH_TIME = time.time()
 LAST_MOTION_DETECTED_TIME = time.time()
 DISPLAY_BLANK_AFTER = config["TIMER"]["DISPLAY_BLANK"]
 DISPLAY_BLANK = False
+
+EMOTION_LAST_PROMPT_TS = 0.0
+EMOTION_PROMPT_VISIBLE = False
+EMOTION_PROMPT_OPENED_AT = 0.0
+EMOTION_PROMPT_SOURCE = "unknown"
+EMOTION_ACTIVE_PROMPT_ID = None
+EMOTION_RESULTS_VISIBLE = False
+EMOTION_PENDING_TRIGGER = None
+EMOTION_PENDING_LOCK = threading.Lock()
+EMOTION_MODAL_RECT = None
+EMOTION_BUTTON_RECTS = []
+EMOTION_ACTION_RECTS = {}
+EMOTION_QR_SURFACE = None
+EMOTION_QR_URL_CACHE = None
+EMOTION_SHUFFLED_OPTIONS = []
 
 try:
     # if you do local development you can add a mock server (e.g. from postman.io our your homebrew solution)
@@ -399,6 +431,7 @@ GREEN = tuple(theme["COLOR"]["GREEN"])
 BLUE = tuple(theme["COLOR"]["BLUE"])
 LIGHT_BLUE = tuple((BLUE[0], 210, BLUE[2]))
 DARK_BLUE = tuple((BLUE[0], 100, 255))
+SWEET_PURPLE = (196, 150, 255)
 YELLOW = tuple(theme["COLOR"]["YELLOW"])
 ORANGE = tuple(theme["COLOR"]["ORANGE"])
 VIOLET = tuple(theme["COLOR"]["VIOLET"])
@@ -1136,12 +1169,12 @@ class BVGUpdate(object):
             DrawImage(new_surf, images["haltestelle"], 283, size=10).right()
 
         # Extra information
-        jw_msg = "JW likes you. Have a nice day!"
+        ju_msg = "Ju likes you. Have a nice day!"
         if UPDATED_BVG_TIME is not None and UPDATED_BVG_TIME is not False:
             actuality_msg = "BVG API: {}".format(convert_timestamp(UPDATED_BVG_TIME, "%H:%M:%S"))
         else:
             actuality_msg = "BVG API: no data"
-        DrawString(new_surf, jw_msg, FONT_TINY, WHITE, 307).left()
+        DrawString(new_surf, ju_msg, FONT_TINY, WHITE, 307).left()
         DrawImage(new_surf, images["refresh"], 308, size=10, fillcolor=YELLOW).right(55)
         DrawString(new_surf, actuality_msg, FONT_SUPER_TINY, WHITE, 310).right(-3)
 
@@ -1150,6 +1183,262 @@ class BVGUpdate(object):
         pygame.time.delay(1500)
 
         return bvg_surf
+
+def get_lan_ip():
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def get_results_url():
+    host = WEB_HOST
+    if host in ("0.0.0.0", "::", ""):
+        host = get_lan_ip()
+    return f"http://{host}:{WEB_PORT}"
+
+
+def schedule_emotion_prompt(source):
+    global EMOTION_PENDING_TRIGGER
+
+    if not EMOTION_ENABLED:
+        return
+
+    now = time.time()
+    with EMOTION_PENDING_LOCK:
+        if EMOTION_PENDING_TRIGGER is not None or EMOTION_PROMPT_VISIBLE:
+            return
+        if now - EMOTION_LAST_PROMPT_TS < EMOTION_COOLDOWN_SECONDS:
+            return
+        EMOTION_PENDING_TRIGGER = source
+
+
+def activate_pending_emotion_prompt():
+    global EMOTION_PENDING_TRIGGER, EMOTION_PROMPT_VISIBLE, EMOTION_PROMPT_OPENED_AT
+    global EMOTION_PROMPT_SOURCE, EMOTION_LAST_PROMPT_TS, EMOTION_ACTIVE_PROMPT_ID
+    global EMOTION_RESULTS_VISIBLE, EMOTION_BUTTON_RECTS, EMOTION_ACTION_RECTS
+    global EMOTION_SHUFFLED_OPTIONS
+
+    if not EMOTION_ENABLED or DISPLAY_BLANK:
+        return
+
+    with EMOTION_PENDING_LOCK:
+        if EMOTION_PENDING_TRIGGER is None or EMOTION_PROMPT_VISIBLE:
+            return
+        source = EMOTION_PENDING_TRIGGER
+        EMOTION_PENDING_TRIGGER = None
+
+    EMOTION_PROMPT_VISIBLE = True
+    EMOTION_RESULTS_VISIBLE = False
+    EMOTION_PROMPT_OPENED_AT = time.time()
+    EMOTION_LAST_PROMPT_TS = EMOTION_PROMPT_OPENED_AT
+    EMOTION_PROMPT_SOURCE = source
+    EMOTION_ACTIVE_PROMPT_ID = str(uuid.uuid4())
+    EMOTION_BUTTON_RECTS = []
+    EMOTION_ACTION_RECTS = {}
+    EMOTION_SHUFFLED_OPTIONS = list(EMOTION_OPTIONS[:8])
+    random.shuffle(EMOTION_SHUFFLED_OPTIONS)
+    logger.info(f"Emotion prompt activated (source={source})")
+
+
+def dismiss_emotion_prompt(reason):
+    global EMOTION_PROMPT_VISIBLE, EMOTION_RESULTS_VISIBLE, EMOTION_BUTTON_RECTS
+    global EMOTION_ACTION_RECTS, EMOTION_MODAL_RECT
+
+    if not EMOTION_PROMPT_VISIBLE and not EMOTION_RESULTS_VISIBLE:
+        return
+
+    EMOTION_PROMPT_VISIBLE = False
+    EMOTION_RESULTS_VISIBLE = False
+    EMOTION_BUTTON_RECTS = []
+    EMOTION_ACTION_RECTS = {}
+    EMOTION_MODAL_RECT = None
+    logger.info(f"Emotion prompt dismissed ({reason})")
+
+
+def handle_emotion_choice(emotion=None, skipped=False):
+    payload = append_emotion_event(
+        LOG_PATH,
+        emotion=emotion,
+        skipped=skipped,
+        source=EMOTION_PROMPT_SOURCE,
+        prompt_id=EMOTION_ACTIVE_PROMPT_ID,
+    )
+    logger.info(f"Emotion event logged: {payload}")
+    dismiss_emotion_prompt("user-selection")
+
+
+def get_qr_surface(url, pixel_size=210):
+    global EMOTION_QR_SURFACE, EMOTION_QR_URL_CACHE
+
+    if EMOTION_QR_URL_CACHE == url and EMOTION_QR_SURFACE is not None:
+        return EMOTION_QR_SURFACE
+
+    qr_builder = qrcode.QRCode(version=1, box_size=8, border=2)
+    qr_builder.add_data(url)
+    qr_builder.make(fit=True)
+    qr_image = qr_builder.make_image(fill_color="black", back_color="white").convert("RGB")
+    qr_image = qr_image.resize((pixel_size, pixel_size), Image.BILINEAR)
+    qr_surface = pygame.image.fromstring(qr_image.tobytes(), qr_image.size, qr_image.mode)
+
+    EMOTION_QR_URL_CACHE = url
+    EMOTION_QR_SURFACE = qr_surface
+    return qr_surface
+
+
+def draw_results_overlay():
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+
+    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
+    fog.fill((0, 0, 0, 200))
+    tft_surf.blit(fog, (0, 0))
+
+    if EMOTION_MODAL_RECT is not None:
+        card = EMOTION_MODAL_RECT.inflate(-int(EMOTION_MODAL_RECT.width * 0.08), -int(EMOTION_MODAL_RECT.height * 0.08))
+    else:
+        fallback = dashboard_rect.inflate(-int(dashboard_rect.width * 0.10), -int(dashboard_rect.height * 0.10))
+        card = fallback
+
+    pygame.draw.rect(tft_surf, WHITE, card, border_radius=16)
+    pygame.draw.rect(tft_surf, DARK_GRAY, card, width=2, border_radius=16)
+
+    title = FONT_SMALL_BOLD.render("Scan for results", True, BLACK)
+    tft_surf.blit(title, title.get_rect(midtop=(card.centerx, card.top + 12)))
+
+    url = get_results_url()
+    qr_size = min(card.width - 36, card.height - 124)
+    qr_surface = get_qr_surface(url, pixel_size=max(120, qr_size))
+    qr_rect = qr_surface.get_rect(center=(card.centerx, card.centery + 12))
+    tft_surf.blit(qr_surface, qr_rect)
+
+    ip_text = FONT_TINY.render(url, True, BLACK)
+    tft_surf.blit(ip_text, ip_text.get_rect(midbottom=(card.centerx, card.bottom - 26)))
+
+    hint_text = FONT_SUPER_TINY.render("Tap anywhere to close", True, DARK_GRAY)
+    tft_surf.blit(hint_text, hint_text.get_rect(midbottom=(card.centerx, card.bottom - 8)))
+
+
+def draw_emotion_prompt_overlay():
+    global EMOTION_MODAL_RECT, EMOTION_BUTTON_RECTS, EMOTION_ACTION_RECTS
+
+    if not EMOTION_PROMPT_VISIBLE:
+        return
+
+    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
+    fog.fill((0, 0, 0, 170))
+    tft_surf.blit(fog, (0, 0))
+
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+    margin_x = int(dashboard_rect.width * 0.10)
+    margin_y = int(dashboard_rect.height * 0.10)
+    EMOTION_MODAL_RECT = pygame.Rect(
+        dashboard_rect.left + margin_x,
+        dashboard_rect.top + margin_y,
+        dashboard_rect.width - 2 * margin_x,
+        dashboard_rect.height - 2 * margin_y,
+    )
+
+    pygame.draw.rect(tft_surf, WHITE, EMOTION_MODAL_RECT, border_radius=16)
+    pygame.draw.rect(tft_surf, DARK_GRAY, EMOTION_MODAL_RECT, width=2, border_radius=16)
+
+    close_size = 28
+    close_rect = pygame.Rect(
+        EMOTION_MODAL_RECT.right - close_size - 10,
+        EMOTION_MODAL_RECT.top + 10,
+        close_size,
+        close_size,
+    )
+    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
+    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
+    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
+    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
+
+    title_line_1_text = "Most prevalent emotion"
+    title_line_2_text = "right now?"
+    max_title_width = close_rect.left - EMOTION_MODAL_RECT.left - 22
+    question_font = FONT_SMALL if FONT_SMALL.size(title_line_1_text)[0] <= max_title_width else FONT_TINY
+
+    title_center_x = int((EMOTION_MODAL_RECT.left + close_rect.left - 8) / 2)
+    title_line_1 = question_font.render(title_line_1_text, True, BLACK)
+    title_line_2 = question_font.render(title_line_2_text, True, BLACK)
+    title_line_1_rect = title_line_1.get_rect(midtop=(title_center_x, EMOTION_MODAL_RECT.top + 16))
+    title_line_2_rect = title_line_2.get_rect(midtop=(title_center_x, title_line_1_rect.bottom + 2))
+    tft_surf.blit(title_line_1, title_line_1_rect)
+    tft_surf.blit(title_line_2, title_line_2_rect)
+
+    inner_pad = 14
+    button_area_top = title_line_2_rect.bottom + 12
+    action_height = 44
+    actions_total_height = action_height
+    button_area_bottom = EMOTION_MODAL_RECT.bottom - actions_total_height - inner_pad - 8
+    columns = 2
+    button_gap = 8
+    options = EMOTION_SHUFFLED_OPTIONS if EMOTION_SHUFFLED_OPTIONS else EMOTION_OPTIONS[:8]
+    rows = max(1, math.ceil(len(options) / columns))
+
+    button_width = int((EMOTION_MODAL_RECT.width - (2 * inner_pad) - ((columns - 1) * button_gap)) / columns)
+    button_height = int((button_area_bottom - button_area_top - ((rows - 1) * button_gap)) / rows)
+
+    EMOTION_BUTTON_RECTS = []
+    for idx, emotion in enumerate(options):
+        row = idx // columns
+        col = idx % columns
+        button_x = EMOTION_MODAL_RECT.left + inner_pad + col * (button_width + button_gap)
+        button_y = button_area_top + row * (button_height + button_gap)
+        button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
+        pygame.draw.rect(tft_surf, SWEET_PURPLE, button_rect, border_radius=10)
+        pygame.draw.rect(tft_surf, VIOLET, button_rect, width=2, border_radius=10)
+
+        label = FONT_SMALL.render(emotion, True, BLACK)
+        label_rect = label.get_rect(center=button_rect.center)
+        tft_surf.blit(label, label_rect)
+        EMOTION_BUTTON_RECTS.append({"emotion": emotion, "rect": button_rect})
+
+    action_y = EMOTION_MODAL_RECT.bottom - actions_total_height - inner_pad
+    action_width = EMOTION_MODAL_RECT.width - 2 * inner_pad
+    show_rect = pygame.Rect(EMOTION_MODAL_RECT.left + inner_pad, action_y, action_width, action_height)
+
+    pygame.draw.rect(tft_surf, GREEN, show_rect, border_radius=10)
+    pygame.draw.rect(tft_surf, DARK_GRAY, show_rect, width=2, border_radius=10)
+
+    show_text = FONT_SMALL_BOLD.render("Show results", True, BLACK)
+    tft_surf.blit(show_text, show_text.get_rect(center=show_rect.center))
+
+    EMOTION_ACTION_RECTS = {"close": close_rect, "show_results": show_rect}
+
+    if EMOTION_RESULTS_VISIBLE:
+        draw_results_overlay()
+
+
+def handle_emotion_popup_click(mx, my):
+    global EMOTION_RESULTS_VISIBLE
+
+    if not EMOTION_PROMPT_VISIBLE:
+        return False
+
+    if EMOTION_RESULTS_VISIBLE:
+        EMOTION_RESULTS_VISIBLE = False
+        return True
+
+    for button in EMOTION_BUTTON_RECTS:
+        if button["rect"].collidepoint((mx, my)):
+            handle_emotion_choice(emotion=button["emotion"], skipped=False)
+            return True
+
+    close_rect = EMOTION_ACTION_RECTS.get("close")
+    if close_rect and close_rect.collidepoint((mx, my)):
+        handle_emotion_choice(skipped=True)
+        return True
+
+    show_rect = EMOTION_ACTION_RECTS.get("show_results")
+    if show_rect and show_rect.collidepoint((mx, my)):
+        EMOTION_RESULTS_VISIBLE = True
+        return True
+
+    return True
+
 
 def on_motion_detected():
     """Callback function triggered when motion is detected by PIR sensor"""
@@ -1162,6 +1451,7 @@ def on_motion_detected():
         logger.info("Display woken up by motion sensor")
         os.system("xset s reset")
         os.system("xset dpms force on")
+        schedule_emotion_prompt("motion")
         # Trigger immediate BVG update like touch does
         threading.Thread(target=BVGUpdate.update_bvg_stop_information).start()
         logger.info("BVG update triggered immediately (out of cycle) via PIR sensor.")
@@ -1394,6 +1684,14 @@ def loop():
 
     while running:
         global DISPLAY_BLANK
+
+        activate_pending_emotion_prompt()
+        if DISPLAY_BLANK and EMOTION_PROMPT_VISIBLE:
+            dismiss_emotion_prompt("display-blank")
+        elif EMOTION_PROMPT_VISIBLE:
+            if time.time() - EMOTION_PROMPT_OPENED_AT > DISPLAY_BLANK_AFTER:
+                dismiss_emotion_prompt("timeout")
+
         if not DISPLAY_BLANK:
 
             tft_surf.fill(BACKGROUND)
@@ -1443,6 +1741,8 @@ def loop():
             # finally take the main surface and blit it to the tft surface
             tft_surf.blit(create_scaled_surf(display_surf, aa=AA), FIT_SCREEN)
 
+            draw_emotion_prompt_overlay()
+
             # update the display with all surfaces merged into the main one
             pygame.display.update()
 
@@ -1485,6 +1785,9 @@ def loop():
                 global LAST_TOUCH_TIME
                 LAST_TOUCH_TIME = time.time()
 
+                if handle_emotion_popup_click(mx, my):
+                    continue
+
                 # Emergrency Exit logic
                 # Check if click is in top-left corner (50x50 pixels)
                 if mx < 50 and my < 50:
@@ -1501,6 +1804,7 @@ def loop():
                 if DISPLAY_BLANK:
                     logger.info("Going from idle to active.")
                     DISPLAY_BLANK = False
+                    schedule_emotion_prompt("touch")
                     # Scheduler will automatically resume updates when DISPLAY_BLANK == False
                     # But also want to update bus time update immediately (not waiting for the
                     #  next cycle)

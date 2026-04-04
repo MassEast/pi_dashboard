@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>What KantWG is feeling like</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <main class="page">
+        <header class="hero">
+            <h1>What KantWG is feeling like</h1>
+            <p>Quick snapshot from hallway check-ins</p>
+        </header>
+
+        <section class="controls">
+            <button class="window-btn active" data-window="today">Today</button>
+            <button class="window-btn" data-window="7d">7 days</button>
+            <button class="window-btn" data-window="30d">30 days</button>
+        </section>
+
+        <section class="card">
+            <div class="chart-wrap">
+                <canvas id="emotionChart" aria-label="Emotion bars over time"></canvas>
+            </div>
+            <div class="meta">
+                <span id="totalCount">Total: 0</span>
+                <span id="updatedAt">Updated: -</span>
+            </div>
+        </section>
+        <footer class="footer">
+            idea: Ju, implementation: Copilot<br>
+            April 2026
+        </footer>
+    </main>
+
+    <script src="/app.js"></script>
+</body>
+
+</html>

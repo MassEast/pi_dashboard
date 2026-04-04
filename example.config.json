@@ -37,6 +37,25 @@
     "BVG_UPDATE": 15,
     "DISPLAY_BLANK": 120
   },
+  "EMOTION": {
+    "ENABLED": true,
+    "COOLDOWN_SECONDS": 1800,
+    "EMOTIONS": [
+      "stressed",
+      "wild",
+      "relaxed",
+      "sad",
+      "angry",
+      "happy",
+      "anxious",
+      "tired"
+    ]
+  },
+  "WEB": {
+    "ENABLED": true,
+    "HOST": "0.0.0.0",
+    "PORT": 8080
+  },
   "ENV": "Pi",
   "LOG_TO_FILES": false
 }
