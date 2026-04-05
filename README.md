@@ -4,15 +4,15 @@
 # A low-resource, efficient Dashboard to ease your daily life - Weather and Public Transport (in Berlin) for your 'smart' WG
 
 ## Abstract
-In here, I explain (for my future me and anyone else reading this, feel free to share!) how to successfully set up on a Pi 4B with the Waveshare 4,3 Zoll QLED Touch Display (DSI, 800x480) and Pi OS 20241119 (bookworm).
+In here, I explain (for my future me and anyone else reading this, feel free to share!) how to successfully set up the below on a Pi 4B with the Waveshare 4,3 Zoll QLED Touch Display (DSI, 800x480) and Pi OS 20241119 (bookworm).
 
-<img src="images/example_installation.jpg" alt="My Dashbboard installation" width="300">
+<img src="images/example_installation.jpg" alt="My dashboard installation" width="300">
 
 ## Problem Setting
-The classic issue: you're living in Berlin, juggling a dozen things at once, and checking the bus times for the stop right outside your door is the last thing on your mind. That’s exactly where this dashboard comes in. It shows you live info for your nearby bus or train stop (you can pick any line or station you want), plus real-time weather data. Basically, the stuff you’re probably already checking on your phone every day—but now it’s just there. Stick it in your hallway and make life easier for you and your flatmates.
+The classic issue: you're living in Berlin, juggling a dozen things at once, and checking the bus times for the stop right outside your door is the last thing on your mind. That’s exactly where this dashboard comes in. It shows you live info for your nearby bus or train stop (you can pick any line or station you want), plus real-time weather data. Basically, the stuff you’re probably already checking on your phone every day, but now it’s just there. Stick it in your hallway and make life easier for you and your flatmates. It can also support emotional awareness: lightweight emotional logging creates a simple reflection trail that helps you and your flatmates spot mood patterns over time.
 
 ## Cost estimate
-As of March 2025, the Rasperry Pi 4B that I am using costs ~40€ and the display is ~35€. My mount on the wall is very experimental and did cost me less than 5€.
+As of March 2025, the Raspberry Pi 4B that I am using costs ~40€ and the display is ~35€. My mount on the wall is very experimental and cost me less than 5€. If you add the optional HC-SR505 PIR motion sensor, that's another ~2€.
 Assuming a power consumption of the Pi alone of about ~3W (the Pi is mostly idling, but lets be ballpark here. What I should do: Measure the actual consumption with a multimeter) and a consumption of the
 display of ~1.2W when it's on (I am not sure about numbers for when it's idling and simply reacting to touch - again, one multimeter would solve all these questions), the operational cost is
 0.0042 kW x 24 h/day × 365 days = 36.79 kWh, so ~15€ a year (assuming 40ct/kWh).
@@ -198,8 +198,8 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
   }
 ```
 - the `WEATHER_UPDATE` timer defines how often the weatherbit API will be called in seconds - as of March 2025, Weatherbit offers 50 free calls per day, so 30min will give you enough API calls over the day.
-- `BVG_UPDATE` times the BVG API to get the recent public transport informaion
-- `DISPLAY_BLANK` is the time after which all the timed updates stop and the display blanks out (using X11 comannds (`xset`)). A single touch on the display restarts the timers and lightens up the display again.
+- `BVG_UPDATE` times the BVG API to get the recent public transport information
+- `DISPLAY_BLANK` is the time after which all timed updates stop and the display blanks out (using X11 commands (`xset`)). A single touch on the display (or, optionally, movement sensed with the PIR) restarts the timers and lights up the display again.
 
 #### Cleaning Day
 ```json
@@ -244,7 +244,7 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 
 ## Starting the Dashboard without a Service
 
-This is certinaly not the optimal solution, as any power failure or simply a reboot of the Pi would mean you have to start things up manually again.
+This is certainly not the optimal solution, as any power failure or simply a reboot of the Pi would mean you have to start things up manually again.
 
 To be able to at least exit the ssh connection, start a tmux (`sudo apt-get install tmux`) session (`tmux new`), and run
 ```bash
