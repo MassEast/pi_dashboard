@@ -1298,9 +1298,11 @@ class BVGUpdate(object):
             actuality_msg = "BVG API: {}".format(convert_timestamp(UPDATED_BVG_TIME, "%H:%M:%S"))
         else:
             actuality_msg = "BVG API: no data"
-        DrawString(new_surf, ju_msg, FONT_TINY, WHITE, 307).left()
-        DrawImage(new_surf, images["refresh"], 308, size=10, fillcolor=YELLOW).right(55)
-        DrawString(new_surf, actuality_msg, FONT_SUPER_TINY, WHITE, 310).right(-3)
+        emolog_msg = f"emolog/stats: {get_results_url()}"
+        DrawString(new_surf, ju_msg, FONT_TINY, WHITE, 301).left()
+        DrawImage(new_surf, images["refresh"], 302, size=10, fillcolor=YELLOW).right(55)
+        DrawString(new_surf, actuality_msg, FONT_SUPER_TINY, WHITE, 304).right(-3)
+        DrawString(new_surf, emolog_msg, FONT_SUPER_TINY, SWEET_PURPLE, 312).left()
 
         bvg_surf = new_surf
 
@@ -1567,6 +1569,13 @@ def handle_emotion_popup_click(mx, my):
 def on_motion_detected():
     """Callback function triggered when motion is detected by PIR sensor"""
     global LAST_TOUCH_TIME, LAST_MOTION_DETECTED_TIME, DISPLAY_BLANK
+
+    # On cleaning day we keep PIR wake disabled so the reminder remains readable when someone walks by.
+    # Touch still wakes the dashboard, which keeps access intentional and avoids accidental dismissals.
+    if datetime.datetime.today().weekday() == CLEANING_DAY:
+        logger.info("PIR motion ignored on cleaning day (touch-only wake mode)")
+        return
+
     logger.info("🚨 PIR Sensor: Motion detected - waking display")
     LAST_MOTION_DETECTED_TIME = time.time()  # Update motion timestamp
     LAST_TOUCH_TIME = time.time()  # Reset touch timer
