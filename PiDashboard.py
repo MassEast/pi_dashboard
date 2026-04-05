@@ -45,6 +45,7 @@ from PIL import Image, ImageDraw
 import qrcode
 
 from emotion_store import append_emotion_event
+from uptime_store import append_uptime_event
 from utils import get_stop_data
 
 # Allow the system to manage blanking
@@ -55,6 +56,7 @@ PATH = os.path.dirname(os.path.abspath(__file__)) + "/"
 ICON_PATH = PATH + "icons/"
 FONT_PATH = PATH + "fonts/"
 LOG_PATH = PATH + "logs/"
+UPTIME_LOG_PATH = PATH + "logs/"
 
 # Load config file
 config_data = open(PATH + "config.json").read()
@@ -141,6 +143,46 @@ web_cfg = config.get("WEB", {})
 WEB_ENABLED = web_cfg.get("ENABLED", True)
 WEB_HOST = web_cfg.get("HOST", "0.0.0.0")
 WEB_PORT = int(web_cfg.get("PORT", 8080))
+UPTIME_ENABLED = bool(config.get("LOG_UPTIME", False))
+
+
+def record_uptime_event(event, source="unknown", reason=None, details=None):
+    if not UPTIME_ENABLED:
+        return None
+
+    try:
+        return append_uptime_event(
+            UPTIME_LOG_PATH,
+            event,
+            source=source,
+            reason=reason,
+            details=details,
+        )
+    except Exception as uptime_ex:
+        logger.warning(f"Failed to record uptime event {event}: {uptime_ex}")
+        return None
+
+
+NETWORK_AVAILABLE = True
+BVG_AVAILABLE = True
+WEATHER_AVAILABLE = True
+
+
+def wake_display(source, reason=None):
+    global DISPLAY_BLANK
+
+    if not DISPLAY_BLANK:
+        return False
+
+    DISPLAY_BLANK = False
+    record_uptime_event("screen_on", source=source, reason=reason)
+    logger.info(f"Display woken up by {source}")
+    os.system("xset s reset")
+    os.system("xset dpms force on")
+    schedule_emotion_prompt(source)
+    threading.Thread(target=BVGUpdate.update_bvg_stop_information).start()
+    logger.info("BVG update triggered immediately (out of cycle).")
+    return True
 
 
 class SimpleScheduler:
@@ -227,6 +269,8 @@ def safe_network_monitor():
     SSH in.
     """
 
+    global NETWORK_AVAILABLE
+
     logger.info("Network monitor started - 10min safety delay initiated...")
     time.sleep(600)
 
@@ -235,13 +279,45 @@ def safe_network_monitor():
             # Check connection using a reliable host (Google DNS)
             requests.get("https://www.google.com", timeout=5)
             # If we get here, internet is fine
+            if not NETWORK_AVAILABLE:
+                record_uptime_event(
+                    "internet_up",
+                    source="network_monitor",
+                    reason="google.com reachable",
+                )
+                NETWORK_AVAILABLE = True
         except Exception:
+            if NETWORK_AVAILABLE:
+                record_uptime_event(
+                    "internet_down",
+                    source="network_monitor",
+                    reason="google.com unreachable",
+                )
+                NETWORK_AVAILABLE = False
             logger.warning("Network check failed. Retrying in 30s...")
             time.sleep(30)
             try:
                 requests.get("https://www.google.com", timeout=5)
+                if not NETWORK_AVAILABLE:
+                    record_uptime_event(
+                        "internet_up",
+                        source="network_monitor",
+                        reason="google.com reachable after retry",
+                    )
+                    NETWORK_AVAILABLE = True
             except Exception:
                 logger.error("Network definitively down. REBOOTING SYSTEM.")
+                if not DISPLAY_BLANK:
+                    record_uptime_event(
+                        "screen_off",
+                        source="network_monitor",
+                        reason="system_reboot_requested",
+                    )
+                record_uptime_event(
+                    "reboot_requested",
+                    source="network_monitor",
+                    reason="no_internet_connection",
+                )
                 # Sync logs before rebooting
                 if config["LOG_TO_FILES"]:
                     os.system("sync")
@@ -305,6 +381,19 @@ try:
 except Exception as e:
     logger.warning(e)
     quit()
+
+
+record_uptime_event(
+    "boot_started",
+    source="startup",
+    reason=config.get("ENV", "unknown"),
+    details={"display_blank_after": DISPLAY_BLANK_AFTER},
+)
+record_uptime_event(
+    "screen_on",
+    source="startup",
+    reason="booted_visible",
+)
 
 
 pygame.display.init()
@@ -732,7 +821,7 @@ class WeatherUpdate(object):
     @staticmethod
     def update_and_process():
         """Complete weather update cycle - API call + data processing + surface creation"""
-        global CONNECTION_ERROR, REFRESH_ERROR, CONNECTION, READING, UPDATING
+        global CONNECTION_ERROR, REFRESH_ERROR, CONNECTION, READING, UPDATING, WEATHER_AVAILABLE
 
         # Skip if display is blank or in STAGE mode
         if DISPLAY_BLANK or config["ENV"] == "STAGE":
@@ -777,6 +866,13 @@ class WeatherUpdate(object):
 
             logger.info("json file saved")
             CONNECTION_ERROR = False
+            if not WEATHER_AVAILABLE:
+                record_uptime_event(
+                    "weather_up",
+                    source="weather_update",
+                    reason="weatherbit request succeeded",
+                )
+                WEATHER_AVAILABLE = True
 
             # Step 3: Process the data immediately
             WeatherUpdate.process_data(data)
@@ -788,6 +884,13 @@ class WeatherUpdate(object):
             requests.exceptions.JSONDecodeError,
         ) as update_ex:
             CONNECTION_ERROR = True
+            if WEATHER_AVAILABLE:
+                record_uptime_event(
+                    "weather_down",
+                    source="weather_update",
+                    reason=str(update_ex),
+                )
+                WEATHER_AVAILABLE = False
             logger.warning(
                 f"Failed updating latest_weather.json. weatherbit connection ERROR: {update_ex}"
             )
@@ -1064,7 +1167,7 @@ class BVGUpdate(object):
     @staticmethod
     def update_bvg_stop_information():
         """Simple BVG update without self-scheduling"""
-        global UPDATED_BVG_TIME, BVG_STOP_INFORMATION
+        global UPDATED_BVG_TIME, BVG_STOP_INFORMATION, BVG_AVAILABLE
 
         if DISPLAY_BLANK:
             return
@@ -1079,11 +1182,32 @@ class BVGUpdate(object):
                 BVG_LOOKBACK_MIN,
             )
             logger.info("BVG data updated successfully")
+            if not BVG_AVAILABLE:
+                record_uptime_event(
+                    "bvg_up",
+                    source="bvg_update",
+                    reason="bvg request succeeded",
+                )
+                BVG_AVAILABLE = True
         except (requests.HTTPError, requests.ConnectionError, requests.Timeout) as update_ex:
             UPDATED_BVG_TIME = False
+            if BVG_AVAILABLE:
+                record_uptime_event(
+                    "bvg_down",
+                    source="bvg_update",
+                    reason=str(update_ex),
+                )
+                BVG_AVAILABLE = False
             logger.error(f"BVG cycle failed: BVG Connection ERROR: {update_ex}")
         except Exception as e:
             UPDATED_BVG_TIME = False
+            if BVG_AVAILABLE:
+                record_uptime_event(
+                    "bvg_down",
+                    source="bvg_update",
+                    reason=str(e),
+                )
+                BVG_AVAILABLE = False
             logger.error(f"BVG cycle failed: Unexpected error in BVG update: {e}")
         if UPDATED_BVG_TIME is not None:
             BVGUpdate.create_surface()
@@ -1447,14 +1571,7 @@ def on_motion_detected():
     LAST_MOTION_DETECTED_TIME = time.time()  # Update motion timestamp
     LAST_TOUCH_TIME = time.time()  # Reset touch timer
     if DISPLAY_BLANK:
-        DISPLAY_BLANK = False
-        logger.info("Display woken up by motion sensor")
-        os.system("xset s reset")
-        os.system("xset dpms force on")
-        schedule_emotion_prompt("motion")
-        # Trigger immediate BVG update like touch does
-        threading.Thread(target=BVGUpdate.update_bvg_stop_information).start()
-        logger.info("BVG update triggered immediately (out of cycle) via PIR sensor.")
+        wake_display("motion", reason="pir_sensor")
 
 
 def get_brightness():
@@ -1803,13 +1920,7 @@ def loop():
 
                 if DISPLAY_BLANK:
                     logger.info("Going from idle to active.")
-                    DISPLAY_BLANK = False
-                    schedule_emotion_prompt("touch")
-                    # Scheduler will automatically resume updates when DISPLAY_BLANK == False
-                    # But also want to update bus time update immediately (not waiting for the
-                    #  next cycle)
-                    threading.Thread(target=BVGUpdate.update_bvg_stop_information).start()
-                    logger.info("BVG update triggered immediately (out of cycle).")
+                    wake_display("touch", reason="screen_touch")
 
                 # Maybe need to use "stats": "calls_count": "28", "calls_remaining": 27,
                 #  answer from API here to decide whether to do new weather
@@ -1832,6 +1943,11 @@ def loop():
 
         if not DISPLAY_BLANK and time.time() - LAST_TOUCH_TIME > DISPLAY_BLANK_AFTER:
             logger.info("Screen (likely/hopefully) blanked. Switching to idle.")
+            record_uptime_event(
+                "screen_off",
+                source="idle_timeout",
+                reason=f"display_blank_after={DISPLAY_BLANK_AFTER}",
+            )
             DISPLAY_BLANK = True
 
         # do it as often as FPS configured (30 FPS recommend for particle

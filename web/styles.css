@@ -40,10 +40,24 @@ body {
     font-weight: 600;
 }
 
+.hero-meta {
+    margin-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+}
+
 .hero p {
-    margin: 10px 0 0;
+    margin: 0;
     opacity: 0.68;
     font-size: 0.95rem;
+}
+
+.hero-updated {
+    font-size: 0.9rem;
+    opacity: 0.7;
+    white-space: nowrap;
 }
 
 .controls {
@@ -77,6 +91,27 @@ body {
     box-shadow: 0 12px 26px rgba(20, 24, 32, 0.12);
 }
 
+.section-head {
+    display: flex;
+    align-items: center;
+    margin-bottom: 14px;
+}
+
+.eyebrow {
+    margin: 0 0 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.72rem;
+    opacity: 0.65;
+}
+
+.section-updated {
+    font-size: 0.9rem;
+    opacity: 0.7;
+    white-space: nowrap;
+    margin-top: 3px;
+}
+
 .chart-wrap {
     position: relative;
     width: 100%;
@@ -101,6 +136,51 @@ body {
     font-size: 0.92rem;
 }
 
+.uptime-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.uptime-window {
+    border-radius: 16px;
+    padding: 16px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.82));
+    border: 1px solid rgba(168, 85, 247, 0.16);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.uptime-window h3 {
+    margin: 0 0 12px;
+    font-size: 1rem;
+    letter-spacing: 0.02em;
+}
+
+.uptime-metrics {
+    margin: 0;
+    display: grid;
+    gap: 12px;
+}
+
+.uptime-metrics div {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+}
+
+.uptime-metrics dt {
+    font-size: 0.84rem;
+    opacity: 0.68;
+}
+
+.uptime-metrics dd {
+    margin: 0;
+    font-size: 1.06rem;
+    font-weight: 600;
+    text-align: right;
+}
+
 .footer {
     margin-top: 24px;
     padding: 14px 0;
@@ -117,5 +197,18 @@ body {
 
     .card {
         padding: 12px;
+    }
+
+    .hero-meta {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .section-updated {
+        white-space: normal;
+    }
+
+    .uptime-grid {
+        grid-template-columns: 1fr;
     }
 }

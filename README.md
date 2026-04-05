@@ -106,6 +106,8 @@ sudo reboot
 
 If you want to log a lot to files (`"LOG_TO_FILES"` set to `"true"`), you may also consider writing all logs to RAM and only write to the SD card daily, see @azlux: [log2ram](https://github.com/azlux/log2ram).
 
+If you want uptime statistics, enable `"LOG_UPTIME"` in `config.json`. This writes a persistent `logs/uptime.json` file with screen, reboot, network, BVG, and weather transitions so the web dashboard can derive summary stats.
+
 ### Screen blanking
 
 To make your screen blank out in black after some time (which saves energy), you need to uninstall `xscreensaver` by running `sudo apt-get remove xscreensaver` and enable screen blanking in the `sudo raspi-config` settings.
@@ -233,6 +235,8 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 - Access from same Wi-Fi: `http://<pi-ip>:8080`
 - Emotion data is read from `logs/emotions.json` (or `/mnt/ramdisk/emotions.json` in Pi mode).
 - Web server file logging is controlled by `LOG_TO_FILES` in `config.json`.
+- The bottom stats panel shows uptime summaries for `24h` and `7d` side by side, including average screen time per day, BVG uptime, weather uptime, and reboot counts.
+- Uptime history persists in `logs/uptime.json` and is independent from the RAM-disk logging path.
 
 ## Starting the Dashboard without a Service
 

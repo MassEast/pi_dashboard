@@ -7,6 +7,7 @@ import socket
 from flask import Flask, jsonify, request, send_from_directory
 
 from emotion_store import build_bar_series, get_recent_events
+from uptime_store import build_uptime_summary
 
 PATH = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(PATH, "config.json")
@@ -20,7 +21,10 @@ if config.get("ENV") == "Pi":
 else:
     LOG_PATH = os.path.join(PATH, "logs")
 
+UPTIME_LOG_PATH = os.path.join(PATH, "logs")
+
 os.makedirs(LOG_PATH, exist_ok=True)
+os.makedirs(UPTIME_LOG_PATH, exist_ok=True)
 
 handlers = [logging.StreamHandler()]
 if config.get("LOG_TO_FILES", False):
@@ -77,9 +81,14 @@ def emotions_raw():
 @app.route("/api/emotions/bars")
 def emotions_bars():
     window = request.args.get("window", "7d")
-    if window not in {"today", "7d", "30d"}:
+    if window not in {"today", "7d", "30d", "weekday"}:
         window = "7d"
     return jsonify(build_bar_series(LOG_PATH, emotions=EMOTIONS, window=window))
+
+
+@app.route("/api/uptime")
+def uptime():
+    return jsonify(build_uptime_summary(UPTIME_LOG_PATH, windows=("24h", "7d")))
 
 
 def _lan_ip():

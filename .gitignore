@@ -88,4 +88,5 @@ config.json
 logs/latest_weather.json
 *.log
 emotions.json
+uptime.json
 .DS_Store
