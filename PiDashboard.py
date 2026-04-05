@@ -57,6 +57,7 @@ ICON_PATH = PATH + "icons/"
 FONT_PATH = PATH + "fonts/"
 LOG_PATH = PATH + "logs/"
 UPTIME_LOG_PATH = PATH + "logs/"
+EMOTION_LOG_PATH = PATH + "logs/"
 
 # Load config file
 config_data = open(PATH + "config.json").read()
@@ -1386,7 +1387,7 @@ def dismiss_emotion_prompt(reason):
 
 def handle_emotion_choice(emotion=None, skipped=False):
     payload = append_emotion_event(
-        LOG_PATH,
+        EMOTION_LOG_PATH,
         emotion=emotion,
         skipped=skipped,
         source=EMOTION_PROMPT_SOURCE,

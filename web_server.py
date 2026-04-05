@@ -22,9 +22,11 @@ else:
     LOG_PATH = os.path.join(PATH, "logs")
 
 UPTIME_LOG_PATH = os.path.join(PATH, "logs")
+EMOTION_LOG_PATH = os.path.join(PATH, "logs")
 
 os.makedirs(LOG_PATH, exist_ok=True)
 os.makedirs(UPTIME_LOG_PATH, exist_ok=True)
+os.makedirs(EMOTION_LOG_PATH, exist_ok=True)
 
 handlers = [logging.StreamHandler()]
 if config.get("LOG_TO_FILES", False):
@@ -75,7 +77,7 @@ def health():
 @app.route("/api/emotions/raw")
 def emotions_raw():
     limit = int(request.args.get("limit", 150))
-    return jsonify({"events": get_recent_events(LOG_PATH, limit=limit)})
+    return jsonify({"events": get_recent_events(EMOTION_LOG_PATH, limit=limit)})
 
 
 @app.route("/api/emotions/bars")
@@ -83,7 +85,7 @@ def emotions_bars():
     window = request.args.get("window", "7d")
     if window not in {"today", "7d", "30d", "weekday"}:
         window = "7d"
-    return jsonify(build_bar_series(LOG_PATH, emotions=EMOTIONS, window=window))
+    return jsonify(build_bar_series(EMOTION_LOG_PATH, emotions=EMOTIONS, window=window))
 
 
 @app.route("/api/uptime")
