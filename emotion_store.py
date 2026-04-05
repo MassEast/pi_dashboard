@@ -111,7 +111,6 @@ def _window_start(now, window):
 
 def build_bar_series(log_dir, emotions, window="7d"):
     now = datetime.datetime.now().astimezone()
-    start = _window_start(now, window)
 
     events = read_emotion_events(log_dir)
     filtered = []
@@ -119,12 +118,25 @@ def build_bar_series(log_dir, emotions, window="7d"):
         event_dt = _parse_iso(event.get("ts_iso"))
         if event_dt is None:
             continue
-        if event_dt >= start and event_dt <= now:
+        if event_dt > now:
+            continue
+        if window == "weekday" or event_dt >= _window_start(now, window):
             filtered.append((event_dt, event))
 
     if window == "today":
         labels = [f"{hour:02d}:00" for hour in range(24)]
         key_fn = lambda dt: dt.strftime("%H:00")
+    elif window == "weekday":
+        labels = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ]
+        key_fn = lambda dt: labels[dt.weekday()]
     else:
         days = 30 if window == "30d" else 7
         labels = [
