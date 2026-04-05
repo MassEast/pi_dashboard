@@ -23,6 +23,7 @@ const emojis = {
 const chartContext = document.getElementById("emotionChart").getContext("2d");
 const totalCountNode = document.getElementById("totalCount");
 const updatedAtNode = document.getElementById("updatedAt");
+const uptimeCards = [...document.querySelectorAll(".uptime-window")];
 const windowButtons = [...document.querySelectorAll(".window-btn")];
 
 let currentWindow = "today";
@@ -44,6 +45,57 @@ function toDatasets(series) {
         borderSkipped: false,
         stack: "emotion",
     }));
+}
+
+function formatHours(value) {
+    if (value == null || Number.isNaN(value)) {
+        return "-";
+    }
+
+    return `${value.toFixed(1)}h`;
+}
+
+function formatPercent(value) {
+    if (value == null || Number.isNaN(value)) {
+        return "-";
+    }
+
+    return `${value.toFixed(1)}%`;
+}
+
+function formatCount(value) {
+    if (value == null || Number.isNaN(value)) {
+        return "-";
+    }
+
+    return `${value}`;
+}
+
+function renderUptime(payload) {
+    const windows = payload?.windows || {};
+
+    for (const card of uptimeCards) {
+        const windowKey = card.dataset.window;
+        const windowData = windows[windowKey] || {};
+        const screenNode = card.querySelector('[data-field="screen"]');
+        const bvgNode = card.querySelector('[data-field="bvg"]');
+        const weatherNode = card.querySelector('[data-field="weather"]');
+        const rebootNode = card.querySelector('[data-field="reboots"]');
+
+        if (screenNode) {
+            screenNode.textContent = formatHours(windowData.screen_avg_hours_per_day);
+        }
+        if (bvgNode) {
+            bvgNode.textContent = formatPercent(windowData.bvg?.uptime_pct);
+        }
+        if (weatherNode) {
+            weatherNode.textContent = formatPercent(windowData.weather?.uptime_pct);
+        }
+        if (rebootNode) {
+            rebootNode.textContent = formatCount(windowData.reboot_count);
+        }
+    }
+
 }
 
 const emojiPlugin = {
@@ -121,11 +173,20 @@ function upsertChart(labels, series) {
 }
 
 async function refresh() {
-    const response = await fetch(`/api/emotions/bars?window=${currentWindow}`);
-    const payload = await response.json();
-    upsertChart(payload.labels, payload.series);
-    totalCountNode.textContent = `Total: ${payload.total}`;
-    updatedAtNode.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+    const [emotionResult, uptimeResult] = await Promise.allSettled([
+        fetch(`/api/emotions/bars?window=${currentWindow}`).then((response) => response.json()),
+        fetch("/api/uptime").then((response) => response.json()),
+    ]);
+
+    if (emotionResult.status === "fulfilled") {
+        upsertChart(emotionResult.value.labels, emotionResult.value.series);
+        totalCountNode.textContent = `Total: ${emotionResult.value.total}`;
+        updatedAtNode.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+    }
+
+    if (uptimeResult.status === "fulfilled") {
+        renderUptime(uptimeResult.value);
+    }
 }
 
 for (const btn of windowButtons) {

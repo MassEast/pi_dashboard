@@ -57,5 +57,6 @@
     "PORT": 8080
   },
   "ENV": "Pi",
-  "LOG_TO_FILES": false
+  "LOG_TO_FILES": false,
+  "LOG_UPTIME": true
 }

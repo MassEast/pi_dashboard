@@ -60,6 +60,8 @@ python3 dev/test_pir_sensor.py
 
 The HC-SR505 Mini has a fixed ~8 second trigger time and no adjustment potentiometers. The dashboard handles debouncing automatically.
 
+If `CLEANING_DAY` is active, PIR motion wake is ignored for that day so the cleaning reminder stays visible when people walk by. Touch wake still works.
+
 ## Software
 
 ### Install dependencies
@@ -104,7 +106,11 @@ sudo mount -a
 sudo reboot
 ```
 
+`/mnt/ramdisk` is RAM-backed, non-persistent storage: all files there are lost after reboot or power loss.
+
 If you want to log a lot to files (`"LOG_TO_FILES"` set to `"true"`), you may also consider writing all logs to RAM and only write to the SD card daily, see @azlux: [log2ram](https://github.com/azlux/log2ram).
+
+If you want uptime statistics, enable `"LOG_UPTIME"` in `config.json`. This writes a persistent `logs/uptime.json` file with screen, reboot, network, BVG, and weather transitions so the web dashboard can derive summary stats.
 
 ### Screen blanking
 
@@ -231,8 +237,10 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 - Flask serves a local dashboard with Chart.js visualizations.
 - Access from the Pi: `http://localhost:8080`
 - Access from same Wi-Fi: `http://<pi-ip>:8080`
-- Emotion data is read from `logs/emotions.json` (or `/mnt/ramdisk/emotions.json` in Pi mode).
+- Emotion data is read from persistent `logs/emotions.json`.
 - Web server file logging is controlled by `LOG_TO_FILES` in `config.json`.
+- The bottom stats panel shows uptime summaries for `24h` and `7d` side by side, including average screen time per day, BVG uptime, weather uptime, and reboot counts.
+- Uptime history persists in `logs/uptime.json` and is independent from the RAM-disk logging path.
 
 ## Starting the Dashboard without a Service
 

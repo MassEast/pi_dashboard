@@ -13,13 +13,17 @@
     <main class="page">
         <header class="hero">
             <h1>What KantWG is feeling like</h1>
-            <p>Quick snapshot from hallway check-ins</p>
+            <div class="hero-meta">
+                <p>Quick snapshot from hallway check-ins</p>
+                <span id="updatedAt" class="hero-updated">Updated: -</span>
+            </div>
         </header>
 
         <section class="controls">
             <button class="window-btn active" data-window="today">Today</button>
             <button class="window-btn" data-window="7d">7 days</button>
             <button class="window-btn" data-window="30d">30 days</button>
+            <button class="window-btn" data-window="weekday">By weekday</button>
         </section>
 
         <section class="card">
@@ -28,9 +32,63 @@
             </div>
             <div class="meta">
                 <span id="totalCount">Total: 0</span>
-                <span id="updatedAt">Updated: -</span>
             </div>
         </section>
+
+        <section class="card uptime-card" aria-label="Uptime statistics">
+            <div class="section-head">
+                <div>
+                    <p class="eyebrow">Uptime</p>
+                </div>
+            </div>
+
+            <div class="uptime-grid" id="uptimeGrid">
+                <article class="uptime-window" data-window="24h">
+                    <h3>24h</h3>
+                    <dl class="uptime-metrics">
+                        <div>
+                            <dt>Avg screen time / day</dt>
+                            <dd data-field="screen">-</dd>
+                        </div>
+                        <div>
+                            <dt>BVG uptime</dt>
+                            <dd data-field="bvg">-</dd>
+                        </div>
+                        <div>
+                            <dt>Weather uptime</dt>
+                            <dd data-field="weather">-</dd>
+                        </div>
+                        <div>
+                            <dt>Reboots</dt>
+                            <dd data-field="reboots">-</dd>
+                        </div>
+                    </dl>
+                </article>
+
+                <article class="uptime-window" data-window="7d">
+                    <h3>7d</h3>
+                    <dl class="uptime-metrics">
+                        <div>
+                            <dt>Avg screen time / day</dt>
+                            <dd data-field="screen">-</dd>
+                        </div>
+                        <div>
+                            <dt>BVG uptime</dt>
+                            <dd data-field="bvg">-</dd>
+                        </div>
+                        <div>
+                            <dt>Weather uptime</dt>
+                            <dd data-field="weather">-</dd>
+                        </div>
+                        <div>
+                            <dt>Reboots</dt>
+                            <dd data-field="reboots">-</dd>
+                        </div>
+                    </dl>
+                </article>
+            </div>
+        </section>
+
         <footer class="footer">
             idea: Ju, implementation: Copilot<br>
             April 2026
