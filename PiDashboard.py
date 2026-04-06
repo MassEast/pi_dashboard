@@ -631,7 +631,7 @@ class Particles(object):
                     x = random.randrange(0, self.size)
                     particle_list[i][0] = x
 
-            surf.blit(self.surf, (int(155 * ZOOM), int(140 * ZOOM)))
+            surf.blit(self.surf, (int(130 * ZOOM), int(90 * ZOOM)))
 
 
 class DrawString:
@@ -1074,6 +1074,8 @@ class WeatherUpdate(object):
             size=15,
             fillcolor=RED if CONNECTION_ERROR else GREEN,
         ).left()
+        DrawString(new_surf, "weather", FONT_SUPER_TINY, MAIN_FONT, 18).left(-2)
+        DrawString(new_surf, "API", FONT_SUPER_TINY, MAIN_FONT, 25).left(2)
         DrawImage(
             new_surf,
             images["refresh"],
@@ -1094,22 +1096,22 @@ class WeatherUpdate(object):
         if not ANIMATION:
             if PRECIPTYPE == config["LOCALE"]["RAIN_STR"]:
 
-                DrawImage(new_surf, images["preciprain"], size=20).draw_position(pos=(155, 140))
+                DrawImage(new_surf, images["preciprain"], size=20).draw_position(pos=(130, 90))
 
             elif PRECIPTYPE == config["LOCALE"]["SNOW_STR"]:
 
-                DrawImage(new_surf, images["precipsnow"], size=20).draw_position(pos=(155, 140))
+                DrawImage(new_surf, images["precipsnow"], size=20).draw_position(pos=(130, 90))
 
-        DrawImage(new_surf, images[FORECASTICON_DAY_1], 157, size=50).center(3, 0)
-        DrawImage(new_surf, images[FORECASTICON_DAY_2], 157, size=50).center(3, 1)
-        DrawImage(new_surf, images[FORECASTICON_DAY_3], 157, size=50).center(3, 2)
+        DrawImage(new_surf, images["sunrise"], 132, size=20).left()
+        DrawImage(new_surf, images["sunset"], 152, size=20).left()
 
-        DrawImage(new_surf, images["sunrise"], 215, size=20).left()
-        DrawImage(new_surf, images["sunset"], 235, size=20).left()
+        draw_wind_layer(new_surf, current_forecast["wind_dir"], 142)
 
-        draw_wind_layer(new_surf, current_forecast["wind_dir"], 225)
+        draw_moon_layer(new_surf, int(132 * ZOOM), int(42 * ZOOM))
 
-        draw_moon_layer(new_surf, int(215 * ZOOM), int(42 * ZOOM))
+        DrawImage(new_surf, images[FORECASTICON_DAY_1], 215, size=50).center(3, 0)
+        DrawImage(new_surf, images[FORECASTICON_DAY_2], 215, size=50).center(3, 1)
+        DrawImage(new_surf, images[FORECASTICON_DAY_3], 215, size=50).center(3, 2)
 
         # draw all the strings
         if config["DISPLAY"]["SHOW_API_STATS"]:
@@ -1126,21 +1128,23 @@ class WeatherUpdate(object):
         # Ignoring the "Precipitation" label for now
         # DrawString(new_surf, PRECIPTYPE, FONT_SMALL_BOLD, PRECIPCOLOR, 140).right()
 
-        DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 123).center(3, 0)
-        DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 123).center(3, 1)
-        DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 123).center(3, 2)
-
-        DrawString(new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 138).center(3, 0)
-        DrawString(new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 138).center(3, 1)
-        DrawString(new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 138).center(3, 2)
-
-        DrawString(new_surf, sunrise, FONT_SMALL_BOLD, MAIN_FONT, 218).left(30)
-        DrawString(new_surf, sunset, FONT_SMALL_BOLD, MAIN_FONT, 237).left(30)
+        DrawString(new_surf, sunrise, FONT_SMALL_BOLD, MAIN_FONT, 135).left(30)
+        DrawString(new_surf, sunset, FONT_SMALL_BOLD, MAIN_FONT, 154).left(30)
 
         # DrawString(new_surf, wind_direction, FONT_SMALL_BOLD, MAIN_FONT, 250).center(
         #     3, 2
         # )
-        DrawString(new_surf, wind_speed_string, FONT_SMALL_BOLD, MAIN_FONT, 237).center(3, 2)
+        DrawString(new_surf, wind_speed_string, FONT_SMALL_BOLD, MAIN_FONT, 154).center(3, 2)
+
+
+        DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 180).center(3, 0)
+        DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 180).center(3, 1)
+        DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 180).center(3, 2)
+
+        DrawString(new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 195).center(3, 0)
+        DrawString(new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 195).center(3, 1)
+        DrawString(new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 195).center(3, 2)
+
 
         weather_surf = new_surf
 
