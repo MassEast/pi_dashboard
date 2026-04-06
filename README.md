@@ -83,7 +83,7 @@ If you experience `sdl-config command not found`, see [this post](https://stacko
 - Set up venv: `python3 -m venv venv`
 - Install requirements: `source venv/bin/activate && sudo pip3 install -r requirements.txt`
 
-### Create a RAM disk to protect your SG card
+### Create a RAM disk to protect your SD card
 
 The PiDashboard will write a json file to your Pi after updating the weather data from the API provider.
 This process will reduce writing to your SD card, cause we're writing it only to RAM.
