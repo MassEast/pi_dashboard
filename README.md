@@ -1,12 +1,16 @@
 > **Disclaimer**
 > This dashboard, run on a Raspberry Pi and displayed on a small TFT display, is heavily inspired by [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT) and [BusStopPi](https://github.com/LoveBootCaptain/BusStopPi), so most of the props go to [LoveBootCaptain](https://github.com/LoveBootCaptain) (Stephan Ansorge)! Especially the [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT) repository is more general and contains information and manuals about many more displays and settings. Check it out if you do not want to rebuild my exact setup as described below, which works perfectly as of March 2025.
 
-# A low-resource, efficient Dashboard to ease your daily life - Weather and Public Transport (in Berlin) for your 'smart' WG
+# A low-resource, efficient Dashboard to ease your daily life - Weather, Public Transport (in Berlin), and Emotion Log for your 'smart' WG
+
+## Preview
+
+| Weather + Bus view                                                                          | Emotion prompt                                                                         | Web dashboard                                                              | Wall installation (older UI)                                                              |
+| ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| <img src="images/weather+bus_example.png" alt="Weather and bus dashboard view" width="300"> | <img src="images/emotion_prompt_example.png" alt="Emotion prompt example" width="300"> | <img src="images/web_example.png" alt="Web dashboard example" width="300"> | <img src="images/example_installation.jpg" alt="Dashboard wall installation" width="300"> |
 
 ## Abstract
-In here, I explain (for my future me and anyone else reading this, feel free to share!) how to successfully set up the below on a Pi 4B with the Waveshare 4,3 Zoll QLED Touch Display (DSI, 800x480) and Pi OS 20241119 (bookworm).
-
-<img src="images/example_installation.jpg" alt="My dashboard installation" width="300">
+In here, I explain (for my future me and anyone else reading this, feel free to share!) how to successfully set up on a Pi 4B with the Waveshare 4,3 Zoll QLED Touch Display (DSI, 800x480) and Pi OS 20241119 (bookworm).
 
 ## Problem Setting
 The classic issue: you're living in Berlin, juggling a dozen things at once, and checking the bus times for the stop right outside your door is the last thing on your mind. That’s exactly where this dashboard comes in. It shows you live info for your nearby bus or train stop (you can pick any line or station you want), plus real-time weather data. Basically, the stuff you’re probably already checking on your phone every day, but now it’s just there. Stick it in your hallway and make life easier for you and your flatmates. It can also support emotional awareness: lightweight emotional logging creates a simple reflection trail that helps you and your flatmates spot mood patterns over time.
