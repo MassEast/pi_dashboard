@@ -7,6 +7,12 @@ const palette = {
     happy: "#16a34a",
     anxious: "#f97316",
     tired: "#78716c",
+    grateful: "#0f766e",
+    excited: "#db2777",
+    energized: "#ea580c",
+    proud: "#2563eb",
+    focused: "#4338ca",
+    bored: "#94a3b8",
 };
 
 const emojis = {
@@ -18,6 +24,12 @@ const emojis = {
     happy: "😊",
     anxious: "😨",
     tired: "😴",
+    grateful: "🙏",
+    excited: "🤩",
+    energized: "⚡",
+    proud: "😎",
+    focused: "🎯",
+    bored: "🥱",
 };
 
 const chartContext = document.getElementById("emotionChart").getContext("2d");

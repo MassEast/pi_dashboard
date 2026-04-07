@@ -357,6 +357,29 @@ EMOTION_QR_SURFACE = None
 EMOTION_QR_URL_CACHE = None
 EMOTION_SHUFFLED_OPTIONS = []
 
+
+def get_emotion_prompt_options(max_count=16):
+    options = [str(emotion).strip() for emotion in EMOTION_OPTIONS if str(emotion).strip()]
+    if not options:
+        options = ["happy"]
+    return options[:max_count]
+
+
+def get_emotion_grid_columns(option_count):
+    # Keep tap targets large while scaling from 8 to 16 emotions.
+    if option_count <= 10:
+        return 2
+    if option_count <= 14:
+        return 3
+    return 4
+
+
+def fit_emotion_label_font(emotion, max_width):
+    for font in (FONT_SMALL, FONT_TINY, FONT_SUPER_TINY):
+        if font.size(emotion)[0] <= max_width:
+            return font
+    return FONT_SUPER_TINY
+
 try:
     # if you do local development you can add a mock server (e.g. from postman.io our your homebrew solution)
     # simple add this variables to your config.json to save api-requests
@@ -1369,7 +1392,7 @@ def activate_pending_emotion_prompt():
     EMOTION_ACTIVE_PROMPT_ID = str(uuid.uuid4())
     EMOTION_BUTTON_RECTS = []
     EMOTION_ACTION_RECTS = {}
-    EMOTION_SHUFFLED_OPTIONS = list(EMOTION_OPTIONS[:8])
+    EMOTION_SHUFFLED_OPTIONS = get_emotion_prompt_options(max_count=16)
     random.shuffle(EMOTION_SHUFFLED_OPTIONS)
     logger.info(f"Emotion prompt activated (source={source})")
 
@@ -1504,9 +1527,9 @@ def draw_emotion_prompt_overlay():
     action_height = 44
     actions_total_height = action_height
     button_area_bottom = EMOTION_MODAL_RECT.bottom - actions_total_height - inner_pad - 8
-    columns = 2
+    options = EMOTION_SHUFFLED_OPTIONS if EMOTION_SHUFFLED_OPTIONS else get_emotion_prompt_options(max_count=16)
+    columns = get_emotion_grid_columns(len(options))
     button_gap = 8
-    options = EMOTION_SHUFFLED_OPTIONS if EMOTION_SHUFFLED_OPTIONS else EMOTION_OPTIONS[:8]
     rows = max(1, math.ceil(len(options) / columns))
 
     button_width = int((EMOTION_MODAL_RECT.width - (2 * inner_pad) - ((columns - 1) * button_gap)) / columns)
@@ -1522,7 +1545,8 @@ def draw_emotion_prompt_overlay():
         pygame.draw.rect(tft_surf, SWEET_PURPLE, button_rect, border_radius=10)
         pygame.draw.rect(tft_surf, VIOLET, button_rect, width=2, border_radius=10)
 
-        label = FONT_SMALL.render(emotion, True, BLACK)
+        label_font = fit_emotion_label_font(emotion, button_rect.width - 12)
+        label = label_font.render(emotion, True, BLACK)
         label_rect = label.get_rect(center=button_rect.center)
         tft_surf.blit(label, label_rect)
         EMOTION_BUTTON_RECTS.append({"emotion": emotion, "rect": button_rect})
