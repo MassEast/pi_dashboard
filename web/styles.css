@@ -60,6 +60,13 @@ body {
     white-space: nowrap;
 }
 
+.valid-note {
+    margin: 6px 0 0 0;
+    opacity: 0.75;
+    font-size: 0.9rem;
+    color: #a855f7;
+}
+
 .controls {
     margin-top: 18px;
     display: flex;
