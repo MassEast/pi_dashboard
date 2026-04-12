@@ -83,7 +83,7 @@ def emotions_raw():
 @app.route("/api/emotions/bars")
 def emotions_bars():
     window = request.args.get("window", "7d")
-    if window not in {"today", "7d", "30d", "weekday"}:
+    if window not in {"today", "7d", "30d", "weekday", "alltime"}:
         window = "7d"
     return jsonify(build_bar_series(EMOTION_LOG_PATH, emotions=EMOTIONS, window=window))
 

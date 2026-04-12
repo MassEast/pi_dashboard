@@ -106,6 +106,8 @@ def _window_start(now, window):
         return now.replace(hour=0, minute=0, second=0, microsecond=0)
     if window == "30d":
         return now - datetime.timedelta(days=30)
+    if window == "alltime":
+        return datetime.datetime.min.replace(tzinfo=now.tzinfo)
     return now - datetime.timedelta(days=7)
 
 
@@ -137,6 +139,19 @@ def build_bar_series(log_dir, emotions, window="7d"):
             "Sunday",
         ]
         key_fn = lambda dt: labels[dt.weekday()]
+    elif window == "alltime":
+        # For all time, generate labels based on data range
+        if filtered:
+            earliest = min(dt for dt, _ in filtered)
+            latest = max(dt for dt, _ in filtered)
+            current = earliest.replace(hour=0, minute=0, second=0, microsecond=0)
+            labels = []
+            while current <= latest:
+                labels.append(current.strftime("%Y-%m-%d"))
+                current += datetime.timedelta(days=1)
+        else:
+            labels = []
+        key_fn = lambda dt: dt.strftime("%Y-%m-%d")
     else:
         days = 30 if window == "30d" else 7
         labels = [
