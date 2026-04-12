@@ -1,36 +1,60 @@
+// Emotion palette ordered from positive (green) to negative (red)
 const palette = {
-    stressed: "#b91c1c",
-    wild: "#7e22ce",
-    relaxed: "#0284c7",
-    sad: "#334155",
-    angry: "#7c2d12",
+    // Most positive - Green
+    grateful: "#22c55e",
     happy: "#16a34a",
-    anxious: "#f97316",
-    tired: "#78716c",
-    grateful: "#0f766e",
-    excited: "#db2777",
-    energized: "#ea580c",
-    proud: "#2563eb",
-    focused: "#4338ca",
+    // Positive - Yellow/Green
+    excited: "#eab308",
+    energized: "#facc15",
+    proud: "#3b82f6",
+    // Neutral - Blue/Gray
+    focused: "#06b6d4",
+    relaxed: "#0ea5e9",
+    wild: "#a855f7",
     bored: "#94a3b8",
+    tired: "#78716c",
+    // Negative - Orange/Red
+    anxious: "#fb923c",
+    angry: "#ff6b35",
+    sad: "#ef4444",
+    stressed: "#dc2626",
 };
 
+// Emotions ordered from positive (happy) to negative (stressed)
 const emojis = {
-    stressed: "😰",
-    wild: "🎉",
-    relaxed: "😌",
-    sad: "😢",
-    angry: "😠",
-    happy: "😊",
-    anxious: "😨",
-    tired: "😴",
     grateful: "🙏",
+    happy: "😊",
     excited: "🤩",
     energized: "⚡",
     proud: "😎",
     focused: "🎯",
+    relaxed: "😌",
+    wild: "🎉",
     bored: "🥱",
+    tired: "😴",
+    anxious: "😨",
+    angry: "😠",
+    sad: "😢",
+    stressed: "😰",
 };
+
+// Emotion order for consistent legend display (positive to negative)
+const emotionOrder = [
+    "grateful",
+    "happy",
+    "excited",
+    "energized",
+    "proud",
+    "focused",
+    "relaxed",
+    "wild",
+    "bored",
+    "tired",
+    "anxious",
+    "angry",
+    "sad",
+    "stressed",
+];
 
 const chartContext = document.getElementById("emotionChart").getContext("2d");
 const totalCountNode = document.getElementById("totalCount");
@@ -38,7 +62,7 @@ const updatedAtNode = document.getElementById("updatedAt");
 const uptimeCards = [...document.querySelectorAll(".uptime-window")];
 const windowButtons = [...document.querySelectorAll(".window-btn")];
 
-let currentWindow = "today";
+let currentWindow = "7d";
 let emotionChart;
 
 function setActiveWindow(windowValue) {
@@ -49,14 +73,16 @@ function setActiveWindow(windowValue) {
 }
 
 function toDatasets(series) {
-    return Object.entries(series).map(([emotion, values]) => ({
-        label: `${emojis[emotion] || "●"} ${emotion}`,
-        data: values,
-        backgroundColor: palette[emotion] || "#64748b",
-        borderRadius: 3,
-        borderSkipped: false,
-        stack: "emotion",
-    }));
+    return emotionOrder
+        .filter((emotion) => emotion in series)
+        .map((emotion) => ({
+            label: `${emojis[emotion] || "●"} ${emotion}`,
+            data: series[emotion],
+            backgroundColor: palette[emotion] || "#64748b",
+            borderRadius: 3,
+            borderSkipped: false,
+            stack: "emotion",
+        }));
 }
 
 function formatHours(value) {
@@ -185,14 +211,18 @@ function upsertChart(labels, series) {
 }
 
 async function refresh() {
+    let window = currentWindow;
+    if (window === "alltime") {
+        window = "alltime";
+    }
     const [emotionResult, uptimeResult] = await Promise.allSettled([
-        fetch(`/api/emotions/bars?window=${currentWindow}`).then((response) => response.json()),
+        fetch(`/api/emotions/bars?window=${window}`).then((response) => response.json()),
         fetch("/api/uptime").then((response) => response.json()),
     ]);
 
     if (emotionResult.status === "fulfilled") {
         upsertChart(emotionResult.value.labels, emotionResult.value.series);
-        totalCountNode.textContent = `Total: ${emotionResult.value.total}`;
+        totalCountNode.textContent = `Total: ${emotionResult.value.total}` + (currentWindow === "alltime" ? " (all time)" : "");
         updatedAtNode.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
     }
 
