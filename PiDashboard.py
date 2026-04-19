@@ -1055,7 +1055,7 @@ class WeatherUpdate(object):
         temp_out_unit = "°C" if METRIC else "°F"
         temp_out_string = str(temp_out + temp_out_unit)
         precip = WEATHER_JSON_DATA["daily"]["data"][0]["pop"]
-        precip_string = str(f"{precip} %")
+        precip_string = str(f"{precip}%")
 
         today = daily_forecast[0]
         day_1 = daily_forecast[1]
@@ -1072,9 +1072,10 @@ class WeatherUpdate(object):
         day_3_ts = time.mktime(time.strptime(day_3["datetime"], "%Y-%m-%d"))
         day_3_ts = convert_timestamp(day_3_ts, df_forecast)
 
-        day_1_min_max_temp = f"{int(day_1['low_temp'])} | {int(day_1['high_temp'])}"
-        day_2_min_max_temp = f"{int(day_2['low_temp'])} | {int(day_2['high_temp'])}"
-        day_3_min_max_temp = f"{int(day_3['low_temp'])} | {int(day_3['high_temp'])}"
+        today_min_max_temp = f"({int(today['high_temp'])} | {int(today['low_temp'])})"
+        day_1_min_max_temp = f"{int(day_1['high_temp'])} | {int(day_1['low_temp'])}"
+        day_2_min_max_temp = f"{int(day_2['high_temp'])} | {int(day_2['low_temp'])}"
+        day_3_min_max_temp = f"{int(day_3['high_temp'])} | {int(day_3['low_temp'])}"
 
         sunrise = convert_timestamp(today["sunrise_ts"], df_sun)
         sunset = convert_timestamp(today["sunset_ts"], df_sun)
@@ -1119,11 +1120,11 @@ class WeatherUpdate(object):
         if not ANIMATION:
             if PRECIPTYPE == config["LOCALE"]["RAIN_STR"]:
 
-                DrawImage(new_surf, images["preciprain"], size=20).draw_position(pos=(130, 90))
+                DrawImage(new_surf, images["preciprain"], size=20).draw_position(pos=(130, 86))
 
             elif PRECIPTYPE == config["LOCALE"]["SNOW_STR"]:
 
-                DrawImage(new_surf, images["precipsnow"], size=20).draw_position(pos=(130, 90))
+                DrawImage(new_surf, images["precipsnow"], size=20).draw_position(pos=(130, 86))
 
         DrawImage(new_surf, images["sunrise"], 132, size=20).left()
         DrawImage(new_surf, images["sunset"], 152, size=20).left()
@@ -1132,9 +1133,9 @@ class WeatherUpdate(object):
 
         draw_moon_layer(new_surf, int(132 * ZOOM), int(42 * ZOOM))
 
-        DrawImage(new_surf, images[FORECASTICON_DAY_1], 215, size=50).center(3, 0)
-        DrawImage(new_surf, images[FORECASTICON_DAY_2], 215, size=50).center(3, 1)
-        DrawImage(new_surf, images[FORECASTICON_DAY_3], 215, size=50).center(3, 2)
+        DrawImage(new_surf, images[FORECASTICON_DAY_1], 210, size=50).center(3, 0)
+        DrawImage(new_surf, images[FORECASTICON_DAY_2], 210, size=50).center(3, 1)
+        DrawImage(new_surf, images[FORECASTICON_DAY_3], 210, size=50).center(3, 2)
 
         # draw all the strings
         if config["DISPLAY"]["SHOW_API_STATS"]:
@@ -1145,9 +1146,9 @@ class WeatherUpdate(object):
         # DrawString(new_surf, summary_string, FONT_SMALL_BOLD, VIOLET, 50).center(1, 0)
         # Ignoring the summary string for now (like "Scattered clouds")
 
-        DrawString(new_surf, temp_out_string, FONT_BIG, ORANGE, 50).right()
-
-        DrawString(new_surf, precip_string, FONT_BIG, PRECIPCOLOR, 80).right()
+        DrawString(new_surf, temp_out_string, FONT_BIG, ORANGE, 50).right(40)
+        DrawString(new_surf, today_min_max_temp, FONT_TINY, MAIN_FONT, 64).right(-10)
+        DrawString(new_surf, precip_string, FONT_BIG, PRECIPCOLOR, 84).right(10)
         # Ignoring the "Precipitation" label for now
         # DrawString(new_surf, PRECIPTYPE, FONT_SMALL_BOLD, PRECIPCOLOR, 140).right()
 
@@ -1160,13 +1161,13 @@ class WeatherUpdate(object):
         DrawString(new_surf, wind_speed_string, FONT_SMALL_BOLD, MAIN_FONT, 154).center(3, 2)
 
 
-        DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 180).center(3, 0)
-        DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 180).center(3, 1)
-        DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 180).center(3, 2)
+        DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 0)
+        DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 1)
+        DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 2)
 
-        DrawString(new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 195).center(3, 0)
-        DrawString(new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 195).center(3, 1)
-        DrawString(new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 195).center(3, 2)
+        DrawString(new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 0)
+        DrawString(new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 1)
+        DrawString(new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 2)
 
 
         weather_surf = new_surf
