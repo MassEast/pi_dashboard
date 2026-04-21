@@ -1,60 +1,62 @@
-// Emotion palette ordered from positive (green) to negative (red)
-const palette = {
-    // Most positive - Green
-    grateful: "#22c55e",
-    happy: "#16a34a",
-    // Positive - Yellow/Green
-    excited: "#eab308",
-    energized: "#facc15",
-    proud: "#3b82f6",
-    // Neutral - Blue/Gray
-    focused: "#06b6d4",
-    relaxed: "#0ea5e9",
-    wild: "#a855f7",
-    bored: "#94a3b8",
-    tired: "#78716c",
-    // Negative - Orange/Red
-    anxious: "#fb923c",
-    angry: "#ff6b35",
-    sad: "#ef4444",
-    stressed: "#dc2626",
-};
+const emergencyFallbackCatalog = [{ name: "don't know", emoji: "🤷", color: "#9ca3af" }];
+let sharedFallbackCatalog = null;
+let sharedFallbackCatalogPromise = null;
 
-// Emotions ordered from positive (happy) to negative (stressed)
-const emojis = {
-    grateful: "🙏",
-    happy: "😊",
-    excited: "🤩",
-    energized: "⚡",
-    proud: "😎",
-    focused: "🎯",
-    relaxed: "😌",
-    wild: "🎉",
-    bored: "🥱",
-    tired: "😴",
-    anxious: "😨",
-    angry: "😠",
-    sad: "😢",
-    stressed: "😰",
-};
+function normalizeCatalog(catalog) {
+    if (!Array.isArray(catalog)) {
+        return [...(sharedFallbackCatalog || emergencyFallbackCatalog)];
+    }
 
-// Emotion order for consistent legend display (positive to negative)
-const emotionOrder = [
-    "grateful",
-    "happy",
-    "excited",
-    "energized",
-    "proud",
-    "focused",
-    "relaxed",
-    "wild",
-    "bored",
-    "tired",
-    "anxious",
-    "angry",
-    "sad",
-    "stressed",
-];
+    const seen = new Set();
+    const normalized = [];
+    for (const entry of catalog) {
+        const name = String(entry?.name || "").trim().toLowerCase();
+        if (!name || seen.has(name)) {
+            continue;
+        }
+        normalized.push({
+            name,
+            emoji: entry?.emoji || "?",
+            color: entry?.color || "#9ca3af",
+        });
+        seen.add(name);
+    }
+
+    return normalized.length > 0 ? normalized : [...(sharedFallbackCatalog || emergencyFallbackCatalog)];
+}
+
+let emotionCatalog = normalizeCatalog(sharedFallbackCatalog);
+
+async function ensureSharedFallbackCatalog() {
+    if (sharedFallbackCatalog) {
+        return sharedFallbackCatalog;
+    }
+    if (!sharedFallbackCatalogPromise) {
+        sharedFallbackCatalogPromise = fetch("/emotion_catalog.defaults.json")
+            .then((response) => response.json())
+            .then((catalog) => {
+                sharedFallbackCatalog = normalizeCatalog(catalog);
+                return sharedFallbackCatalog;
+            })
+            .catch(() => {
+                sharedFallbackCatalog = [...emergencyFallbackCatalog];
+                return sharedFallbackCatalog;
+            });
+    }
+    return sharedFallbackCatalogPromise;
+}
+
+function catalogMaps() {
+    const palette = {};
+    const emojis = {};
+    const order = [];
+    for (const entry of emotionCatalog) {
+        palette[entry.name] = entry.color;
+        emojis[entry.name] = entry.emoji;
+        order.push(entry.name);
+    }
+    return { palette, emojis, order };
+}
 
 const chartContext = document.getElementById("emotionChart").getContext("2d");
 const totalCountNode = document.getElementById("totalCount");
@@ -72,17 +74,33 @@ function setActiveWindow(windowValue) {
     }
 }
 
+function getEmotionOrder(series) {
+    const { order: emotionOrder } = catalogMaps();
+    const orderedKnown = emotionOrder.filter((emotion) => emotion in series);
+    const custom = Object.keys(series)
+        .filter((emotion) => !emotionOrder.includes(emotion))
+        .sort((left, right) => {
+            const leftTotal = series[left].reduce((sum, value) => sum + value, 0);
+            const rightTotal = series[right].reduce((sum, value) => sum + value, 0);
+            if (rightTotal !== leftTotal) {
+                return rightTotal - leftTotal;
+            }
+            return left.localeCompare(right);
+        });
+    return [...orderedKnown, ...custom];
+}
+
 function toDatasets(series) {
-    return emotionOrder
-        .filter((emotion) => emotion in series)
-        .map((emotion) => ({
-            label: `${emojis[emotion] || "●"} ${emotion}`,
-            data: series[emotion],
-            backgroundColor: palette[emotion] || "#64748b",
-            borderRadius: 3,
-            borderSkipped: false,
-            stack: "emotion",
-        }));
+    const { palette, emojis } = catalogMaps();
+    return getEmotionOrder(series).map((emotion) => ({
+        emotionKey: emotion,
+        label: `${emojis[emotion] || "?"} ${emotion}`,
+        data: series[emotion],
+        backgroundColor: palette[emotion] || "#9ca3af",
+        borderRadius: 3,
+        borderSkipped: false,
+        stack: "emotion",
+    }));
 }
 
 function formatHours(value) {
@@ -142,11 +160,9 @@ const emojiPlugin = {
         const { ctx, data, scales } = chart;
         ctx.save();
 
+        const { emojis } = catalogMaps();
         data.datasets.forEach((dataset, datasetIdx) => {
-            const emotion = Object.keys(emojis).find(
-                (e) => emojis[e] === dataset.label.charAt(0)
-            );
-            const emoji = emojis[emotion] || "●";
+            const emoji = emojis[dataset.emotionKey] || "?";
 
             dataset.data.forEach((value, dataIdx) => {
                 if (value === 0 || value === null) return;
@@ -211,14 +227,21 @@ function upsertChart(labels, series) {
 }
 
 async function refresh() {
+    await ensureSharedFallbackCatalog();
+
     let window = currentWindow;
     if (window === "alltime") {
         window = "alltime";
     }
-    const [emotionResult, uptimeResult] = await Promise.allSettled([
+    const [catalogResult, emotionResult, uptimeResult] = await Promise.allSettled([
+        fetch("/api/emotions/catalog").then((response) => response.json()),
         fetch(`/api/emotions/bars?window=${window}`).then((response) => response.json()),
         fetch("/api/uptime").then((response) => response.json()),
     ]);
+
+    if (catalogResult.status === "fulfilled") {
+        emotionCatalog = normalizeCatalog(catalogResult.value.catalog);
+    }
 
     if (emotionResult.status === "fulfilled") {
         upsertChart(emotionResult.value.labels, emotionResult.value.series);

@@ -41,13 +41,60 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-emotion_cfg = config.get("EMOTION", {})
 web_cfg = config.get("WEB", {})
 
-EMOTIONS = emotion_cfg.get(
-    "EMOTIONS",
-    ["stressed", "wild", "relaxed", "sad", "angry", "happy", "anxious", "tired"],
-)
+FALLBACK_STYLE = {"emoji": "?", "color": "#9ca3af"}
+
+
+def _load_runtime_emotion_cfg():
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as config_file:
+            runtime_cfg = json.load(config_file)
+        return runtime_cfg.get("EMOTION", {})
+    except (OSError, json.JSONDecodeError):
+        return config.get("EMOTION", {})
+
+
+def _build_emotion_catalog(emotion_cfg):
+    catalog = emotion_cfg.get("CATALOG", [])
+    if not isinstance(catalog, list):
+        catalog = []
+
+    normalized = []
+    seen = set()
+    for entry in catalog:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name", "")).strip().lower()
+        if not name or name in seen:
+            continue
+        normalized.append(
+            {
+                "name": name,
+                "emoji": entry.get("emoji") or FALLBACK_STYLE["emoji"],
+                "color": entry.get("color") or FALLBACK_STYLE["color"],
+            }
+        )
+        seen.add(name)
+
+    if normalized:
+        return normalized
+
+    emotions = emotion_cfg.get(
+        "EMOTIONS",
+        ["stressed", "wild", "relaxed", "sad", "angry", "happy", "anxious", "tired"],
+    )
+    return [
+        {
+            "name": str(name).strip().lower(),
+            "emoji": FALLBACK_STYLE["emoji"],
+            "color": FALLBACK_STYLE["color"],
+        }
+        for name in emotions
+        if str(name).strip()
+    ]
+
+
 HOST = web_cfg.get("HOST", "0.0.0.0")
 PORT = int(web_cfg.get("PORT", 8080))
 
@@ -80,12 +127,20 @@ def emotions_raw():
     return jsonify({"events": get_recent_events(EMOTION_LOG_PATH, limit=limit)})
 
 
+@app.route("/api/emotions/catalog")
+def emotions_catalog():
+    emotion_cfg = _load_runtime_emotion_cfg()
+    return jsonify({"catalog": _build_emotion_catalog(emotion_cfg)})
+
+
 @app.route("/api/emotions/bars")
 def emotions_bars():
     window = request.args.get("window", "7d")
     if window not in {"today", "7d", "30d", "weekday", "alltime"}:
         window = "7d"
-    return jsonify(build_bar_series(EMOTION_LOG_PATH, emotions=EMOTIONS, window=window))
+    emotion_cfg = _load_runtime_emotion_cfg()
+    emotions = [entry["name"] for entry in _build_emotion_catalog(emotion_cfg)]
+    return jsonify(build_bar_series(EMOTION_LOG_PATH, emotions=emotions, window=window))
 
 
 @app.route("/api/uptime")
