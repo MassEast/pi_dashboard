@@ -160,7 +160,20 @@ def build_bar_series(log_dir, emotions, window="7d"):
         ]
         key_fn = lambda dt: dt.strftime("%Y-%m-%d")
 
-    series = {emotion: [0] * len(labels) for emotion in emotions}
+    base_emotions = [emotion for emotion in emotions if emotion]
+    extra_counts = {}
+    for _, event in filtered:
+        if event.get("skipped"):
+            continue
+        emotion = event.get("emotion")
+        if not emotion or emotion in base_emotions:
+            continue
+        extra_counts[emotion] = extra_counts.get(emotion, 0) + 1
+
+    extra_emotions = sorted(extra_counts.keys(), key=lambda item: (-extra_counts[item], item))
+    ordered_emotions = [*base_emotions, *extra_emotions]
+
+    series = {emotion: [0] * len(labels) for emotion in ordered_emotions}
     label_to_index = {label: idx for idx, label in enumerate(labels)}
 
     for event_dt, event in filtered:
