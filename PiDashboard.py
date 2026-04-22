@@ -1602,7 +1602,7 @@ class WeatherUpdate(object):
         # DrawString(new_surf, summary_string, FONT_SMALL_BOLD, VIOLET, 50).center(1, 0)
         # Ignoring the summary string for now (like "Scattered clouds")
 
-        DrawString(new_surf, temp_out_string, FONT_BIG, ORANGE, 50).right(40)
+        DrawString(new_surf, temp_out_string, FONT_BIG, ORANGE, 50).right(33)
         DrawString(new_surf, today_min_max_temp, FONT_TINY, MAIN_FONT, 64).right(-10)
         DrawString(new_surf, precip_string, FONT_BIG, PRECIPCOLOR, 84).right(10)
         # Ignoring the "Precipitation" label for now
@@ -1997,10 +1997,22 @@ def draw_emotion_confirmation_overlay():
     fog.fill((0, 0, 0, 120))
     tft_surf.blit(fog, (0, 0))
 
-    card_width = min(int(SURFACE_WIDTH * 0.82), 190)
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+
     message_lines = [line for line in EMOTION_CONFIRMATION_TEXT.splitlines() if line.strip()]
     if not message_lines:
         message_lines = [EMOTION_CONFIRMATION_TEXT]
+
+    title_surface = FONT_SMALL_BOLD.render("Emotion saved", True, BLACK)
+    message_surfaces = [FONT_TINY.render(line, True, DARK_GRAY) for line in message_lines]
+    hint_surface = FONT_SUPER_TINY.render("Tap to close", True, DARK_GRAY)
+
+    content_width = max(
+        title_surface.get_width(),
+        hint_surface.get_width(),
+        max((surface.get_width() for surface in message_surfaces), default=0),
+    )
+    card_width = max(160, min(int(dashboard_rect.width * 0.92), content_width + 32))
 
     card_height = max(72, 58 + (len(message_lines) * 14))
     card = pygame.Rect(0, 0, card_width, card_height)
@@ -2009,18 +2021,15 @@ def draw_emotion_confirmation_overlay():
     pygame.draw.rect(tft_surf, WHITE, card, border_radius=14)
     pygame.draw.rect(tft_surf, SWEET_PURPLE, card, width=2, border_radius=14)
 
-    title = FONT_SMALL_BOLD.render("Emotion saved", True, BLACK)
-    tft_surf.blit(title, title.get_rect(midtop=(card.centerx, card.top + 10)))
+    tft_surf.blit(title_surface, title_surface.get_rect(midtop=(card.centerx, card.top + 10)))
 
     message_top = card.top + 34
     line_gap = 2
-    for index, line in enumerate(message_lines):
-        message = FONT_TINY.render(line, True, DARK_GRAY)
-        line_y = message_top + index * (message.get_height() + line_gap)
-        tft_surf.blit(message, message.get_rect(midtop=(card.centerx, line_y)))
+    for index, message_surface in enumerate(message_surfaces):
+        line_y = message_top + index * (message_surface.get_height() + line_gap)
+        tft_surf.blit(message_surface, message_surface.get_rect(midtop=(card.centerx, line_y)))
 
-    hint = FONT_SUPER_TINY.render("Tap to close", True, DARK_GRAY)
-    tft_surf.blit(hint, hint.get_rect(midbottom=(card.centerx, card.bottom - 8)))
+    tft_surf.blit(hint_surface, hint_surface.get_rect(midbottom=(card.centerx, card.bottom - 8)))
 
 
 def draw_emotion_prompt_overlay():
