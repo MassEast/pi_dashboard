@@ -1,0 +1,18 @@
+[
+    {"name": "grateful", "emoji": "🙏", "color": "#22c55e"},
+    {"name": "happy", "emoji": "😊", "color": "#16a34a"},
+    {"name": "excited", "emoji": "🤩", "color": "#eab308"},
+    {"name": "energized", "emoji": "⚡", "color": "#facc15"},
+    {"name": "proud", "emoji": "😎", "color": "#3b82f6"},
+    {"name": "focused", "emoji": "🎯", "color": "#06b6d4"},
+    {"name": "relaxed", "emoji": "😌", "color": "#0ea5e9"},
+    {"name": "wild", "emoji": "🎉", "color": "#a855f7"},
+    {"name": "curious", "emoji": "🧐", "color": "#60a5fa"},
+    {"name": "bored", "emoji": "🥱", "color": "#94a3b8"},
+    {"name": "tired", "emoji": "😴", "color": "#78716c"},
+    {"name": "don't know", "emoji": "🤷", "color": "#9ca3af"},
+    {"name": "anxious", "emoji": "😨", "color": "#fb923c"},
+    {"name": "angry", "emoji": "😠", "color": "#ff6b35"},
+    {"name": "sad", "emoji": "😢", "color": "#ef4444"},
+    {"name": "stressed", "emoji": "😰", "color": "#dc2626"}
+]

@@ -22,7 +22,7 @@ body {
 }
 
 .page {
-    width: min(980px, 94vw);
+    width: min(1120px, 96vw);
     margin: 24px auto;
 }
 
@@ -69,6 +69,12 @@ body {
 
 .controls {
     margin-top: 18px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.control-group {
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
@@ -122,9 +128,9 @@ body {
 .chart-wrap {
     position: relative;
     width: 100%;
-    height: min(56vh, 420px);
-    max-height: 420px;
-    min-height: 260px;
+    height: min(72vh, 620px);
+    max-height: 620px;
+    min-height: 380px;
     overflow: hidden;
 }
 
@@ -204,6 +210,10 @@ body {
 
     .card {
         padding: 12px;
+    }
+
+    .chart-wrap {
+        min-height: 440px;
     }
 
     .hero-meta {

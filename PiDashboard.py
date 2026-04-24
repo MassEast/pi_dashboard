@@ -31,6 +31,7 @@ import logging
 import math
 import os
 import random
+import re
 import socket
 import sys
 import threading
@@ -44,7 +45,7 @@ import requests
 from PIL import Image, ImageDraw
 import qrcode
 
-from emotion_store import append_emotion_event
+from emotion_store import append_emotion_event, read_emotion_events
 from uptime_store import append_uptime_event
 from utils import get_stop_data
 
@@ -135,10 +136,88 @@ BVG_LOOKBACK_MIN = config["BVG"]["LOOKBACK_MIN"]
 emotion_cfg = config.get("EMOTION", {})
 EMOTION_ENABLED = emotion_cfg.get("ENABLED", True)
 EMOTION_COOLDOWN_SECONDS = int(emotion_cfg.get("COOLDOWN_SECONDS", 1800))
+EMOTION_CONFIRMATION_SECONDS = int(emotion_cfg.get("CONFIRMATION_SECONDS", 5))
 EMOTION_OPTIONS = emotion_cfg.get(
     "EMOTIONS",
     ["stressed", "wild", "relaxed", "sad", "angry", "happy", "anxious", "tired"],
 )
+EMOTION_CUSTOM_TRIGGER_LABEL = "custom"
+EMOTION_CUSTOM_SLOT_COUNT = 3
+EMOTION_KEYBOARD_MAX_CHARS = 18
+EMOTION_CONFIG_PATH = PATH + "config.json"
+EMOTION_DEFAULT_CATALOG_PATH = PATH + "web/emotion_catalog.defaults.json"
+EMOTION_LLM_CFG = emotion_cfg.get("LLM", {})
+EMOTION_LLM_ENABLED = bool(EMOTION_LLM_CFG.get("ENABLED", False))
+EMOTION_LLM_API_KEY = EMOTION_LLM_CFG.get("API_KEY", "")
+EMOTION_LLM_MODEL = EMOTION_LLM_CFG.get("MODEL", "claude-3-5-haiku-latest")
+EMOTION_LLM_URL = EMOTION_LLM_CFG.get("URL", "https://api.anthropic.com/v1/messages")
+EMOTION_LLM_PROMPT_TEMPLATE = EMOTION_LLM_CFG.get(
+    "PROMPT_TEMPLATE",
+    (
+        "You classify emotions for a dashboard and determine their order on a sentiment spectrum.\\n"
+        "Return only JSON with keys: name, emoji, color, insert_after.\\n"
+        "- name: lowercase emotion label (keep user wording unless clearly wrong)\\n"
+        "- emoji: a single emoji (must be unique in catalog)\\n"
+        "- color: hex format like #a1b2c3 (green=positive, blue/gray=neutral, red=negative)\\n"
+        "- insert_after: emotion name to insert after in the catalog, or null to insert at the very beginning of the catalog. Use this to maintain sentiment order.\\n"
+        "\\nCatalog is ordered by sentiment spectrum (most positive → most negative).\\n"
+        "Positioning guidance: Determine where the new emotion fits. Return 'insert_after' as the emotion name to place after, or null to insert at the very beginning of the catalog.\\n"
+        "\\nSentiment reference: green=positive (grateful, happy, excited), blue/gray=neutral (proud, focused, relaxed, wild, curious, bored, tired), orange/red=negative (anxious, angry, sad, stressed).\\n"
+        "\\nCurrent catalog (in order from most positive to most negative):\\n{{catalog_json}}\\n"
+        "\\nNew emotion to classify:\\n{{new_emotion_json}}"
+    ),
+)
+EMOTION_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _load_fallback_style_from_config():
+    try:
+        fallback = config.get("EMOTION", {}).get("FALLBACK_STYLE", {})
+        if isinstance(fallback, dict) and "emoji" in fallback and "color" in fallback:
+            return fallback
+    except Exception:
+        pass
+    return {"emoji": "?", "color": "#9ca3af"}
+
+
+EMOTION_FALLBACK_STYLE = _load_fallback_style_from_config()
+
+
+def _load_default_style_from_shared_catalog():
+    try:
+        with open(EMOTION_DEFAULT_CATALOG_PATH, "r", encoding="utf-8") as defaults_file:
+            catalog = json.load(defaults_file)
+    except (OSError, json.JSONDecodeError):
+        catalog = []
+
+    defaults = {}
+    if isinstance(catalog, list):
+        for entry in catalog:
+            if not isinstance(entry, dict):
+                continue
+            name = " ".join(str(entry.get("name", "")).strip().lower().split())
+            emoji = entry.get("emoji")
+            color = entry.get("color")
+            if not name or not isinstance(emoji, str) or not isinstance(color, str):
+                continue
+            if not EMOTION_COLOR_RE.match(color):
+                continue
+            defaults[name] = {"emoji": emoji, "color": color}
+
+    if defaults:
+        return defaults
+
+    return {
+        "happy": {"emoji": "😊", "color": "#16a34a"},
+        "relaxed": {"emoji": "😌", "color": "#0ea5e9"},
+        "sad": {"emoji": "😢", "color": "#ef4444"},
+        "stressed": {"emoji": "😰", "color": "#dc2626"},
+        "don't know": {"emoji": "🤷", "color": "#9ca3af"},
+    }
+
+
+EMOTION_DEFAULT_STYLE = _load_default_style_from_shared_catalog()
+EMOTION_UNKNOWN_OPTION = "don't know"
 
 web_cfg = config.get("WEB", {})
 WEB_ENABLED = web_cfg.get("ENABLED", True)
@@ -348,6 +427,9 @@ EMOTION_PROMPT_OPENED_AT = 0.0
 EMOTION_PROMPT_SOURCE = "unknown"
 EMOTION_ACTIVE_PROMPT_ID = None
 EMOTION_RESULTS_VISIBLE = False
+EMOTION_CONFIRMATION_VISIBLE = False
+EMOTION_CONFIRMATION_TEXT = ""
+EMOTION_CONFIRMATION_OPENED_AT = 0.0
 EMOTION_PENDING_TRIGGER = None
 EMOTION_PENDING_LOCK = threading.Lock()
 EMOTION_MODAL_RECT = None
@@ -356,6 +438,369 @@ EMOTION_ACTION_RECTS = {}
 EMOTION_QR_SURFACE = None
 EMOTION_QR_URL_CACHE = None
 EMOTION_SHUFFLED_OPTIONS = []
+EMOTION_CUSTOM_SLOTS = []
+EMOTION_CUSTOM_BUTTON_RECTS = []
+EMOTION_KEYBOARD_VISIBLE = False
+EMOTION_KEYBOARD_TEXT = ""
+EMOTION_KEYBOARD_RECTS = []
+EMOTION_LAST_ACTIVITY_TS = 0.0
+EMOTION_CATALOG = []
+
+
+def _normalize_emotion_label(label):
+    if not isinstance(label, str):
+        return ""
+    compact = " ".join(label.strip().lower().split())
+    return compact[:EMOTION_KEYBOARD_MAX_CHARS]
+
+
+def _ensure_unknown_option():
+    global EMOTION_OPTIONS
+
+    normalized = []
+    for emotion in EMOTION_OPTIONS:
+        cleaned = _normalize_emotion_label(str(emotion))
+        if cleaned and cleaned not in normalized:
+            normalized.append(cleaned)
+
+    if EMOTION_UNKNOWN_OPTION not in normalized:
+        normalized.append(EMOTION_UNKNOWN_OPTION)
+
+    EMOTION_OPTIONS = normalized
+
+
+def _load_custom_slots_from_config():
+    slots = config.get("EMOTION", {}).get("CUSTOM_SLOTS", [])
+    if not isinstance(slots, list):
+        return []
+
+    cleaned_slots = []
+    for slot in slots:
+        cleaned = _normalize_emotion_label(slot)
+        if cleaned and cleaned not in EMOTION_DEFAULT_STYLE and cleaned not in cleaned_slots:
+            cleaned_slots.append(cleaned)
+        if len(cleaned_slots) >= EMOTION_CUSTOM_SLOT_COUNT:
+            break
+
+    return cleaned_slots
+
+
+def _build_catalog_from_config():
+    catalog = config.get("EMOTION", {}).get("CATALOG", [])
+    if not isinstance(catalog, list):
+        catalog = []
+
+    normalized = []
+    seen = set()
+    for entry in catalog:
+        if not isinstance(entry, dict):
+            continue
+        name = _normalize_emotion_label(entry.get("name"))
+        if not name or name in seen:
+            continue
+        style = EMOTION_DEFAULT_STYLE.get(name, EMOTION_FALLBACK_STYLE)
+        normalized.append(
+            {
+                "name": name,
+                "emoji": entry.get("emoji") or style["emoji"],
+                "color": entry.get("color") or style["color"],
+            }
+        )
+        seen.add(name)
+
+    if not normalized:
+        for name in EMOTION_OPTIONS:
+            style = EMOTION_DEFAULT_STYLE.get(name, EMOTION_FALLBACK_STYLE)
+            normalized.append({"name": name, "emoji": style["emoji"], "color": style["color"]})
+
+    return normalized
+
+
+def _emotion_names_from_catalog(catalog):
+    return [entry["name"] for entry in catalog]
+
+
+def _ensure_catalog_entry(name, emoji=None, color=None, insert_after=None):
+    global EMOTION_CATALOG
+
+    normalized = _normalize_emotion_label(name)
+    if not normalized:
+        return
+    if any(entry.get("name") == normalized for entry in EMOTION_CATALOG):
+        return
+
+    style = EMOTION_DEFAULT_STYLE.get(normalized, EMOTION_FALLBACK_STYLE)
+    resolved_emoji = emoji or style["emoji"]
+    resolved_color = color if isinstance(color, str) and EMOTION_COLOR_RE.match(color) else style["color"]
+    new_entry = {"name": normalized, "emoji": resolved_emoji, "color": resolved_color}
+
+    # Determine insertion position based on insert_after.
+    # null means insert at the very beginning of the ordered catalog.
+    if insert_after is None:
+        EMOTION_CATALOG.insert(0, new_entry)
+        return
+
+    if insert_after:
+        insert_after_norm = _normalize_emotion_label(insert_after)
+        for idx, entry in enumerate(EMOTION_CATALOG):
+            if entry.get("name") == insert_after_norm:
+                EMOTION_CATALOG.insert(idx + 1, new_entry)
+                return
+
+    # If insert_after is not found, append to end as a safe fallback.
+    EMOTION_CATALOG.append(new_entry)
+
+
+def _extract_first_json_block(payload_text):
+    if not isinstance(payload_text, str):
+        return None
+    payload_text = payload_text.strip()
+    try:
+        return json.loads(payload_text)
+    except json.JSONDecodeError:
+        pass
+
+    start = payload_text.find("{")
+    end = payload_text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    try:
+        return json.loads(payload_text[start : end + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+def _build_llm_classification_prompt(new_emotion):
+    catalog = [
+        {
+            "name": entry.get("name"),
+            "emoji": entry.get("emoji"),
+            "color": entry.get("color"),
+        }
+        for entry in EMOTION_CATALOG
+    ]
+
+    return (
+        EMOTION_LLM_PROMPT_TEMPLATE
+        .replace("{{catalog_json}}", json.dumps(catalog, ensure_ascii=False))
+        .replace("{{new_emotion_json}}", json.dumps({"name": new_emotion}, ensure_ascii=False))
+    )
+
+
+def _classify_custom_emotion(name):
+    style = EMOTION_DEFAULT_STYLE.get(name, EMOTION_FALLBACK_STYLE)
+    fallback = {"name": name, "emoji": style["emoji"], "color": style["color"], "insert_after": None}
+
+    if not EMOTION_LLM_ENABLED or not EMOTION_LLM_API_KEY:
+        return fallback
+
+    try:
+        prompt = _build_llm_classification_prompt(name)
+        logger.info(f"🤖 LLM: Classifying custom emotion '{name}'")
+        logger.info("🤖 LLM: Prompt used:\n%s", prompt)
+
+        response = requests.post(
+            EMOTION_LLM_URL,
+            headers={
+                "content-type": "application/json",
+                "x-api-key": EMOTION_LLM_API_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            timeout=8,
+            json={
+                "model": EMOTION_LLM_MODEL,
+                "max_tokens": 200,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
+        logger.info("🤖 LLM: Raw API response payload:\n%s", json.dumps(payload, ensure_ascii=False, indent=2))
+
+        llm_text = ""
+        if isinstance(payload.get("content"), list) and payload["content"]:
+            llm_text = payload["content"][0].get("text", "")
+        logger.info("🤖 LLM: Raw model answer:\n%s", llm_text)
+
+        parsed = _extract_first_json_block(llm_text)
+        if not isinstance(parsed, dict):
+            logger.info("🤖 LLM: JSON parse check failed, using fallback")
+            logger.info("🤖 LLM: Parse check details - extracted JSON block: missing or invalid")
+            return fallback
+
+        logger.info("🤖 LLM: Parsed JSON:\n%s", json.dumps(parsed, ensure_ascii=False, indent=2))
+
+        required_fields = ("name", "emoji", "color", "insert_after")
+        missing_fields = [field for field in required_fields if field not in parsed]
+        if missing_fields:
+            logger.info("🤖 LLM: JSON check - missing fields: %s", missing_fields)
+        else:
+            logger.info("🤖 LLM: JSON check - all required fields present")
+
+        llm_name = _normalize_emotion_label(parsed.get("name")) or name
+        emoji = parsed.get("emoji") or fallback["emoji"]
+        color = parsed.get("color")
+        color_valid = isinstance(color, str) and EMOTION_COLOR_RE.match(color)
+        if not color_valid:
+            color = fallback["color"]
+        insert_after = parsed.get("insert_after") or None
+
+        logger.info(
+            f"🤖 LLM: Final classification - name='{llm_name}' emoji='{emoji}' "
+            f"color='{color}' insert_after='{insert_after}'"
+        )
+        logger.info(
+            "🤖 LLM: Validation summary - name_normalized=%s emoji_present=%s color_valid=%s insert_after=%s",
+            llm_name == _normalize_emotion_label(parsed.get("name")),
+            bool(emoji),
+            bool(color_valid),
+            insert_after,
+        )
+
+        return {"name": llm_name, "emoji": emoji, "color": color, "insert_after": insert_after}
+    except Exception as llm_ex:
+        logger.info(f"🤖 LLM: Classification failed for '{name}': {llm_ex}, using fallback")
+        return fallback
+
+
+def touch_emotion_prompt_activity():
+    global EMOTION_LAST_ACTIVITY_TS
+    EMOTION_LAST_ACTIVITY_TS = time.time()
+
+
+def _persist_emotion_config(custom_slots):
+    global emotion_cfg
+
+    config.setdefault("EMOTION", {})
+    config["EMOTION"]["CUSTOM_SLOTS"] = custom_slots
+    config["EMOTION"]["CATALOG"] = EMOTION_CATALOG
+    emotion_cfg = config["EMOTION"]
+
+    with open(EMOTION_CONFIG_PATH, "w", encoding="utf-8") as config_file:
+        json.dump(config, config_file, indent=4)
+
+
+def _get_emotion_usage_counts():
+    usage = {}
+    for event in read_emotion_events(EMOTION_LOG_PATH):
+        if event.get("skipped"):
+            continue
+        emotion = _normalize_emotion_label(event.get("emotion"))
+        if not emotion:
+            continue
+        usage[emotion] = usage.get(emotion, 0) + 1
+    return usage
+
+
+def _upsert_custom_slot(label):
+    global EMOTION_CUSTOM_SLOTS
+
+    normalized = _normalize_emotion_label(label)
+    if not normalized:
+        logger.info(f"✏️  Custom emotion: Normalization failed for '{label}'")
+        return None
+
+    # Check if it exists in default options
+    if normalized in EMOTION_OPTIONS:
+        logger.info(f"✏️  Custom emotion: '{normalized}' already in default options")
+        return {"emotion": normalized, "added": False, "duplicate": True, "reason": "default-options"}
+
+    # Check if it's already in custom slots
+    if normalized in EMOTION_CUSTOM_SLOTS:
+        logger.info(f"✏️  Custom emotion: '{normalized}' already in custom slots")
+        return {"emotion": normalized, "added": False, "duplicate": True, "reason": "custom-slot"}
+
+    # Check if it already exists in catalog
+    if any(entry.get("name") == normalized for entry in EMOTION_CATALOG):
+        logger.info(f"✏️  Custom emotion: '{normalized}' already in catalog")
+        return {"emotion": normalized, "added": False, "duplicate": True, "reason": "catalog"}
+
+    logger.info(f"✏️  Custom emotion: New emotion '{normalized}', classifying with LLM...")
+
+    # It's truly new - classify it to get LLM suggestions (including potential spelling corrections)
+    classification = _classify_custom_emotion(normalized)
+
+    # LLM might have corrected/normalized the name to something else
+    llm_name = classification.get("name", normalized)
+
+    # Check if the LLM-suggested name already exists in catalog
+    if any(entry.get("name") == llm_name for entry in EMOTION_CATALOG):
+        # LLM corrected it to an existing emotion - use that instead (don't modify slots)
+        logger.info(f"✏️  Custom emotion: LLM corrected '{normalized}' → '{llm_name}' (already in catalog)")
+        return {"emotion": llm_name, "added": False, "duplicate": True, "reason": "llm-catalog-correction"}
+
+    # Truly new emotion - add to slots with the (possibly corrected) LLM name
+    slots = list(EMOTION_CUSTOM_SLOTS)
+    if len(slots) < EMOTION_CUSTOM_SLOT_COUNT:
+        slots.append(llm_name)
+        logger.info(f"✏️  Custom emotion: Added '{llm_name}' to custom slots (total: {len(slots)})")
+    else:
+        usage = _get_emotion_usage_counts()
+        left_usage = usage.get(slots[0], 0)
+        right_usage = usage.get(slots[1], 0)
+        replace_index = 0 if left_usage <= right_usage else 1
+        old_emotion = slots[replace_index]
+        slots[replace_index] = llm_name
+        logger.info(f"✏️  Custom emotion: Replaced '{old_emotion}' (usage={[left_usage, right_usage][replace_index]}) with '{llm_name}'")
+
+    # Add to catalog with LLM-suggested emoji, color, and position
+    _ensure_catalog_entry(
+        llm_name,
+        emoji=classification.get("emoji"),
+        color=classification.get("color"),
+        insert_after=classification.get("insert_after"),
+    )
+
+    EMOTION_CUSTOM_SLOTS = slots
+    _persist_emotion_config(slots)
+    logger.info(f"✏️  Custom emotion: Successfully added '{llm_name}' to catalog and persisted config")
+    return {"emotion": llm_name, "added": True, "duplicate": False, "reason": "new"}
+
+
+def _apply_emotion_keyboard_token(token):
+    global EMOTION_KEYBOARD_TEXT
+
+    touch_emotion_prompt_activity()
+
+    if token == "back":
+        EMOTION_KEYBOARD_TEXT = EMOTION_KEYBOARD_TEXT[:-1]
+        return
+    if token == "clear":
+        EMOTION_KEYBOARD_TEXT = ""
+        return
+    if token == "space":
+        if EMOTION_KEYBOARD_TEXT and len(EMOTION_KEYBOARD_TEXT) < EMOTION_KEYBOARD_MAX_CHARS:
+            EMOTION_KEYBOARD_TEXT += " "
+        return
+    if len(EMOTION_KEYBOARD_TEXT) < EMOTION_KEYBOARD_MAX_CHARS:
+        EMOTION_KEYBOARD_TEXT += token
+
+
+def _submit_custom_emotion():
+    global EMOTION_KEYBOARD_TEXT, EMOTION_KEYBOARD_VISIBLE
+
+    label = _normalize_emotion_label(EMOTION_KEYBOARD_TEXT)
+    if not label:
+        logger.info(f"✏️  Custom emotion: Empty/invalid input, keyboard dismissed")
+        EMOTION_KEYBOARD_VISIBLE = False
+        EMOTION_KEYBOARD_TEXT = ""
+        return
+
+    logger.info(f"✏️  Custom emotion: User submitted '{label}'")
+    selected = _upsert_custom_slot(label)
+    EMOTION_KEYBOARD_VISIBLE = False
+    EMOTION_KEYBOARD_TEXT = ""
+    if selected:
+        handle_emotion_choice(emotion=selected.get("emotion"), skipped=False)
+        if selected.get("duplicate"):
+            show_emotion_confirmation_message(
+                f"Emotion '{selected.get('emotion')}' logged,\nbut not added\nas duplicate"
+            )
 
 
 def get_emotion_prompt_options(max_count=16):
@@ -379,6 +824,17 @@ def fit_emotion_label_font(emotion, max_width):
         if font.size(emotion)[0] <= max_width:
             return font
     return FONT_SUPER_TINY
+
+
+EMOTION_CATALOG = _build_catalog_from_config()
+EMOTION_OPTIONS = [
+    name for name in _emotion_names_from_catalog(EMOTION_CATALOG) if name in EMOTION_DEFAULT_STYLE
+]
+if not EMOTION_OPTIONS:
+    EMOTION_OPTIONS = list(EMOTION_DEFAULT_STYLE.keys())
+_ensure_unknown_option()
+_ensure_catalog_entry(EMOTION_UNKNOWN_OPTION)
+EMOTION_CUSTOM_SLOTS = _load_custom_slots_from_config()
 
 try:
     # if you do local development you can add a mock server (e.g. from postman.io our your homebrew solution)
@@ -1055,7 +1511,7 @@ class WeatherUpdate(object):
         temp_out_unit = "°C" if METRIC else "°F"
         temp_out_string = str(temp_out + temp_out_unit)
         precip = WEATHER_JSON_DATA["daily"]["data"][0]["pop"]
-        precip_string = str(f"{precip} %")
+        precip_string = str(f"{precip}%")
 
         today = daily_forecast[0]
         day_1 = daily_forecast[1]
@@ -1072,9 +1528,10 @@ class WeatherUpdate(object):
         day_3_ts = time.mktime(time.strptime(day_3["datetime"], "%Y-%m-%d"))
         day_3_ts = convert_timestamp(day_3_ts, df_forecast)
 
-        day_1_min_max_temp = f"{int(day_1['low_temp'])} | {int(day_1['high_temp'])}"
-        day_2_min_max_temp = f"{int(day_2['low_temp'])} | {int(day_2['high_temp'])}"
-        day_3_min_max_temp = f"{int(day_3['low_temp'])} | {int(day_3['high_temp'])}"
+        today_min_max_temp = f"({int(today['high_temp'])} | {int(today['low_temp'])})"
+        day_1_min_max_temp = f"{int(day_1['high_temp'])} | {int(day_1['low_temp'])}"
+        day_2_min_max_temp = f"{int(day_2['high_temp'])} | {int(day_2['low_temp'])}"
+        day_3_min_max_temp = f"{int(day_3['high_temp'])} | {int(day_3['low_temp'])}"
 
         sunrise = convert_timestamp(today["sunrise_ts"], df_sun)
         sunset = convert_timestamp(today["sunset_ts"], df_sun)
@@ -1119,11 +1576,11 @@ class WeatherUpdate(object):
         if not ANIMATION:
             if PRECIPTYPE == config["LOCALE"]["RAIN_STR"]:
 
-                DrawImage(new_surf, images["preciprain"], size=20).draw_position(pos=(130, 90))
+                DrawImage(new_surf, images["preciprain"], size=20).draw_position(pos=(130, 86))
 
             elif PRECIPTYPE == config["LOCALE"]["SNOW_STR"]:
 
-                DrawImage(new_surf, images["precipsnow"], size=20).draw_position(pos=(130, 90))
+                DrawImage(new_surf, images["precipsnow"], size=20).draw_position(pos=(130, 86))
 
         DrawImage(new_surf, images["sunrise"], 132, size=20).left()
         DrawImage(new_surf, images["sunset"], 152, size=20).left()
@@ -1132,9 +1589,9 @@ class WeatherUpdate(object):
 
         draw_moon_layer(new_surf, int(132 * ZOOM), int(42 * ZOOM))
 
-        DrawImage(new_surf, images[FORECASTICON_DAY_1], 215, size=50).center(3, 0)
-        DrawImage(new_surf, images[FORECASTICON_DAY_2], 215, size=50).center(3, 1)
-        DrawImage(new_surf, images[FORECASTICON_DAY_3], 215, size=50).center(3, 2)
+        DrawImage(new_surf, images[FORECASTICON_DAY_1], 210, size=50).center(3, 0)
+        DrawImage(new_surf, images[FORECASTICON_DAY_2], 210, size=50).center(3, 1)
+        DrawImage(new_surf, images[FORECASTICON_DAY_3], 210, size=50).center(3, 2)
 
         # draw all the strings
         if config["DISPLAY"]["SHOW_API_STATS"]:
@@ -1145,9 +1602,9 @@ class WeatherUpdate(object):
         # DrawString(new_surf, summary_string, FONT_SMALL_BOLD, VIOLET, 50).center(1, 0)
         # Ignoring the summary string for now (like "Scattered clouds")
 
-        DrawString(new_surf, temp_out_string, FONT_BIG, ORANGE, 50).right()
-
-        DrawString(new_surf, precip_string, FONT_BIG, PRECIPCOLOR, 80).right()
+        DrawString(new_surf, temp_out_string, FONT_BIG, ORANGE, 50).right(33)
+        DrawString(new_surf, today_min_max_temp, FONT_TINY, MAIN_FONT, 64).right(-10)
+        DrawString(new_surf, precip_string, FONT_BIG, PRECIPCOLOR, 84).right(10)
         # Ignoring the "Precipitation" label for now
         # DrawString(new_surf, PRECIPTYPE, FONT_SMALL_BOLD, PRECIPCOLOR, 140).right()
 
@@ -1160,13 +1617,13 @@ class WeatherUpdate(object):
         DrawString(new_surf, wind_speed_string, FONT_SMALL_BOLD, MAIN_FONT, 154).center(3, 2)
 
 
-        DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 180).center(3, 0)
-        DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 180).center(3, 1)
-        DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 180).center(3, 2)
+        DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 0)
+        DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 1)
+        DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 2)
 
-        DrawString(new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 195).center(3, 0)
-        DrawString(new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 195).center(3, 1)
-        DrawString(new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 195).center(3, 2)
+        DrawString(new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 0)
+        DrawString(new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 1)
+        DrawString(new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 2)
 
 
         weather_surf = new_surf
@@ -1256,12 +1713,9 @@ class BVGUpdate(object):
 
             # Draw a line of bus information for direction to the left
             DrawImage(new_surf, images["arrow"], 262, size=13, fillcolor=RED, angle=90).left(-3)
-            DrawImage(new_surf, images["bus"], 263, size=10).left(
-                10
-            )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
-            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 260).left(22)
-            bvg_print = ""
-            # Print closest two connections for each direction
+            left_departure_times = []
+            left_departure_delays = []
+            # Print closest three connections for each direction
             if len(BVG_STOP_INFORMATION) and len(
                 results_left := BVG_STOP_INFORMATION[
                     BVG_STOP_INFORMATION["direction_str"] == "left"
@@ -1269,31 +1723,40 @@ class BVGUpdate(object):
             ):
                 departures_reported = 0
                 for _, departure in results_left.iterrows():
-                    if departures_reported >= 2:
+                    if departures_reported >= 3:
                         break
                     delay = departure["delay"]
-                    if delay > 0:
-                        delay = f"+{delay}'"
-                    elif delay < 0:
-                        delay = f"{delay}'"
-                    else:
-                        delay = ""
-                    and_print = ", " if departures_reported > 0 else ""
-                    bvg_print += f"{and_print}{departure['departure']}{delay}"
+                    departure_time = departure['departure']
+                    left_departure_times.append(departure_time)
+                    left_departure_delays.append(delay)
                     departures_reported += 1
+
+            DrawImage(new_surf, images["bus"], 263, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 260).left(22)
+            if left_departure_times:
+                departure_x = int(68 * ZOOM)
+                for index, departure_time in enumerate(left_departure_times):
+                    if index > 0:
+                        comma_surface = FONT_SMALL.render(",", True, ORANGE)
+                        new_surf.blit(comma_surface, (departure_x, int(260 * ZOOM)))
+                        departure_x += comma_surface.get_width()
+
+                    departure_color = _delay_to_departure_text_color(left_departure_delays[index])
+                    departure_surface = FONT_SMALL.render(departure_time, True, departure_color)
+                    new_surf.blit(departure_surface, (departure_x, int(260 * ZOOM)))
+                    departure_x += departure_surface.get_width()
+                # DrawImage(new_surf, images["haltestelle"], 263, size=10).right(10)
             else:
                 bvg_print = "none :("
 
-            DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 260).left(60)
-            DrawImage(new_surf, images["haltestelle"], 263, size=10).right()
+                DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 260).left(60)
 
             # Perform same stuff for the right direction
             DrawImage(new_surf, images["arrow"], 282, size=13, fillcolor=RED, angle=-90).left(-3)
-            DrawImage(new_surf, images["bus"], 283, size=10).left(
-                10
-            )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+            right_departure_times = []
+            right_departure_delays = []
             DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 280).left(22)
-            bvg_print = ""
+            bvg_print = "none :("
             # Print closest two connections for each direction
             if len(BVG_STOP_INFORMATION) and len(
                 results_right := BVG_STOP_INFORMATION[
@@ -1302,23 +1765,30 @@ class BVGUpdate(object):
             ):
                 departures_reported = 0
                 for _, departure in results_right.iterrows():
-                    if departures_reported >= 2:
+                    if departures_reported >= 3:
                         break
                     delay = departure["delay"]
-                    if delay > 0:
-                        delay = f"+{delay}'"
-                    elif delay < 0:
-                        delay = f"{delay}'"
-                    else:
-                        delay = ""
-                    and_print = ", " if departures_reported > 0 else ""
-                    bvg_print += f"{and_print}{departure['departure']}{delay}"
+                    departure_time = departure['departure']
+                    right_departure_times.append(departure_time)
+                    right_departure_delays.append(delay)
                     departures_reported += 1
-            else:
-                bvg_print = "none :("
 
-            DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 280).left(60)
-            DrawImage(new_surf, images["haltestelle"], 283, size=10).right()
+            DrawImage(new_surf, images["bus"], 283, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+            if right_departure_times:
+                departure_x = int(68 * ZOOM)
+                for index, departure_time in enumerate(right_departure_times):
+                    if index > 0:
+                        comma_surface = FONT_SMALL.render(",", True, ORANGE)
+                        new_surf.blit(comma_surface, (departure_x, int(280 * ZOOM)))
+                        departure_x += comma_surface.get_width()
+
+                    departure_color = _delay_to_departure_text_color(right_departure_delays[index])
+                    departure_surface = FONT_SMALL.render(departure_time, True, departure_color)
+                    new_surf.blit(departure_surface, (departure_x, int(280 * ZOOM)))
+                    departure_x += departure_surface.get_width()
+                # DrawImage(new_surf, images["haltestelle"], 283, size=10).right(10)
+            else:
+                DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 280).left(60)
 
         # Extra information
         ju_msg = "Ju likes you. Have a nice day!"
@@ -1373,7 +1843,9 @@ def activate_pending_emotion_prompt():
     global EMOTION_PENDING_TRIGGER, EMOTION_PROMPT_VISIBLE, EMOTION_PROMPT_OPENED_AT
     global EMOTION_PROMPT_SOURCE, EMOTION_LAST_PROMPT_TS, EMOTION_ACTIVE_PROMPT_ID
     global EMOTION_RESULTS_VISIBLE, EMOTION_BUTTON_RECTS, EMOTION_ACTION_RECTS
-    global EMOTION_SHUFFLED_OPTIONS
+    global EMOTION_SHUFFLED_OPTIONS, EMOTION_CUSTOM_SLOTS, EMOTION_KEYBOARD_VISIBLE
+    global EMOTION_KEYBOARD_TEXT, EMOTION_CUSTOM_BUTTON_RECTS, EMOTION_KEYBOARD_RECTS
+    global EMOTION_LAST_ACTIVITY_TS
 
     if not EMOTION_ENABLED or DISPLAY_BLANK:
         return
@@ -1388,10 +1860,16 @@ def activate_pending_emotion_prompt():
     EMOTION_RESULTS_VISIBLE = False
     EMOTION_PROMPT_OPENED_AT = time.time()
     EMOTION_LAST_PROMPT_TS = EMOTION_PROMPT_OPENED_AT
+    EMOTION_LAST_ACTIVITY_TS = EMOTION_PROMPT_OPENED_AT
     EMOTION_PROMPT_SOURCE = source
     EMOTION_ACTIVE_PROMPT_ID = str(uuid.uuid4())
     EMOTION_BUTTON_RECTS = []
     EMOTION_ACTION_RECTS = {}
+    EMOTION_CUSTOM_BUTTON_RECTS = []
+    EMOTION_KEYBOARD_RECTS = []
+    EMOTION_KEYBOARD_VISIBLE = False
+    EMOTION_KEYBOARD_TEXT = ""
+    EMOTION_CUSTOM_SLOTS = _load_custom_slots_from_config()
     EMOTION_SHUFFLED_OPTIONS = get_emotion_prompt_options(max_count=16)
     random.shuffle(EMOTION_SHUFFLED_OPTIONS)
     logger.info(f"Emotion prompt activated (source={source})")
@@ -1399,7 +1877,8 @@ def activate_pending_emotion_prompt():
 
 def dismiss_emotion_prompt(reason):
     global EMOTION_PROMPT_VISIBLE, EMOTION_RESULTS_VISIBLE, EMOTION_BUTTON_RECTS
-    global EMOTION_ACTION_RECTS, EMOTION_MODAL_RECT
+    global EMOTION_ACTION_RECTS, EMOTION_MODAL_RECT, EMOTION_CUSTOM_BUTTON_RECTS
+    global EMOTION_KEYBOARD_VISIBLE, EMOTION_KEYBOARD_TEXT, EMOTION_KEYBOARD_RECTS
 
     if not EMOTION_PROMPT_VISIBLE and not EMOTION_RESULTS_VISIBLE:
         return
@@ -1407,9 +1886,43 @@ def dismiss_emotion_prompt(reason):
     EMOTION_PROMPT_VISIBLE = False
     EMOTION_RESULTS_VISIBLE = False
     EMOTION_BUTTON_RECTS = []
+    EMOTION_CUSTOM_BUTTON_RECTS = []
+    EMOTION_KEYBOARD_RECTS = []
     EMOTION_ACTION_RECTS = {}
+    EMOTION_KEYBOARD_VISIBLE = False
+    EMOTION_KEYBOARD_TEXT = ""
     EMOTION_MODAL_RECT = None
     logger.info(f"Emotion prompt dismissed ({reason})")
+
+
+def show_emotion_confirmation(emotion):
+    global EMOTION_CONFIRMATION_VISIBLE, EMOTION_CONFIRMATION_TEXT, EMOTION_CONFIRMATION_OPENED_AT
+
+    EMOTION_CONFIRMATION_TEXT = f"Emotion '{emotion}' logged"
+    EMOTION_CONFIRMATION_OPENED_AT = time.time()
+    EMOTION_CONFIRMATION_VISIBLE = True
+    logger.info(f"Emotion confirmation shown: {EMOTION_CONFIRMATION_TEXT}")
+
+
+def show_emotion_confirmation_message(message):
+    global EMOTION_CONFIRMATION_VISIBLE, EMOTION_CONFIRMATION_TEXT, EMOTION_CONFIRMATION_OPENED_AT
+
+    EMOTION_CONFIRMATION_TEXT = message
+    EMOTION_CONFIRMATION_OPENED_AT = time.time()
+    EMOTION_CONFIRMATION_VISIBLE = True
+    logger.info(f"Emotion confirmation shown: {EMOTION_CONFIRMATION_TEXT}")
+
+
+def dismiss_emotion_confirmation(reason):
+    global EMOTION_CONFIRMATION_VISIBLE, EMOTION_CONFIRMATION_TEXT, EMOTION_CONFIRMATION_OPENED_AT
+
+    if not EMOTION_CONFIRMATION_VISIBLE:
+        return
+
+    EMOTION_CONFIRMATION_VISIBLE = False
+    EMOTION_CONFIRMATION_TEXT = ""
+    EMOTION_CONFIRMATION_OPENED_AT = 0.0
+    logger.info(f"Emotion confirmation dismissed ({reason})")
 
 
 def handle_emotion_choice(emotion=None, skipped=False):
@@ -1422,6 +1935,8 @@ def handle_emotion_choice(emotion=None, skipped=False):
     )
     logger.info(f"Emotion event logged: {payload}")
     dismiss_emotion_prompt("user-selection")
+    if emotion and not skipped:
+        show_emotion_confirmation(emotion)
 
 
 def get_qr_surface(url, pixel_size=210):
@@ -1474,8 +1989,52 @@ def draw_results_overlay():
     tft_surf.blit(hint_text, hint_text.get_rect(midbottom=(card.centerx, card.bottom - 8)))
 
 
+def draw_emotion_confirmation_overlay():
+    if not EMOTION_CONFIRMATION_VISIBLE:
+        return
+
+    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
+    fog.fill((0, 0, 0, 120))
+    tft_surf.blit(fog, (0, 0))
+
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+
+    message_lines = [line for line in EMOTION_CONFIRMATION_TEXT.splitlines() if line.strip()]
+    if not message_lines:
+        message_lines = [EMOTION_CONFIRMATION_TEXT]
+
+    title_surface = FONT_SMALL_BOLD.render("Emotion saved", True, BLACK)
+    message_surfaces = [FONT_TINY.render(line, True, DARK_GRAY) for line in message_lines]
+    hint_surface = FONT_SUPER_TINY.render("Tap to close", True, DARK_GRAY)
+
+    content_width = max(
+        title_surface.get_width(),
+        hint_surface.get_width(),
+        max((surface.get_width() for surface in message_surfaces), default=0),
+    )
+    card_width = max(160, min(int(dashboard_rect.width * 0.92), content_width + 32))
+
+    card_height = max(72, 58 + (len(message_lines) * 14))
+    card = pygame.Rect(0, 0, card_width, card_height)
+    card.center = (DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2)
+
+    pygame.draw.rect(tft_surf, WHITE, card, border_radius=14)
+    pygame.draw.rect(tft_surf, SWEET_PURPLE, card, width=2, border_radius=14)
+
+    tft_surf.blit(title_surface, title_surface.get_rect(midtop=(card.centerx, card.top + 10)))
+
+    message_top = card.top + 34
+    line_gap = 2
+    for index, message_surface in enumerate(message_surfaces):
+        line_y = message_top + index * (message_surface.get_height() + line_gap)
+        tft_surf.blit(message_surface, message_surface.get_rect(midtop=(card.centerx, line_y)))
+
+    tft_surf.blit(hint_surface, hint_surface.get_rect(midbottom=(card.centerx, card.bottom - 8)))
+
+
 def draw_emotion_prompt_overlay():
     global EMOTION_MODAL_RECT, EMOTION_BUTTON_RECTS, EMOTION_ACTION_RECTS
+    global EMOTION_CUSTOM_BUTTON_RECTS, EMOTION_KEYBOARD_RECTS
 
     if not EMOTION_PROMPT_VISIBLE:
         return
@@ -1525,56 +2084,209 @@ def draw_emotion_prompt_overlay():
     inner_pad = 14
     button_area_top = title_line_2_rect.bottom + 12
     action_height = 44
-    actions_total_height = action_height
-    button_area_bottom = EMOTION_MODAL_RECT.bottom - actions_total_height - inner_pad - 8
-    options = EMOTION_SHUFFLED_OPTIONS if EMOTION_SHUFFLED_OPTIONS else get_emotion_prompt_options(max_count=16)
-    columns = get_emotion_grid_columns(len(options))
     button_gap = 8
-    rows = max(1, math.ceil(len(options) / columns))
-
-    button_width = int((EMOTION_MODAL_RECT.width - (2 * inner_pad) - ((columns - 1) * button_gap)) / columns)
-    button_height = int((button_area_bottom - button_area_top - ((rows - 1) * button_gap)) / rows)
+    action_y = EMOTION_MODAL_RECT.bottom - action_height - inner_pad
+    action_width = EMOTION_MODAL_RECT.width - 2 * inner_pad
 
     EMOTION_BUTTON_RECTS = []
-    for idx, emotion in enumerate(options):
-        row = idx // columns
-        col = idx % columns
-        button_x = EMOTION_MODAL_RECT.left + inner_pad + col * (button_width + button_gap)
-        button_y = button_area_top + row * (button_height + button_gap)
-        button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
-        pygame.draw.rect(tft_surf, SWEET_PURPLE, button_rect, border_radius=10)
-        pygame.draw.rect(tft_surf, VIOLET, button_rect, width=2, border_radius=10)
+    EMOTION_CUSTOM_BUTTON_RECTS = []
+    EMOTION_KEYBOARD_RECTS = []
 
-        label_font = fit_emotion_label_font(emotion, button_rect.width - 12)
-        label = label_font.render(emotion, True, BLACK)
-        label_rect = label.get_rect(center=button_rect.center)
-        tft_surf.blit(label, label_rect)
-        EMOTION_BUTTON_RECTS.append({"emotion": emotion, "rect": button_rect})
+    if EMOTION_KEYBOARD_VISIBLE:
+        input_rect = pygame.Rect(
+            EMOTION_MODAL_RECT.left + inner_pad,
+            button_area_top,
+            action_width,
+            34,
+        )
+        pygame.draw.rect(tft_surf, (245, 245, 245), input_rect, border_radius=8)
+        pygame.draw.rect(tft_surf, DARK_GRAY, input_rect, width=1, border_radius=8)
 
-    action_y = EMOTION_MODAL_RECT.bottom - actions_total_height - inner_pad
-    action_width = EMOTION_MODAL_RECT.width - 2 * inner_pad
-    show_rect = pygame.Rect(EMOTION_MODAL_RECT.left + inner_pad, action_y, action_width, action_height)
+        typed = EMOTION_KEYBOARD_TEXT if EMOTION_KEYBOARD_TEXT else "type custom emotion"
+        typed_color = BLACK if EMOTION_KEYBOARD_TEXT else DARK_GRAY
+        typed_text = FONT_TINY.render(typed, True, typed_color)
+        tft_surf.blit(typed_text, typed_text.get_rect(midleft=(input_rect.left + 8, input_rect.centery)))
 
-    pygame.draw.rect(tft_surf, GREEN, show_rect, border_radius=10)
-    pygame.draw.rect(tft_surf, DARK_GRAY, show_rect, width=2, border_radius=10)
+        keys_area_top = input_rect.bottom + 8
+        keys_area_bottom = action_y - 8
+        keyboard_rows = ["qwertyuiop", "asdfghjkl", "zxcvbnm"]
+        key_height = max(20, int((keys_area_bottom - keys_area_top - 5 * 6) / 4))
 
-    show_text = FONT_SMALL_BOLD.render("Show results", True, BLACK)
-    tft_surf.blit(show_text, show_text.get_rect(center=show_rect.center))
+        row_y = keys_area_top
+        for row_chars in keyboard_rows:
+            chars = list(row_chars)
+            gap = 6
+            key_width = int((action_width - (len(chars) - 1) * gap) / len(chars))
+            for idx, char in enumerate(chars):
+                key_x = EMOTION_MODAL_RECT.left + inner_pad + idx * (key_width + gap)
+                key_rect = pygame.Rect(key_x, row_y, key_width, key_height)
+                pygame.draw.rect(tft_surf, SWEET_PURPLE, key_rect, border_radius=6)
+                pygame.draw.rect(tft_surf, VIOLET, key_rect, width=1, border_radius=6)
+                key_text = FONT_TINY.render(char, True, BLACK)
+                tft_surf.blit(key_text, key_text.get_rect(center=key_rect.center))
+                EMOTION_KEYBOARD_RECTS.append({"token": char, "rect": key_rect})
+            row_y += key_height + 6
 
-    EMOTION_ACTION_RECTS = {"close": close_rect, "show_results": show_rect}
+        fn_tokens = ["space", "back", "clear"]
+        gap = 6
+        fn_width = int((action_width - 2 * gap) / 3)
+        for idx, token in enumerate(fn_tokens):
+            fn_x = EMOTION_MODAL_RECT.left + inner_pad + idx * (fn_width + gap)
+            fn_rect = pygame.Rect(fn_x, row_y, fn_width, key_height)
+            pygame.draw.rect(tft_surf, (230, 230, 230), fn_rect, border_radius=6)
+            pygame.draw.rect(tft_surf, DARK_GRAY, fn_rect, width=1, border_radius=6)
+            fn_text = FONT_TINY.render(token, True, BLACK)
+            tft_surf.blit(fn_text, fn_text.get_rect(center=fn_rect.center))
+            EMOTION_KEYBOARD_RECTS.append({"token": token, "rect": fn_rect})
+
+        cancel_rect = pygame.Rect(
+            EMOTION_MODAL_RECT.left + inner_pad,
+            action_y,
+            int((action_width - button_gap) / 2),
+            action_height,
+        )
+        save_rect = pygame.Rect(
+            cancel_rect.right + button_gap,
+            action_y,
+            int((action_width - button_gap) / 2),
+            action_height,
+        )
+
+        pygame.draw.rect(tft_surf, ORANGE, cancel_rect, border_radius=10)
+        pygame.draw.rect(tft_surf, DARK_GRAY, cancel_rect, width=2, border_radius=10)
+        pygame.draw.rect(tft_surf, GREEN, save_rect, border_radius=10)
+        pygame.draw.rect(tft_surf, DARK_GRAY, save_rect, width=2, border_radius=10)
+
+        cancel_text = FONT_SMALL_BOLD.render("Cancel", True, BLACK)
+        save_text = FONT_SMALL_BOLD.render("Save", True, BLACK)
+        tft_surf.blit(cancel_text, cancel_text.get_rect(center=cancel_rect.center))
+        tft_surf.blit(save_text, save_text.get_rect(center=save_rect.center))
+
+        EMOTION_ACTION_RECTS = {
+            "close": close_rect,
+            "keyboard_cancel": cancel_rect,
+            "keyboard_save": save_rect,
+        }
+    else:
+        custom_row_height = 38
+        button_area_bottom = action_y - custom_row_height - 16
+        options = EMOTION_SHUFFLED_OPTIONS if EMOTION_SHUFFLED_OPTIONS else get_emotion_prompt_options(max_count=16)
+        columns = get_emotion_grid_columns(len(options))
+        rows = max(1, math.ceil(len(options) / columns))
+
+        button_width = int((EMOTION_MODAL_RECT.width - (2 * inner_pad) - ((columns - 1) * button_gap)) / columns)
+        button_height = int((button_area_bottom - button_area_top - ((rows - 1) * button_gap)) / rows)
+
+        for idx, emotion in enumerate(options):
+            row = idx // columns
+            col = idx % columns
+            button_x = EMOTION_MODAL_RECT.left + inner_pad + col * (button_width + button_gap)
+            button_y = button_area_top + row * (button_height + button_gap)
+            button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
+            pygame.draw.rect(tft_surf, SWEET_PURPLE, button_rect, border_radius=10)
+            pygame.draw.rect(tft_surf, VIOLET, button_rect, width=2, border_radius=10)
+
+            label_font = fit_emotion_label_font(emotion, button_rect.width - 12)
+            label = label_font.render(emotion, True, BLACK)
+            label_rect = label.get_rect(center=button_rect.center)
+            tft_surf.blit(label, label_rect)
+            EMOTION_BUTTON_RECTS.append({"emotion": emotion, "rect": button_rect})
+
+        custom_y = action_y - custom_row_height - 8
+        custom_width = int((action_width - 3 * button_gap) / 4)
+        custom_labels = [
+            EMOTION_CUSTOM_SLOTS[0] if len(EMOTION_CUSTOM_SLOTS) > 0 else "",
+            EMOTION_CUSTOM_SLOTS[1] if len(EMOTION_CUSTOM_SLOTS) > 1 else "",
+            EMOTION_CUSTOM_SLOTS[2] if len(EMOTION_CUSTOM_SLOTS) > 2 else "",
+            EMOTION_CUSTOM_TRIGGER_LABEL,
+        ]
+
+        for idx, label in enumerate(custom_labels):
+            custom_x = EMOTION_MODAL_RECT.left + inner_pad + idx * (custom_width + button_gap)
+            custom_rect = pygame.Rect(custom_x, custom_y, custom_width, custom_row_height)
+
+            # Custom emotion slots use purple like the main emotion buttons.
+            if idx < 3:
+                if label:
+                    fill_color = SWEET_PURPLE
+                    border_color = VIOLET
+                    text_color = BLACK
+                else:
+                    fill_color = (240, 240, 240)
+                    border_color = DARK_GRAY
+                    text_color = DARK_GRAY
+            else:
+                fill_color = (236, 236, 236)
+                border_color = DARK_GRAY
+                text_color = BLACK
+
+            pygame.draw.rect(tft_surf, fill_color, custom_rect, border_radius=8)
+            pygame.draw.rect(tft_surf, border_color, custom_rect, width=2, border_radius=8)
+            display_label = label if label else ""
+            custom_font = fit_emotion_label_font(display_label, custom_rect.width - 10)
+            custom_text = custom_font.render(display_label, True, text_color)
+            tft_surf.blit(custom_text, custom_text.get_rect(center=custom_rect.center))
+
+            if idx < 3:
+                if label:
+                    EMOTION_CUSTOM_BUTTON_RECTS.append(
+                        {"type": "slot", "emotion": label, "rect": custom_rect}
+                    )
+            else:
+                EMOTION_CUSTOM_BUTTON_RECTS.append(
+                    {"type": "trigger", "rect": custom_rect}
+                )
+
+        show_rect = pygame.Rect(EMOTION_MODAL_RECT.left + inner_pad, action_y, action_width, action_height)
+        pygame.draw.rect(tft_surf, GREEN, show_rect, border_radius=10)
+        pygame.draw.rect(tft_surf, DARK_GRAY, show_rect, width=2, border_radius=10)
+
+        show_text = FONT_SMALL_BOLD.render("Show results", True, BLACK)
+        tft_surf.blit(show_text, show_text.get_rect(center=show_rect.center))
+
+        EMOTION_ACTION_RECTS = {"close": close_rect, "show_results": show_rect}
 
     if EMOTION_RESULTS_VISIBLE:
         draw_results_overlay()
 
 
 def handle_emotion_popup_click(mx, my):
-    global EMOTION_RESULTS_VISIBLE
+    global EMOTION_RESULTS_VISIBLE, EMOTION_KEYBOARD_VISIBLE, EMOTION_KEYBOARD_TEXT
+
+    if EMOTION_CONFIRMATION_VISIBLE:
+        dismiss_emotion_confirmation("tap")
+        return True
 
     if not EMOTION_PROMPT_VISIBLE:
         return False
 
+    touch_emotion_prompt_activity()
+
     if EMOTION_RESULTS_VISIBLE:
         EMOTION_RESULTS_VISIBLE = False
+        return True
+
+    close_rect = EMOTION_ACTION_RECTS.get("close")
+    if close_rect and close_rect.collidepoint((mx, my)):
+        handle_emotion_choice(skipped=True)
+        return True
+
+    if EMOTION_KEYBOARD_VISIBLE:
+        cancel_rect = EMOTION_ACTION_RECTS.get("keyboard_cancel")
+        if cancel_rect and cancel_rect.collidepoint((mx, my)):
+            EMOTION_KEYBOARD_VISIBLE = False
+            EMOTION_KEYBOARD_TEXT = ""
+            return True
+
+        save_rect = EMOTION_ACTION_RECTS.get("keyboard_save")
+        if save_rect and save_rect.collidepoint((mx, my)):
+            _submit_custom_emotion()
+            return True
+
+        for key_button in EMOTION_KEYBOARD_RECTS:
+            if key_button["rect"].collidepoint((mx, my)):
+                _apply_emotion_keyboard_token(key_button["token"])
+                return True
         return True
 
     for button in EMOTION_BUTTON_RECTS:
@@ -1582,10 +2294,19 @@ def handle_emotion_popup_click(mx, my):
             handle_emotion_choice(emotion=button["emotion"], skipped=False)
             return True
 
-    close_rect = EMOTION_ACTION_RECTS.get("close")
-    if close_rect and close_rect.collidepoint((mx, my)):
-        handle_emotion_choice(skipped=True)
-        return True
+    for custom_button in EMOTION_CUSTOM_BUTTON_RECTS:
+        if not custom_button["rect"].collidepoint((mx, my)):
+            continue
+        if custom_button["type"] == "slot":
+            emotion = custom_button.get("emotion")
+            if emotion:
+                handle_emotion_choice(emotion=emotion, skipped=False)
+            return True
+
+        if custom_button["type"] == "trigger":
+            EMOTION_KEYBOARD_VISIBLE = True
+            EMOTION_KEYBOARD_TEXT = ""
+            return True
 
     show_rect = EMOTION_ACTION_RECTS.get("show_results")
     if show_rect and show_rect.collidepoint((mx, my)):
@@ -1593,6 +2314,36 @@ def handle_emotion_popup_click(mx, my):
         return True
 
     return True
+
+
+def handle_emotion_keyboard_keydown(event):
+    global EMOTION_KEYBOARD_VISIBLE, EMOTION_KEYBOARD_TEXT
+
+    if not EMOTION_PROMPT_VISIBLE or not EMOTION_KEYBOARD_VISIBLE:
+        return False
+
+    touch_emotion_prompt_activity()
+
+    if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+        _submit_custom_emotion()
+        return True
+    if event.key == pygame.K_ESCAPE:
+        EMOTION_KEYBOARD_VISIBLE = False
+        EMOTION_KEYBOARD_TEXT = ""
+        return True
+    if event.key == pygame.K_BACKSPACE:
+        _apply_emotion_keyboard_token("back")
+        return True
+    if event.key == pygame.K_SPACE:
+        _apply_emotion_keyboard_token("space")
+        return True
+
+    token = (event.unicode or "").lower()
+    if token and (token.isalnum() or token in {"-", "_"}):
+        _apply_emotion_keyboard_token(token)
+        return True
+
+    return False
 
 
 def on_motion_detected():
@@ -1630,6 +2381,46 @@ def convert_timestamp(timestamp, param_string):
     )
 
     return timestring
+
+
+def _apply_departure_delay(departure_time, delay_minutes):
+    try:
+        parts = departure_time.split(":")
+        if len(parts) != 2:
+            return departure_time
+
+        hours = int(parts[0])
+        minutes = int(parts[1]) + int(delay_minutes)
+
+        while minutes >= 60:
+            hours += 1
+            minutes -= 60
+        while minutes < 0:
+            hours -= 1
+            minutes += 60
+
+        hours %= 24
+        return f"{hours:02d}:{minutes:02d}"
+    except (TypeError, ValueError, IndexError):
+        return departure_time
+
+
+def _delay_to_departure_text_color(delay_minutes):
+    try:
+        delay_minutes = max(0, int(delay_minutes))
+    except (TypeError, ValueError):
+        delay_minutes = 0
+
+    if delay_minutes <= 0:
+        return ORANGE
+
+    # Fade from orange to red as the delay grows, with 8 minutes mapping to full red.
+    ratio = min(delay_minutes, 8) / 8.0
+    return (
+        int(round(ORANGE[0] + (RED[0] - ORANGE[0]) * ratio)),
+        int(round(ORANGE[1] + (RED[1] - ORANGE[1]) * ratio)),
+        int(round(ORANGE[2] + (RED[2] - ORANGE[2]) * ratio)),
+    )
 
 
 def draw_time_layer():
@@ -1841,10 +2632,12 @@ def loop():
         global DISPLAY_BLANK
 
         activate_pending_emotion_prompt()
+        if EMOTION_CONFIRMATION_VISIBLE and time.time() - EMOTION_CONFIRMATION_OPENED_AT > EMOTION_CONFIRMATION_SECONDS:
+            dismiss_emotion_confirmation("timeout")
         if DISPLAY_BLANK and EMOTION_PROMPT_VISIBLE:
             dismiss_emotion_prompt("display-blank")
         elif EMOTION_PROMPT_VISIBLE:
-            if time.time() - EMOTION_PROMPT_OPENED_AT > DISPLAY_BLANK_AFTER:
+            if not EMOTION_KEYBOARD_VISIBLE and time.time() - EMOTION_LAST_ACTIVITY_TS > DISPLAY_BLANK_AFTER:
                 dismiss_emotion_prompt("timeout")
 
         if not DISPLAY_BLANK:
@@ -1897,6 +2690,7 @@ def loop():
             tft_surf.blit(create_scaled_surf(display_surf, aa=AA), FIT_SCREEN)
 
             draw_emotion_prompt_overlay()
+            draw_emotion_confirmation_overlay()
 
             # update the display with all surfaces merged into the main one
             pygame.display.update()
@@ -1969,6 +2763,9 @@ def loop():
                     draw_event()
 
             elif event.type == pygame.KEYDOWN:
+
+                if handle_emotion_keyboard_keydown(event):
+                    continue
 
                 if event.key == pygame.K_ESCAPE:
                     running = False

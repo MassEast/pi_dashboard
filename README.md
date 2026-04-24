@@ -219,16 +219,25 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 "EMOTION": {
   "ENABLED": true,
   "COOLDOWN_SECONDS": 1800,
-  "EMOTIONS": [
-    "stressed", "wild", "relaxed", "sad", "angry", "happy", "anxious", "tired"
-  ]
+  "CONFIRMATION_SECONDS": 5,
+  "CATALOG": [{"name": "happy", "emoji": "😊", "color": "#16a34a"}, ...],
+  "CUSTOM_SLOTS": [],
+  "FALLBACK_STYLE": {"emoji": "?", "color": "#9ca3af"},
+  "LLM": {
+    "ENABLED": false,
+    "API_KEY": "",
+    "MODEL": "claude-sonnet-4-6",
+    "URL": "https://api.anthropic.com/v1/messages"
+  }
 }
 ```
 - Whenever the display is reactivated from blank state (touch or PIR motion), an emotion popup can appear.
 - Prompt frequency is rate-limited by `COOLDOWN_SECONDS` (default: once every 30 minutes).
-- The popup has emotion buttons, plus `Skip` and `Show results` actions.
+- The post-save confirmation popup stays visible for `CONFIRMATION_SECONDS` (default: 5 seconds).
+- Emotion buttons show up to 16 options (default catalog + custom slots), plus `Skip` and `Show results` actions.
 - `Show results` opens a second overlay with a QR code to the web results page.
 - If nobody interacts, prompt dismissal follows `TIMER.DISPLAY_BLANK` timing and is not logged.
+- **Custom emotions**: Tap `custom` to enter text. New emotions auto-deduplicate against catalog. If LLM enabled, auto-classifies with emoji, color, and position on sentiment spectrum (green=positive→red=negative). Spelling fixes from LLM map back to existing entries.
 
 #### Local Web Dashboard
 ```json
