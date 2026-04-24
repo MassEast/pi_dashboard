@@ -122,10 +122,13 @@ def build_bar_series(log_dir, emotions, window="7d"):
             continue
         if event_dt > now:
             continue
-        if window == "weekday" or event_dt >= _window_start(now, window):
+        if window in {"weekday", "hour", "emotion"} or event_dt >= _window_start(now, window):
             filtered.append((event_dt, event))
 
     if window == "today":
+        labels = [f"{hour:02d}:00" for hour in range(24)]
+        key_fn = lambda dt: dt.strftime("%H:00")
+    elif window == "hour":
         labels = [f"{hour:02d}:00" for hour in range(24)]
         key_fn = lambda dt: dt.strftime("%H:00")
     elif window == "weekday":
@@ -175,6 +178,7 @@ def build_bar_series(log_dir, emotions, window="7d"):
 
     series = {emotion: [0] * len(labels) for emotion in ordered_emotions}
     label_to_index = {label: idx for idx, label in enumerate(labels)}
+    event_times = {emotion: {label: [] for label in labels} for emotion in ordered_emotions}
 
     for event_dt, event in filtered:
         if event.get("skipped"):
@@ -187,11 +191,13 @@ def build_bar_series(log_dir, emotions, window="7d"):
         if idx is None:
             continue
         series[emotion][idx] += 1
+        event_times[emotion][label].append(event_dt.astimezone().strftime("%Y-%m-%d %H:%M"))
 
     total = sum(sum(values) for values in series.values())
     return {
         "labels": labels,
         "series": series,
+        "event_times": event_times,
         "total": total,
         "window": window,
     }

@@ -136,7 +136,7 @@ def emotions_catalog():
 @app.route("/api/emotions/bars")
 def emotions_bars():
     window = request.args.get("window", "7d")
-    if window not in {"today", "7d", "30d", "weekday", "alltime"}:
+    if window not in {"today", "7d", "30d", "weekday", "hour", "emotion", "alltime"}:
         window = "7d"
     emotion_cfg = _load_runtime_emotion_cfg()
     emotions = [entry["name"] for entry in _build_emotion_catalog(emotion_cfg)]
