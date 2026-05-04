@@ -428,7 +428,8 @@ async function refresh() {
         }
         upsertChart(emotionResult.value.labels, emotionResult.value.series);
         totalCountNode.textContent = `Total: ${emotionResult.value.total}` + (currentWindow === "alltime" || currentWindow === "emotion" ? " (all time)" : "");
-        updatedAtNode.textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+        const now = new Date();
+        updatedAtNode.textContent = `Updated: ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     }
 
     if (uptimeResult.status === "fulfilled") {
@@ -445,4 +446,4 @@ for (const btn of windowButtons) {
 
 setActiveWindow(currentWindow);
 refresh();
-setInterval(refresh, 30000);
+setInterval(refresh, 90000);
