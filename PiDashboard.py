@@ -342,11 +342,17 @@ class SimpleScheduler:
 # Global scheduler instance
 scheduler = SimpleScheduler()
 
+NETWORK_REBOOT_MARKER = LOG_PATH + "last_network_reboot"
+NETWORK_REBOOT_COOLDOWN_SECONDS = 7200  # don't reboot for no-internet more than once per 2h
+
+
 def safe_network_monitor():
     """
     Checks for internet connection.
     Only allows reboot if system has been up for >10 minutes to prevent boot loops and give time to
-    SSH in.
+    SSH in. During an extended outage, only reboots once per NETWORK_REBOOT_COOLDOWN_SECONDS -
+    rebooting the Pi does nothing for a router/ISP outage, so hammering it every 10 minutes for
+    the whole outage just adds pointless SD card wear.
     """
 
     global NETWORK_AVAILABLE
@@ -386,22 +392,33 @@ def safe_network_monitor():
                     )
                     NETWORK_AVAILABLE = True
             except Exception:
-                logger.error("Network definitively down. REBOOTING SYSTEM.")
-                if not DISPLAY_BLANK:
-                    record_uptime_event(
-                        "screen_off",
-                        source="network_monitor",
-                        reason="system_reboot_requested",
+                last_reboot_age = None
+                if os.path.exists(NETWORK_REBOOT_MARKER):
+                    last_reboot_age = time.time() - os.path.getmtime(NETWORK_REBOOT_MARKER)
+
+                if last_reboot_age is not None and last_reboot_age < NETWORK_REBOOT_COOLDOWN_SECONDS:
+                    logger.warning(
+                        f"Network still down, but already rebooted for this {int(last_reboot_age)}s ago "
+                        f"(cooldown {NETWORK_REBOOT_COOLDOWN_SECONDS}s) - skipping reboot this cycle."
                     )
-                record_uptime_event(
-                    "reboot_requested",
-                    source="network_monitor",
-                    reason="no_internet_connection",
-                )
-                # Sync logs before rebooting
-                if config["LOG_TO_FILES"]:
-                    os.system("sync")
-                os.system("sudo reboot")
+                else:
+                    logger.error("Network definitively down. REBOOTING SYSTEM.")
+                    if not DISPLAY_BLANK:
+                        record_uptime_event(
+                            "screen_off",
+                            source="network_monitor",
+                            reason="system_reboot_requested",
+                        )
+                    record_uptime_event(
+                        "reboot_requested",
+                        source="network_monitor",
+                        reason="no_internet_connection",
+                    )
+                    open(NETWORK_REBOOT_MARKER, "w").close()
+                    # Sync logs before rebooting
+                    if config["LOG_TO_FILES"]:
+                        os.system("sync")
+                    os.system("sudo reboot")
 
         # Check every 10 minutes
         time.sleep(600)
