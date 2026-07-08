@@ -1140,6 +1140,10 @@ FONT_TINY = pygame.font.Font(FONT_PATH + FONT_MEDIUM, TINY_SIZE)
 FONT_SMALL = pygame.font.Font(FONT_PATH + FONT_MEDIUM, SMALL_SIZE)
 FONT_SMALL_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, SMALL_SIZE)
 FONT_BIG = pygame.font.Font(FONT_PATH + FONT_MEDIUM, BIG_SIZE)
+# Between TINY and SMALL (closer to SMALL) - used for BVG departure times,
+# which needed to shrink from SMALL to fit 4 rows horizontally but were
+# unreadable at TINY.
+FONT_BUS_TIME = pygame.font.Font(FONT_PATH + FONT_MEDIUM, int(TINY_SIZE + (SMALL_SIZE - TINY_SIZE) * 0.65))
 FONT_BIG_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, BIG_SIZE)
 DATE_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, DATE_SIZE)
 CLOCK_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, CLOCK_SIZE)
@@ -1831,7 +1835,7 @@ class BVGUpdate(object):
             # One row per BVG_ROWS entry - each is its own stop/direction/line,
             # not just a left/right pair. Y-positions use the extra vertical
             # room freed up by the 240x400 canvas fix.
-            row_y_start = 248
+            row_y_start = 265
             row_y_step = 26
 
             for row_index, row_spec in enumerate(BVG_ROWS):
@@ -1839,8 +1843,10 @@ class BVGUpdate(object):
                 icon_style = row_spec.get("icon", "up")
 
                 if icon_style == "double_left":
-                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90).left(-3)
-                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90).left(3)
+                    # Tighter spread than a plain overlap-for-effect pair,
+                    # so it doesn't run into the bus icon to its right.
+                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90).left(-5)
+                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90).left(1)
                 else:
                     angle = BVG_ROW_ICON_ANGLES.get(icon_style, 0)
                     DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=angle).left(-3)
@@ -1860,18 +1866,18 @@ class BVGUpdate(object):
                         departure_delays.append(departure["delay"])
                         departures_reported += 1
 
-                DrawImage(new_surf, images["bus"], row_y, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
-                DrawString(new_surf, row_spec["line"] + ":", FONT_SMALL, ORANGE, row_y).left(22)
+                DrawImage(new_surf, images["bus"], row_y + 2, size=10).left(18)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+                DrawString(new_surf, row_spec["line"] + ":", FONT_SMALL, ORANGE, row_y).left(30)
                 if departure_times:
-                    departure_x = int(68 * ZOOM)
+                    departure_x = int(82 * ZOOM)
                     for index, departure_time in enumerate(departure_times):
                         if index > 0:
-                            comma_surface = FONT_SMALL.render(",", True, ORANGE)
+                            comma_surface = FONT_BUS_TIME.render(",", True, ORANGE)
                             new_surf.blit(comma_surface, (departure_x, int(row_y * ZOOM)))
                             departure_x += comma_surface.get_width()
 
                         departure_color = _delay_to_departure_text_color(departure_delays[index])
-                        departure_surface = FONT_SMALL.render(departure_time, True, departure_color)
+                        departure_surface = FONT_BUS_TIME.render(departure_time, True, departure_color)
                         new_surf.blit(departure_surface, (departure_x, int(row_y * ZOOM)))
                         departure_x += departure_surface.get_width()
                 else:
