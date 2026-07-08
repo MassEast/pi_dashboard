@@ -1025,8 +1025,10 @@ DISPLAY_WIDTH = int(config["DISPLAY"]["WIDTH"])
 DISPLAY_HEIGHT = int(config["DISPLAY"]["HEIGHT"])
 
 # the drawing area to place all text and img on
+# 3:5 to match our actual 480x800 portrait panel (240x320 was 3:4, which left
+# 80px blank above and below after scaling - see FIT_SCREEN below)
 SURFACE_WIDTH = 240
-SURFACE_HEIGHT = 320
+SURFACE_HEIGHT = 400
 
 SCALE = float(DISPLAY_WIDTH / SURFACE_WIDTH)
 ZOOM = 1
@@ -1071,8 +1073,8 @@ if SCALE != 1:
         logger.info(f"zoom correction caused by small display")
     else:
         logger.info("screen bigger as surface area - zooming bigger")
-        SURFACE_WIDTH = int(240 * ZOOM)
-        SURFACE_HEIGHT = int(320 * ZOOM)
+        SURFACE_WIDTH = int(SURFACE_WIDTH * ZOOM)
+        SURFACE_HEIGHT = int(SURFACE_HEIGHT * ZOOM)
         logger.info(f"surface correction caused by bigger display")
 
     logger.info(f"SURFACE_WIDTH: {SURFACE_WIDTH} SURFACE_HEIGHT: {SURFACE_HEIGHT} ZOOM: {ZOOM}")
