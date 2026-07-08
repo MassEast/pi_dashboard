@@ -87,6 +87,8 @@ ENV/
 config.json
 logs/latest_weather.json
 *.log
-emotions.json
+emotions*.json
 uptime.json
 .DS_Store
+docs/PROGRESS.md
+tmp_prompt_just_for_me.txt

@@ -5,12 +5,14 @@ import shutil
 import threading
 import uuid
 
-STORE_FILE = "emotions.json"
+STORE_FILE = "emotions_moabeats.json"
+# Read-only, never written to by append_emotion_event.
+ARCHIVE_STORE_FILE = "emotions_kantwg.json"
 _STORE_LOCK = threading.Lock()
 
 
-def _store_path(log_dir):
-    return os.path.join(log_dir, STORE_FILE)
+def _store_path(log_dir, store_file=STORE_FILE):
+    return os.path.join(log_dir, store_file)
 
 
 def _default_payload():
@@ -53,9 +55,9 @@ def _recover_if_corrupt(file_path):
     return backup_path
 
 
-def append_emotion_event(log_dir, emotion=None, skipped=False, source="unknown", prompt_id=None):
+def append_emotion_event(log_dir, emotion=None, skipped=False, source="unknown", prompt_id=None, store_file=STORE_FILE):
     os.makedirs(log_dir, exist_ok=True)
-    file_path = _store_path(log_dir)
+    file_path = _store_path(log_dir, store_file)
 
     with _STORE_LOCK:
         try:
@@ -78,9 +80,9 @@ def append_emotion_event(log_dir, emotion=None, skipped=False, source="unknown",
     return event
 
 
-def read_emotion_events(log_dir):
+def read_emotion_events(log_dir, store_file=STORE_FILE):
     os.makedirs(log_dir, exist_ok=True)
-    file_path = _store_path(log_dir)
+    file_path = _store_path(log_dir, store_file)
 
     with _STORE_LOCK:
         try:
@@ -111,10 +113,10 @@ def _window_start(now, window):
     return now - datetime.timedelta(days=7)
 
 
-def build_bar_series(log_dir, emotions, window="7d"):
+def build_bar_series(log_dir, emotions, window="7d", store_file=STORE_FILE):
     now = datetime.datetime.now().astimezone()
 
-    events = read_emotion_events(log_dir)
+    events = read_emotion_events(log_dir, store_file)
     filtered = []
     for event in events:
         event_dt = _parse_iso(event.get("ts_iso"))
@@ -203,7 +205,7 @@ def build_bar_series(log_dir, emotions, window="7d"):
     }
 
 
-def get_recent_events(log_dir, limit=150):
-    events = read_emotion_events(log_dir)
+def get_recent_events(log_dir, limit=150, store_file=STORE_FILE):
+    events = read_emotion_events(log_dir, store_file)
     sorted_events = sorted(events, key=lambda item: item.get("ts_iso", ""), reverse=True)
     return sorted_events[:limit]

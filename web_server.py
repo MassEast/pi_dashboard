@@ -6,7 +6,7 @@ import socket
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from emotion_store import build_bar_series, get_recent_events
+from emotion_store import ARCHIVE_STORE_FILE, STORE_FILE, build_bar_series, get_recent_events
 from uptime_store import build_uptime_summary
 
 PATH = os.path.dirname(os.path.abspath(__file__))
@@ -124,7 +124,8 @@ def health():
 @app.route("/api/emotions/raw")
 def emotions_raw():
     limit = int(request.args.get("limit", 150))
-    return jsonify({"events": get_recent_events(EMOTION_LOG_PATH, limit=limit)})
+    store_file = ARCHIVE_STORE_FILE if request.args.get("archive") else STORE_FILE
+    return jsonify({"events": get_recent_events(EMOTION_LOG_PATH, limit=limit, store_file=store_file)})
 
 
 @app.route("/api/emotions/catalog")
@@ -140,7 +141,8 @@ def emotions_bars():
         window = "7d"
     emotion_cfg = _load_runtime_emotion_cfg()
     emotions = [entry["name"] for entry in _build_emotion_catalog(emotion_cfg)]
-    return jsonify(build_bar_series(EMOTION_LOG_PATH, emotions=emotions, window=window))
+    store_file = ARCHIVE_STORE_FILE if request.args.get("archive") else STORE_FILE
+    return jsonify(build_bar_series(EMOTION_LOG_PATH, emotions=emotions, window=window, store_file=store_file))
 
 
 @app.route("/api/uptime")

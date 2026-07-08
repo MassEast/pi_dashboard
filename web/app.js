@@ -62,9 +62,11 @@ const chartContext = document.getElementById("emotionChart").getContext("2d");
 const totalCountNode = document.getElementById("totalCount");
 const updatedAtNode = document.getElementById("updatedAt");
 const uptimeCards = [...document.querySelectorAll(".uptime-window")];
-const windowButtons = [...document.querySelectorAll(".window-btn")];
+const windowButtons = [...document.querySelectorAll('.control-group[aria-label="Time window selector"] .window-btn')];
+const archiveToggle = document.getElementById("archiveToggle");
 
 let currentWindow = "7d";
+let viewingArchive = false;
 let emotionChart;
 let currentPayload = null;
 let chartIsHistogram = null;
@@ -411,9 +413,10 @@ async function refresh() {
     await ensureSharedFallbackCatalog();
 
     const window = currentWindow === "emotion" ? "alltime" : currentWindow;
+    const archiveParam = viewingArchive ? "&archive=1" : "";
     const [catalogResult, emotionResult, uptimeResult] = await Promise.allSettled([
         fetch("/api/emotions/catalog").then((response) => response.json()),
-        fetch(`/api/emotions/bars?window=${window}`).then((response) => response.json()),
+        fetch(`/api/emotions/bars?window=${window}${archiveParam}`).then((response) => response.json()),
         fetch("/api/uptime").then((response) => response.json()),
     ]);
 
@@ -440,6 +443,17 @@ async function refresh() {
 for (const btn of windowButtons) {
     btn.addEventListener("click", async () => {
         setActiveWindow(btn.dataset.window);
+        await refresh();
+    });
+}
+
+if (archiveToggle) {
+    archiveToggle.addEventListener("click", async () => {
+        viewingArchive = !viewingArchive;
+        archiveToggle.classList.toggle("active", viewingArchive);
+        archiveToggle.textContent = viewingArchive
+            ? "🏠 Back to current flat's results (MoaBeats)"
+            : "📦 View old flat's results (Kantstraße)";
         await refresh();
     });
 }
