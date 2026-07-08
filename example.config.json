@@ -24,10 +24,22 @@
     "METRIC": true
   },
   "BVG": {
-    "DEPARTURE_ID": "XXXXXXXXX",
-    "DIRECTION_ID_LEFT": "YYYYYYYYY",
-    "DIRECTION_ID_RIGHT": "ZZZZZZZZZ",
-    "LINE": "ABC",
+    "ROWS": [
+      {
+        "id": "row-one",
+        "departure_id": "XXXXXXXXX",
+        "direction_id": "YYYYYYYYY",
+        "line": "ABC",
+        "icon": "left"
+      },
+      {
+        "id": "row-two",
+        "departure_id": "XXXXXXXXX",
+        "direction_id": "ZZZZZZZZZ",
+        "line": "ABC",
+        "icon": "right"
+      }
+    ],
     "LOOKAHEAD_MIN": 30,
     "LOOKBACK_MIN": 5
   },

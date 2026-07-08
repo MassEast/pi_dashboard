@@ -127,12 +127,13 @@ METRIC = config["LOCALE"]["METRIC"]
 
 locale.setlocale(locale.LC_ALL, (config["LOCALE"]["ISO"], "UTF-8"))
 
-BVG_DEPARTURE_ID = config["BVG"]["DEPARTURE_ID"]
-BVG_DIRECTION_ID_LEFT = config["BVG"]["DIRECTION_ID_LEFT"]
-BVG_DIRECTION_ID_RIGHT = config["BVG"]["DIRECTION_ID_RIGHT"]
-BVG_LINE = config["BVG"]["LINE"]
+BVG_ROWS = config["BVG"]["ROWS"]
 BVG_LOOKAHEAD_MIN = config["BVG"]["LOOKAHEAD_MIN"]
 BVG_LOOKBACK_MIN = config["BVG"]["LOOKBACK_MIN"]
+
+# icon rotation angle (degrees) per row "icon" value; "double_left" is drawn
+# as two overlapping left arrows since there's no dedicated double-arrow asset
+BVG_ROW_ICON_ANGLES = {"up": 0, "down": 180, "left": 90, "right": -90}
 
 emotion_cfg = config.get("EMOTION", {})
 EMOTION_ENABLED = emotion_cfg.get("ENABLED", True)
@@ -1778,10 +1779,7 @@ class BVGUpdate(object):
 
         try:
             UPDATED_BVG_TIME, BVG_STOP_INFORMATION = get_stop_data(
-                BVG_DEPARTURE_ID,
-                BVG_DIRECTION_ID_LEFT,
-                BVG_DIRECTION_ID_RIGHT,
-                BVG_LINE,
+                BVG_ROWS,
                 BVG_LOOKAHEAD_MIN,
                 BVG_LOOKBACK_MIN,
             )
@@ -1830,87 +1828,54 @@ class BVGUpdate(object):
             if "cancelled" in BVG_STOP_INFORMATION.columns:
                 BVG_STOP_INFORMATION = BVG_STOP_INFORMATION[~BVG_STOP_INFORMATION["cancelled"]]
 
-            # Draw a line of bus information for direction to the left
-            # (y-positions shifted +20 from the original 240x320-canvas values,
-            # and the footer band below shifted further, to use the extra
-            # vertical room freed up by the 240x400 canvas fix.)
-            DrawImage(new_surf, images["arrow"], 282, size=13, fillcolor=RED, angle=90).left(-3)
-            left_departure_times = []
-            left_departure_delays = []
-            # Print closest three connections for each direction
-            if len(BVG_STOP_INFORMATION) and len(
-                results_left := BVG_STOP_INFORMATION[
-                    BVG_STOP_INFORMATION["direction_str"] == "left"
-                ]
-            ):
-                departures_reported = 0
-                for _, departure in results_left.iterrows():
-                    if departures_reported >= 3:
-                        break
-                    delay = departure["delay"]
-                    departure_time = departure['departure']
-                    left_departure_times.append(departure_time)
-                    left_departure_delays.append(delay)
-                    departures_reported += 1
+            # One row per BVG_ROWS entry - each is its own stop/direction/line,
+            # not just a left/right pair. Y-positions use the extra vertical
+            # room freed up by the 240x400 canvas fix.
+            row_y_start = 248
+            row_y_step = 26
 
-            DrawImage(new_surf, images["bus"], 283, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
-            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 280).left(22)
-            if left_departure_times:
-                departure_x = int(68 * ZOOM)
-                for index, departure_time in enumerate(left_departure_times):
-                    if index > 0:
-                        comma_surface = FONT_SMALL.render(",", True, ORANGE)
-                        new_surf.blit(comma_surface, (departure_x, int(280 * ZOOM)))
-                        departure_x += comma_surface.get_width()
+            for row_index, row_spec in enumerate(BVG_ROWS):
+                row_y = row_y_start + row_index * row_y_step
+                icon_style = row_spec.get("icon", "up")
 
-                    departure_color = _delay_to_departure_text_color(left_departure_delays[index])
-                    departure_surface = FONT_SMALL.render(departure_time, True, departure_color)
-                    new_surf.blit(departure_surface, (departure_x, int(280 * ZOOM)))
-                    departure_x += departure_surface.get_width()
-                # DrawImage(new_surf, images["haltestelle"], 283, size=10).right(10)
-            else:
-                bvg_print = "none :("
+                if icon_style == "double_left":
+                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90).left(-3)
+                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90).left(3)
+                else:
+                    angle = BVG_ROW_ICON_ANGLES.get(icon_style, 0)
+                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=angle).left(-3)
 
-                DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 280).left(60)
+                departure_times = []
+                departure_delays = []
+                if len(BVG_STOP_INFORMATION) and len(
+                    row_results := BVG_STOP_INFORMATION[
+                        BVG_STOP_INFORMATION["row_id"] == row_spec["id"]
+                    ]
+                ):
+                    departures_reported = 0
+                    for _, departure in row_results.iterrows():
+                        if departures_reported >= 3:
+                            break
+                        departure_times.append(departure["departure"])
+                        departure_delays.append(departure["delay"])
+                        departures_reported += 1
 
-            # Perform same stuff for the right direction
-            DrawImage(new_surf, images["arrow"], 302, size=13, fillcolor=RED, angle=-90).left(-3)
-            right_departure_times = []
-            right_departure_delays = []
-            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 300).left(22)
-            bvg_print = "none :("
-            # Print closest two connections for each direction
-            if len(BVG_STOP_INFORMATION) and len(
-                results_right := BVG_STOP_INFORMATION[
-                    BVG_STOP_INFORMATION["direction_str"] == "right"
-                ]
-            ):
-                departures_reported = 0
-                for _, departure in results_right.iterrows():
-                    if departures_reported >= 3:
-                        break
-                    delay = departure["delay"]
-                    departure_time = departure['departure']
-                    right_departure_times.append(departure_time)
-                    right_departure_delays.append(delay)
-                    departures_reported += 1
+                DrawImage(new_surf, images["bus"], row_y, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+                DrawString(new_surf, row_spec["line"] + ":", FONT_SMALL, ORANGE, row_y).left(22)
+                if departure_times:
+                    departure_x = int(68 * ZOOM)
+                    for index, departure_time in enumerate(departure_times):
+                        if index > 0:
+                            comma_surface = FONT_SMALL.render(",", True, ORANGE)
+                            new_surf.blit(comma_surface, (departure_x, int(row_y * ZOOM)))
+                            departure_x += comma_surface.get_width()
 
-            DrawImage(new_surf, images["bus"], 303, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
-            if right_departure_times:
-                departure_x = int(68 * ZOOM)
-                for index, departure_time in enumerate(right_departure_times):
-                    if index > 0:
-                        comma_surface = FONT_SMALL.render(",", True, ORANGE)
-                        new_surf.blit(comma_surface, (departure_x, int(300 * ZOOM)))
-                        departure_x += comma_surface.get_width()
-
-                    departure_color = _delay_to_departure_text_color(right_departure_delays[index])
-                    departure_surface = FONT_SMALL.render(departure_time, True, departure_color)
-                    new_surf.blit(departure_surface, (departure_x, int(300 * ZOOM)))
-                    departure_x += departure_surface.get_width()
-                # DrawImage(new_surf, images["haltestelle"], 303, size=10).right(10)
-            else:
-                DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 300).left(60)
+                        departure_color = _delay_to_departure_text_color(departure_delays[index])
+                        departure_surface = FONT_SMALL.render(departure_time, True, departure_color)
+                        new_surf.blit(departure_surface, (departure_x, int(row_y * ZOOM)))
+                        departure_x += departure_surface.get_width()
+                else:
+                    DrawString(new_surf, "none :(", FONT_SMALL, ORANGE, row_y).left(60)
 
         # Extra information - pushed down to sit near the bottom of the
         # taller 240x400 canvas instead of the old 240x320 bottom edge.

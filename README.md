@@ -174,16 +174,41 @@ when hourly data was planned.)
 #### Settings for BVG (public transport in Berlin)
 ```json
   "BVG": {
-    "DEPARTURE_ID": "XXXXXXXXX",
-    "DIRECTION_ID_LEFT": "YYYYYYYYY",
-    "DIRECTION_ID_RIGHT": "ZZZZZZZZZ",
-    "LINE": "ABC",
+    "ROWS": [
+      {
+        "id": "row-one",
+        "departure_id": "XXXXXXXXX",
+        "direction_id": "YYYYYYYYY",
+        "line": "ABC",
+        "icon": "left"
+      },
+      {
+        "id": "row-two",
+        "departure_id": "XXXXXXXXX",
+        "direction_id": "ZZZZZZZZZ",
+        "line": "ABC",
+        "icon": "right"
+      }
+    ],
     "LOOKAHEAD_MIN": 30,
     "LOOKBACK_MIN": 5
   }
 ```
-As of now, the Dashboard is designed to show one specific connection (I chose the bus line stopping close my home, because that's the one I regularly check whenever I am leaving), for both directions. Here, "left" means when looking at the device, the street behind that goes to the left is the direction that bus takes. This turned out to be convenient for visitors (likewise for right). In the config, you can set the departure station (`DEPARTURE_ID`) and directions (`DIRECTION_ID`) to find connections into the correct
-direction. Finally, you can filter this for the specific `LINE` you are interested in and how far you want to calculate into the past (LOOKBACK_MIN) future (LOOKAHEAD_MIN). You can find the BVG IDs as I did in `dev/bvg_departures.ipynb` notebook.
+Each entry in `ROWS` is its own dashboard row - not limited to one stop with a left and a right
+direction, so you can mix different stops, lines, and directions freely, one row per bus
+connection you actually want to see:
+- `id`: any unique string you pick, just used internally to match departures back to their row.
+- `departure_id`: BVG stop id departures are queried from.
+- `direction_id`: BVG stop id identifying which direction/final-destination-area to filter for.
+- `line`: exact line name to keep (e.g. `"M245"`) - departures for other lines at that stop are ignored.
+- `icon`: `"up"`, `"down"`, `"left"`, `"right"`, or `"double_left"` (drawn as two overlapping left
+  arrows, since there's no dedicated double-arrow asset - useful for a "this way, further than
+  usual" distinction).
+- `direction_text` (optional): exact match against a departure's human-readable destination string
+  (e.g. `"U Turmstr."`). Use this if a `direction_id` alone returns multiple branches heading to
+  different final destinations and you only want one of them.
+
+You can find the BVG stop/direction IDs as I did in `dev/bvg_departures.ipynb` notebook.
 
 #### Theme file and options
 Set your theme file [darcula.json, light.json or example.json] in `config.json` via

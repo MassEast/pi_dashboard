@@ -6,49 +6,48 @@ from zoneinfo import ZoneInfo
 berlin = ZoneInfo("Europe/Berlin")
 
 
-def get_stop_data(
-    departure_id="900024151",
-    direction_id_left="900024104",
-    direction_id_right="900024106",
-    line="M49",
-    lookahead_min=30,
-    lookback_min=5,
-):
+def get_stop_data(rows, lookahead_min=30, lookback_min=5):
     """
-    Returns stop data for a given departure, left and right directions, and
-    line for the next selected minutes.
+    Returns departure data for an arbitrary list of row specs, each its own
+    stop/direction/line combination (not limited to one stop with a left and
+    a right direction).
+
+    Each row spec is a dict with:
+      - id: unique identifier for this row, tagged onto its matching
+        departures via the "row_id" column so the caller can pick them
+        back out
+      - departure_id: BVG stop id to query departures from
+      - direction_id: BVG stop id identifying the direction to filter for
+      - line: exact line name to keep (e.g. "M245")
+      - direction_text: optional, exact match against a departure's
+        human-readable destination string - use this to disambiguate
+        branches that share the same direction_id but end up at different
+        final destinations
     """
-
-    # API endpoint
-    url = f"https://v6.bvg.transport.rest/stops/{departure_id}/departures"
-
-    # Query parameters (customize as needed)
-    params = {
-        "when": (
-            datetime.datetime.now(berlin) + datetime.timedelta(minutes=-lookback_min)
-        ).isoformat(),
-        "duration": lookahead_min,  # Show departures for the next selected minutes
-        "remarks": True,  # Include warnings and hints
-        "language": "en",  # Language of the results
-        "pretty": True,  # Pretty-print JSON responses
-    }
 
     result = {
+        "row_id": [],
         "type": [],
         "line": [],
         "departure": [],
         "delay": [],
         "direction": [],
-        "direction_str": [],
         "cancelled": [],
     }
 
-    for direction_str, direction_id in zip(
-        ["left", "right"], [direction_id_left, direction_id_right]
-    ):
-        if direction_id is None:
-            continue
-        params["direction"] = direction_id  # Optional: Filter departures by a specific direction
+    when = (datetime.datetime.now(berlin) + datetime.timedelta(minutes=-lookback_min)).isoformat()
+    updated_at_timestamp = None
+
+    for row in rows:
+        url = f"https://v6.bvg.transport.rest/stops/{row['departure_id']}/departures"
+        params = {
+            "when": when,
+            "duration": lookahead_min,  # Show departures for the next selected minutes
+            "remarks": True,  # Include warnings and hints
+            "language": "en",  # Language of the results
+            "pretty": True,  # Pretty-print JSON responses
+            "direction": row["direction_id"],  # Filter departures by direction
+        }
 
         # Send GET request with timeout
         response = requests.get(url, params=params, timeout=10)
@@ -59,11 +58,16 @@ def get_stop_data(
         else:
             raise requests.HTTPError(f"Error: {response.status_code} - {response.text}")
 
+        updated_at_timestamp = data["realtimeDataUpdatedAt"]
+
         for connection in data["departures"]:
 
-            if connection["line"]["name"] != line:
+            if connection["line"]["name"] != row["line"]:
+                continue
+            if row.get("direction_text") and connection["direction"] != row["direction_text"]:
                 continue
 
+            result["row_id"].append(row["id"])
             result["type"].append(connection["line"]["productName"])  # e.g., "Bus"
             result["line"].append(connection["line"]["name"])
             result["departure"].append(
@@ -73,12 +77,9 @@ def get_stop_data(
             delay /= 60
             result["delay"].append(int(delay))  # it's not finer than minutes anyway‚
             result["direction"].append(connection["direction"])
-            result["direction_str"].append(direction_str)
             if "cancelled" in connection:
                 result["cancelled"].append(connection["cancelled"])
             else:
                 result["cancelled"].append(False)
-
-    updated_at_timestamp = data["realtimeDataUpdatedAt"]
 
     return updated_at_timestamp, pd.DataFrame(result)
