@@ -278,8 +278,8 @@ Then tmux disconnect (ctrlB + ctrlD) from that window and the Dashboard will kee
 
 ### 1. Safety Features
 To prevent being locked out or stuck in a reboot loop, there is a
-* **Emergency Exit**: Tap the **top-left corner** of the screen 5 times rapidly to close the dashboard and return to the desktop/CLI.
-* **Safe Reboot**: If the internet connection is lost, the Pi will auto-reboot to try and fix it, but **ONLY if the system has been running for at least 10 minutes**. This gives you a safety window to SSH in and fix things if a reboot loop occurs.
+* **Emergency Exit**: Tap the **top-left corner** of the screen 5 times rapidly to close the dashboard and return to the desktop/CLI. The hitbox is deliberately generous, not pixel-exact, to account for real touchscreen imprecision, and this check always takes priority over any on-screen popup (emotion prompt, etc.) so it can never get swallowed.
+* **Safe Reboot**: If the internet connection is lost, the Pi will auto-reboot to try and fix it, but **ONLY if the system has been running for at least 10 minutes**. This gives you a safety window to SSH in and fix things if a reboot loop occurs. During an extended outage it only reboots **once per 2 hours** (`NETWORK_REBOOT_COOLDOWN_SECONDS` in `PiDashboard.py`) — rebooting the Pi does nothing for an upstream router/ISP outage, so retrying every 10 minutes for the whole outage would just add pointless SD card wear.
 
 ### 2. Enable Autostart
 We use the standard Desktop autostart mechanism.
@@ -296,6 +296,14 @@ We use the standard Desktop autostart mechanism.
 
 3. **Reboot**: `sudo reboot`
   The dashboard and local web server should now start automatically, and the screen should blank after the configured timeout.
+
+### 3. Finding logs when autostarted
+
+`pidashboard.desktop` doesn't redirect `PiDashboard.py`'s own stdout/stderr, so with `LOG_TO_FILES`
+set to `false` (the default), console output isn't lost — it goes wherever the X11 session sends
+autostart-app output, which for the standard LXDE-pi session is
+`~/.cache/lxsession/LXDE-pi/run.log`. Check that file for `logger.info`/`logger.warning` output
+(e.g. `Screen pressed at: (x, y)`) when `LOG_TO_FILES` is off and there's nothing in `logs/*.log`.
 
 ## Credits
 - *[LoveBootCaptain](https://github.com/LoveBootCaptain) (Stephan Ansorge) for laying the foundation of this work in [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT). Subscredits by Stephan:
