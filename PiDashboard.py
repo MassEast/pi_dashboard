@@ -1831,7 +1831,10 @@ class BVGUpdate(object):
                 BVG_STOP_INFORMATION = BVG_STOP_INFORMATION[~BVG_STOP_INFORMATION["cancelled"]]
 
             # Draw a line of bus information for direction to the left
-            DrawImage(new_surf, images["arrow"], 262, size=13, fillcolor=RED, angle=90).left(-3)
+            # (y-positions shifted +20 from the original 240x320-canvas values,
+            # and the footer band below shifted further, to use the extra
+            # vertical room freed up by the 240x400 canvas fix.)
+            DrawImage(new_surf, images["arrow"], 282, size=13, fillcolor=RED, angle=90).left(-3)
             left_departure_times = []
             left_departure_delays = []
             # Print closest three connections for each direction
@@ -1850,31 +1853,31 @@ class BVGUpdate(object):
                     left_departure_delays.append(delay)
                     departures_reported += 1
 
-            DrawImage(new_surf, images["bus"], 263, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
-            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 260).left(22)
+            DrawImage(new_surf, images["bus"], 283, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 280).left(22)
             if left_departure_times:
                 departure_x = int(68 * ZOOM)
                 for index, departure_time in enumerate(left_departure_times):
                     if index > 0:
                         comma_surface = FONT_SMALL.render(",", True, ORANGE)
-                        new_surf.blit(comma_surface, (departure_x, int(260 * ZOOM)))
+                        new_surf.blit(comma_surface, (departure_x, int(280 * ZOOM)))
                         departure_x += comma_surface.get_width()
 
                     departure_color = _delay_to_departure_text_color(left_departure_delays[index])
                     departure_surface = FONT_SMALL.render(departure_time, True, departure_color)
-                    new_surf.blit(departure_surface, (departure_x, int(260 * ZOOM)))
+                    new_surf.blit(departure_surface, (departure_x, int(280 * ZOOM)))
                     departure_x += departure_surface.get_width()
-                # DrawImage(new_surf, images["haltestelle"], 263, size=10).right(10)
+                # DrawImage(new_surf, images["haltestelle"], 283, size=10).right(10)
             else:
                 bvg_print = "none :("
 
-                DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 260).left(60)
+                DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 280).left(60)
 
             # Perform same stuff for the right direction
-            DrawImage(new_surf, images["arrow"], 282, size=13, fillcolor=RED, angle=-90).left(-3)
+            DrawImage(new_surf, images["arrow"], 302, size=13, fillcolor=RED, angle=-90).left(-3)
             right_departure_times = []
             right_departure_delays = []
-            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 280).left(22)
+            DrawString(new_surf, BVG_LINE + ":", FONT_SMALL, ORANGE, 300).left(22)
             bvg_print = "none :("
             # Print closest two connections for each direction
             if len(BVG_STOP_INFORMATION) and len(
@@ -1892,34 +1895,35 @@ class BVGUpdate(object):
                     right_departure_delays.append(delay)
                     departures_reported += 1
 
-            DrawImage(new_surf, images["bus"], 283, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+            DrawImage(new_surf, images["bus"], 303, size=10).left(10)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
             if right_departure_times:
                 departure_x = int(68 * ZOOM)
                 for index, departure_time in enumerate(right_departure_times):
                     if index > 0:
                         comma_surface = FONT_SMALL.render(",", True, ORANGE)
-                        new_surf.blit(comma_surface, (departure_x, int(280 * ZOOM)))
+                        new_surf.blit(comma_surface, (departure_x, int(300 * ZOOM)))
                         departure_x += comma_surface.get_width()
 
                     departure_color = _delay_to_departure_text_color(right_departure_delays[index])
                     departure_surface = FONT_SMALL.render(departure_time, True, departure_color)
-                    new_surf.blit(departure_surface, (departure_x, int(280 * ZOOM)))
+                    new_surf.blit(departure_surface, (departure_x, int(300 * ZOOM)))
                     departure_x += departure_surface.get_width()
-                # DrawImage(new_surf, images["haltestelle"], 283, size=10).right(10)
+                # DrawImage(new_surf, images["haltestelle"], 303, size=10).right(10)
             else:
-                DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 280).left(60)
+                DrawString(new_surf, bvg_print, FONT_SMALL, ORANGE, 300).left(60)
 
-        # Extra information
+        # Extra information - pushed down to sit near the bottom of the
+        # taller 240x400 canvas instead of the old 240x320 bottom edge.
         ju_msg = "Ju likes you. Have a nice day!"
         if UPDATED_BVG_TIME is not None and UPDATED_BVG_TIME is not False:
             actuality_msg = "BVG API: {}".format(convert_timestamp(UPDATED_BVG_TIME, "%H:%M:%S"))
         else:
             actuality_msg = "BVG API: no data"
         emolog_msg = f"emolog/stats: {get_results_url()}"
-        DrawString(new_surf, ju_msg, FONT_TINY, WHITE, 301).left()
-        DrawImage(new_surf, images["refresh"], 302, size=10, fillcolor=YELLOW).right(55)
-        DrawString(new_surf, actuality_msg, FONT_SUPER_TINY, WHITE, 304).right(-3)
-        DrawString(new_surf, emolog_msg, FONT_SUPER_TINY, SWEET_PURPLE, 312).left()
+        DrawString(new_surf, ju_msg, FONT_TINY, WHITE, 372).left()
+        DrawImage(new_surf, images["refresh"], 373, size=10, fillcolor=YELLOW).right(55)
+        DrawString(new_surf, actuality_msg, FONT_SUPER_TINY, WHITE, 375).right(-3)
+        DrawString(new_surf, emolog_msg, FONT_SUPER_TINY, SWEET_PURPLE, 383).left()
 
         bvg_surf = new_surf
 
