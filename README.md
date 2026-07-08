@@ -265,6 +265,23 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 - The bottom stats panel shows uptime summaries for `24h` and `7d` side by side, including average screen time per day, BVG uptime, weather uptime, and reboot counts.
 - Uptime history persists in `logs/uptime.json` and is independent from the RAM-disk logging path.
 
+#### Secret Video Playback
+```json
+"SECRET_VIDEO": {
+  "ENABLED": false,
+  "PATH": "media/secret.mp4",
+  "PLAYER_CMD": ["mpv", "--fullscreen", "--really-quiet", "--no-osc"],
+  "GESTURE_TIMEOUT_SECONDS": 3
+}
+```
+- Tapping the four corners in sequence (top-left, top-right, bottom-right, bottom-left), each within `GESTURE_TIMEOUT_SECONDS` of the previous tap, launches `PLAYER_CMD` on the file at `PATH`, full-screen, blocking the dashboard loop until playback ends.
+- Disabled by default. `PATH` should point at a file under `media/`, which is gitignored — nothing placed there is ever committed.
+- Requires a video player binary on the Pi, e.g. `sudo apt install mpv`.
+- Unlike the emergency-exit tap, this gesture never swallows the click, so it can't interfere with real UI near the other three corners.
+- **Closing playback**: `mpv_touch_input.conf` at the repo root binds a tap (`MBTN_LEFT`) to quit, since mpv's default binding for that is just pause and there's no keyboard on the kiosk. Tap anywhere on the video to close it and return to the dashboard. This flag is appended automatically (not part of `PLAYER_CMD`) since its path has to be resolved against the script directory, not whatever the process's cwd happens to be.
+- **Emotion prompt**: effectively suppressed during playback — the main loop is blocked on the player process, so no prompt logic runs until it exits.
+- **Screen blanking**: `play_secret_video()` explicitly suspends `xset s`/`dpms` for the duration and restores the normal `DISPLAY_BLANK` timers afterward. Without this, X11's idle timer (which runs independent of the blocked dashboard loop) could still blank the physical display mid-playback on a long, untouched video.
+
 ## Starting the Dashboard without a Service
 
 This is certainly not the optimal solution, as any power failure or simply a reboot of the Pi would mean you have to start things up manually again.

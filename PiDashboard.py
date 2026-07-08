@@ -33,6 +33,7 @@ import os
 import random
 import re
 import socket
+import subprocess
 import sys
 import threading
 import uuid
@@ -437,6 +438,28 @@ LAST_TOUCH_TIME = time.time()
 LAST_MOTION_DETECTED_TIME = time.time()
 DISPLAY_BLANK_AFTER = config["TIMER"]["DISPLAY_BLANK"]
 DISPLAY_BLANK = False
+
+# Secret corner-tap gesture that plays a local video file full-screen.
+# Not wired to anything public - PATH points at a gitignored file that
+# only exists locally (see media/ in .gitignore).
+SECRET_VIDEO_CONFIG = config.get("SECRET_VIDEO", {})
+SECRET_VIDEO_ENABLED = SECRET_VIDEO_CONFIG.get("ENABLED", False)
+# Resolved against PATH (script dir), matching every other config-relative
+# path in this file (config.json, THEME, ...) - NOT the process's cwd, which
+# for the autostarted process is $HOME, not the repo dir.
+SECRET_VIDEO_PATH = os.path.join(PATH, SECRET_VIDEO_CONFIG.get("PATH", ""))
+SECRET_VIDEO_PLAYER_CMD = SECRET_VIDEO_CONFIG.get(
+    "PLAYER_CMD", ["mpv", "--fullscreen", "--really-quiet", "--no-osc"]
+)
+# Always appended (not user-configurable): binds tap-to-quit, see
+# mpv_touch_input.conf. Kept out of PLAYER_CMD so its path can be resolved
+# against PATH here rather than baked as a fragile relative string in config.json.
+SECRET_VIDEO_INPUT_CONF_ARG = f"--input-conf={PATH}mpv_touch_input.conf"
+SECRET_VIDEO_GESTURE_TIMEOUT_SECONDS = SECRET_VIDEO_CONFIG.get("GESTURE_TIMEOUT_SECONDS", 3)
+# Order of corners that must be tapped in sequence to trigger playback.
+SECRET_VIDEO_GESTURE_SEQUENCE = ["TL", "TR", "BR", "BL"]
+secret_video_gesture_progress = 0
+secret_video_gesture_last_tap_ts = 0.0
 
 EMOTION_LAST_PROMPT_TS = 0.0
 EMOTION_PROMPT_VISIBLE = False
@@ -918,6 +941,83 @@ def quit_all():
             logger.error(f"Error during GPIO cleanup: {e}")
 
     sys.exit()
+
+
+def secret_video_corner_for_click(mx, my):
+    """Return which physical corner (TL/TR/BR/BL) a click landed in, or None.
+
+    Mirrors the generous top-left emergency-exit hitbox (see the corner-tap
+    handling in loop()) to all four corners so the same touch imprecision
+    tolerance applies.
+    """
+    corner_w, corner_h = 100, 180
+    if mx < corner_w and my < corner_h:
+        return "TL"
+    if mx > DISPLAY_WIDTH - corner_w and my < corner_h:
+        return "TR"
+    if mx > DISPLAY_WIDTH - corner_w and my > DISPLAY_HEIGHT - corner_h:
+        return "BR"
+    if mx < corner_w and my > DISPLAY_HEIGHT - corner_h:
+        return "BL"
+    return None
+
+
+def handle_secret_video_gesture_tap(corner):
+    """Advance the secret TL->TR->BR->BL corner sequence; play video on completion.
+
+    Deliberately non-blocking of normal click handling (unlike the emergency
+    exit tap) so it never swallows a legitimate tap on real UI near a corner.
+    """
+    global secret_video_gesture_progress, secret_video_gesture_last_tap_ts
+
+    if not SECRET_VIDEO_ENABLED or corner is None:
+        return
+
+    now = time.time()
+    if (
+        secret_video_gesture_progress
+        and now - secret_video_gesture_last_tap_ts > SECRET_VIDEO_GESTURE_TIMEOUT_SECONDS
+    ):
+        secret_video_gesture_progress = 0
+
+    expected = SECRET_VIDEO_GESTURE_SEQUENCE[secret_video_gesture_progress]
+    if corner == expected:
+        secret_video_gesture_progress += 1
+        secret_video_gesture_last_tap_ts = now
+        if secret_video_gesture_progress == len(SECRET_VIDEO_GESTURE_SEQUENCE):
+            secret_video_gesture_progress = 0
+            play_secret_video()
+    elif corner == SECRET_VIDEO_GESTURE_SEQUENCE[0]:
+        secret_video_gesture_progress = 1
+        secret_video_gesture_last_tap_ts = now
+    else:
+        secret_video_gesture_progress = 0
+
+
+def play_secret_video():
+    if not os.path.isfile(SECRET_VIDEO_PATH):
+        logger.warning(f"Secret video gesture triggered but file not found: {SECRET_VIDEO_PATH}")
+        return
+
+    logger.info("Secret video gesture completed - playing video")
+    wake_display("secret_video_gesture", reason="secret_video_gesture")
+
+    # xset's blank/dpms idle timers run at the X-server level, independent of
+    # this (blocked) loop, so a video longer than DISPLAY_BLANK with no touch
+    # input would otherwise blank mid-playback. Suspend them for the duration.
+    os.system("xset s off")
+    os.system("xset -dpms")
+    try:
+        subprocess.run(
+            [*SECRET_VIDEO_PLAYER_CMD, SECRET_VIDEO_INPUT_CONF_ARG, SECRET_VIDEO_PATH], check=False
+        )
+    except FileNotFoundError:
+        logger.error(f"Video player command not found: {SECRET_VIDEO_PLAYER_CMD[0]}")
+    finally:
+        os.system(f"xset s {DISPLAY_BLANK_AFTER} {DISPLAY_BLANK_AFTER}")
+        os.system(f"xset dpms {DISPLAY_BLANK_AFTER} {DISPLAY_BLANK_AFTER} {DISPLAY_BLANK_AFTER}")
+
+    logger.info("Secret video playback finished")
 
 
 # display settings from theme config
@@ -2750,6 +2850,12 @@ def loop():
                 logger.info(f"Screen pressed at: ({mx}, {my})")
                 global LAST_TOUCH_TIME
                 LAST_TOUCH_TIME = time.time()
+
+                # Secret corner-tap gesture (TL -> TR -> BR -> BL) that plays a
+                # local video file full-screen. Tracked passively - never
+                # swallows the click - so it can't interfere with real UI
+                # near the other three corners.
+                handle_secret_video_gesture_tap(secret_video_corner_for_click(mx, my))
 
                 # Emergency exit logic - always takes priority over any overlay
                 # (emotion popup, keyboard, confirmation), so it can never get

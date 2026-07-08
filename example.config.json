@@ -62,6 +62,12 @@
     "HOST": "0.0.0.0",
     "PORT": 8080
   },
+  "SECRET_VIDEO": {
+    "ENABLED": false,
+    "PATH": "media/secret.mp4",
+    "PLAYER_CMD": ["mpv", "--fullscreen", "--really-quiet", "--no-osc"],
+    "GESTURE_TIMEOUT_SECONDS": 3
+  },
   "ENV": "Pi",
   "LOG_TO_FILES": false,
   "LOG_UPTIME": true
