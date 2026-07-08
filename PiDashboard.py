@@ -2163,8 +2163,8 @@ def draw_emotion_prompt_overlay():
     tft_surf.blit(fog, (0, 0))
 
     dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-    margin_x = int(dashboard_rect.width * 0.10)
-    margin_y = int(dashboard_rect.height * 0.10)
+    margin_x = int(dashboard_rect.width * 0.15)
+    margin_y = int(dashboard_rect.height * 0.15)
     EMOTION_MODAL_RECT = pygame.Rect(
         dashboard_rect.left + margin_x,
         dashboard_rect.top + margin_y,
