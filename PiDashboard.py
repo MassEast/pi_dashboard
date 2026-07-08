@@ -2734,21 +2734,26 @@ def loop():
                 global LAST_TOUCH_TIME
                 LAST_TOUCH_TIME = time.time()
 
-                if handle_emotion_popup_click(mx, my):
-                    continue
-
-                # Emergrency Exit logic
-                # Check if click is in top-left corner (50x50 pixels)
-                if mx < 50 and my < 50:
+                # Emergency exit logic - always takes priority over any overlay
+                # (emotion popup, keyboard, confirmation), so it can never get
+                # swallowed by them. Check if click is in top-left corner.
+                # Box is deliberately generous (not 50x50): on the real DSI touchscreen,
+                # taps aimed at the physical corner land anywhere up to (85, 160) due to
+                # touch calibration imprecision (measured 2026-07-08).
+                if mx < 100 and my < 180:
                     exit_clicks += 1
                     logger.info(f"Emergency exit click: {exit_clicks}/5")
                     if exit_clicks >= 5:
                         logger.info("Emergency exit triggered!")
                         running = False
                         quit_all()
+                    continue
                 else:
                     exit_clicks = 0 # Reset if they click elsewhere
                 # ----------------------------
+
+                if handle_emotion_popup_click(mx, my):
+                    continue
 
                 if DISPLAY_BLANK:
                     logger.info("Going from idle to active.")
