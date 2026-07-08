@@ -2299,7 +2299,12 @@ def draw_emotion_prompt_overlay():
         for idx, emotion in enumerate(options):
             row = idx // columns
             col = idx % columns
-            button_x = EMOTION_MODAL_RECT.left + inner_pad + col * (button_width + button_gap)
+            # Center partial rows (e.g. a trailing row of 2 in a 3-column grid)
+            # instead of left-packing them, so the last row doesn't look lopsided.
+            items_in_row = min(columns, len(options) - row * columns)
+            row_width = items_in_row * button_width + (items_in_row - 1) * button_gap
+            row_left = EMOTION_MODAL_RECT.left + inner_pad + int((action_width - row_width) / 2)
+            button_x = row_left + col * (button_width + button_gap)
             button_y = button_area_top + row * (button_height + button_gap)
             button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
             pygame.draw.rect(tft_surf, SWEET_PURPLE, button_rect, border_radius=10)
