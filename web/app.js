@@ -63,7 +63,8 @@ const totalCountNode = document.getElementById("totalCount");
 const updatedAtNode = document.getElementById("updatedAt");
 const uptimeCards = [...document.querySelectorAll(".uptime-window")];
 const windowButtons = [...document.querySelectorAll('.control-group[aria-label="Time window selector"] .window-btn')];
-const archiveToggle = document.getElementById("archiveToggle");
+const flatCurrentBtn = document.getElementById("flatCurrentBtn");
+const flatArchiveBtn = document.getElementById("flatArchiveBtn");
 
 let currentWindow = "7d";
 let viewingArchive = false;
@@ -447,13 +448,22 @@ for (const btn of windowButtons) {
     });
 }
 
-if (archiveToggle) {
-    archiveToggle.addEventListener("click", async () => {
-        viewingArchive = !viewingArchive;
-        archiveToggle.classList.toggle("active", viewingArchive);
-        archiveToggle.textContent = viewingArchive
-            ? "🏠 Back to current flat's results (MoaBeats)"
-            : "📦 View old flat's results (Kantstraße)";
+function setViewingArchive(archive) {
+    viewingArchive = archive;
+    if (flatCurrentBtn) flatCurrentBtn.classList.toggle("active", !archive);
+    if (flatArchiveBtn) flatArchiveBtn.classList.toggle("active", archive);
+}
+
+if (flatCurrentBtn) {
+    flatCurrentBtn.addEventListener("click", async () => {
+        setViewingArchive(false);
+        await refresh();
+    });
+}
+
+if (flatArchiveBtn) {
+    flatArchiveBtn.addEventListener("click", async () => {
+        setViewingArchive(true);
         await refresh();
     });
 }

@@ -30,9 +30,6 @@
                 <button class="window-btn" data-window="emotion">By emotion</button>
                 <button class="window-btn" data-window="alltime">All time</button>
             </div>
-            <div class="control-group" aria-label="Flat selector">
-                <button id="archiveToggle" class="window-btn" data-archive="0">📦 View old flat's results (Kantstraße)</button>
-            </div>
         </section>
 
         <section class="card">
@@ -102,6 +99,11 @@
             idea: Ju, implementation: Copilot<br>
             April 2026
         </footer>
+
+        <div class="control-group flat-toggle" aria-label="Flat selector">
+            <button id="flatCurrentBtn" class="window-btn active" data-archive="0">MoaBeats (current)</button>
+            <button id="flatArchiveBtn" class="window-btn" data-archive="1">Kantstraße (old)</button>
+        </div>
     </main>
 
     <script src="/app.js"></script>

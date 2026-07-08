@@ -203,6 +203,11 @@ body {
     letter-spacing: 0.3px;
 }
 
+.flat-toggle {
+    justify-content: center;
+    margin: 0 0 18px;
+}
+
 @media (max-width: 640px) {
     .page {
         margin: 14px auto;
