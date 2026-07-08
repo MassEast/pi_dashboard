@@ -148,6 +148,16 @@ animations smoothly
 is from berlin city, germany)
 - For language-support, units, etc please refer to -> **[weatherbit API Docs](https://www.weatherbit.io/api)**
 
+#### Future idea: hourly temp/rain chart for today
+Not implemented. The app currently only calls Weatherbit's `/current` and `/forecast/daily`
+endpoints (that's where today's high/low and the 3-day-ahead forecast come from) — there's no
+hour-by-hour data being fetched, so a small intraday temp/rain chart isn't possible without adding
+a call to Weatherbit's `/forecast/hourly` endpoint. Worth checking API quota first: at the default
+30-minute update interval, the current 2-calls-per-cycle setup is already ~96 calls/day, above the
+free tier's 50/day — adding a third call makes that worse. (Side note: `WEATHERBIT_HOURS` in
+`config.json` is currently dead config — loaded but never used anywhere, presumably left over from
+when hourly data was planned.)
+
 #### Hardcoded localise strings and ISO settings
 ```json
   "LOCALE": {
