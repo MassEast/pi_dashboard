@@ -1881,7 +1881,10 @@ class BVGUpdate(object):
                         new_surf.blit(departure_surface, (departure_x, int(row_y * ZOOM)))
                         departure_x += departure_surface.get_width()
                 else:
-                    DrawString(new_surf, "none :(", FONT_SMALL, ORANGE, row_y).left(60)
+                    # Same font and x-start as the departure times themselves
+                    # (was FONT_SMALL at a different offset - too big and
+                    # crammed right up against the "245:" label).
+                    DrawString(new_surf, "none :(", FONT_BUS_TIME, ORANGE, row_y).left(72)
 
         # Extra information - pushed down to sit near the bottom of the
         # taller 240x400 canvas instead of the old 240x320 bottom edge.
