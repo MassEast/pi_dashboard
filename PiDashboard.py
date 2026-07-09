@@ -25,6 +25,7 @@
 # SOFTWARE.
 
 import datetime
+import hashlib
 import json
 import locale
 import logging
@@ -134,6 +135,12 @@ BVG_LOOKBACK_MIN = config["BVG"]["LOOKBACK_MIN"]
 # icon rotation angle (degrees) per row "icon" value; "double_left" is drawn
 # as two overlapping left arrows since there's no dedicated double-arrow asset
 BVG_ROW_ICON_ANGLES = {"up": 0, "down": 180, "left": 90, "right": -90}
+
+# MoaBeats (WG chores/shopping/visits) integration - see docs/PI_HANDOVER.md in
+# the moabeatstastic repo for the API contract. Disabled/missing config block
+# means this whole feature is skipped, no crash.
+MOABEATS_STATUS = {"overdue_chores": [], "cleaning_chores": [], "shopping": [], "visits": []}
+MOABEATS_STATUS_LOCK = threading.Lock()
 
 emotion_cfg = config.get("EMOTION", {})
 EMOTION_ENABLED = emotion_cfg.get("ENABLED", True)
@@ -273,6 +280,7 @@ class SimpleScheduler:
     def __init__(self):
         self.weather_timer = None
         self.bvg_timer = None
+        self.moabeats_timer = None
         self.running = True
 
     def start_weather_updates(self):
@@ -328,6 +336,42 @@ class SimpleScheduler:
         # Start the cycle
         bvg_cycle()
 
+    def start_moabeats_updates(self):
+        """Start MoaBeats (WG chores/shopping/visits) poll cycle.
+
+        Pauses while DISPLAY_BLANK, same as weather/BVG - except on
+        CLEANING_DAY, when the blanked screen is actually showing the
+        fullscreen chore reminder (kept forced-on via `xset s reset` in
+        loop(), see the CLEANING_DAY branch), so it needs to keep polling
+        to stay current through the day instead of freezing on whatever it
+        last fetched before blanking.
+        """
+        if not config.get("MOABEATS", {}).get("ENABLED", False):
+            return
+
+        if self.moabeats_timer:
+            self.moabeats_timer.cancel()
+
+        interval = config["MOABEATS"].get("POLL_INTERVAL", 300)
+
+        def cycle():
+            if not self.running:
+                return
+
+            is_cleaning_day = datetime.datetime.today().weekday() == CLEANING_DAY
+            if DISPLAY_BLANK and not is_cleaning_day:
+                # Reschedule for later, same as weather/BVG - reminder isn't
+                # showing right now, no point spending an API call on it.
+                self.moabeats_timer = threading.Timer(60, cycle)
+                self.moabeats_timer.start()
+                return
+
+            _moabeats_fetch_status()
+            self.moabeats_timer = threading.Timer(interval, cycle)
+            self.moabeats_timer.start()
+
+        cycle()
+
     def stop_all(self):
         """Clean shutdown of all timers"""
         logger.info("Stopping scheduler - cancelling all timers")
@@ -339,6 +383,9 @@ class SimpleScheduler:
         if self.bvg_timer:
             self.bvg_timer.cancel()
             logger.info("BVG timer cancelled")
+        if self.moabeats_timer:
+            self.moabeats_timer.cancel()
+            logger.info("MoaBeats timer cancelled")
 
 
 # Global scheduler instance
@@ -1147,7 +1194,11 @@ FONT_BUS_TIME = pygame.font.Font(FONT_PATH + FONT_MEDIUM, int(TINY_SIZE + (SMALL
 FONT_BIG_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, BIG_SIZE)
 DATE_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, DATE_SIZE)
 CLOCK_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, CLOCK_SIZE)
-CLEANING_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, 80)
+CLEANING_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, 40)
+# Chore list rendered below the big CLEANING_FONT headline on the cleaning-day
+# fullscreen - same fixed-px (not ZOOM-scaled) convention as CLEANING_FONT,
+# since both draw directly onto tft_surf at physical display resolution.
+CLEANING_CHORE_FONT = pygame.font.Font(FONT_PATH + FONT_MEDIUM, 32)
 
 
 WEATHERICON = "unknown"
@@ -1834,9 +1885,11 @@ class BVGUpdate(object):
 
             # One row per BVG_ROWS entry - each is its own stop/direction/line,
             # not just a left/right pair. Y-positions use the extra vertical
-            # room freed up by the 240x400 canvas fix.
-            row_y_start = 265
-            row_y_step = 26
+            # room freed up by the 240x400 canvas fix. Nudged up and tightened
+            # (was 265/26) to free 2 lines of room above the footer for
+            # draw_moabeats_panel() - first pass, needs visual tuning.
+            row_y_start = 258
+            row_y_step = 18
 
             for row_index, row_spec in enumerate(BVG_ROWS):
                 row_y = row_y_start + row_index * row_y_step
@@ -1904,6 +1957,28 @@ class BVGUpdate(object):
         pygame.time.delay(1500)
 
         return bvg_surf
+
+
+def _moabeats_fetch_status():
+    """Poll MoaBeats' /api/display/status and update MOABEATS_STATUS in place."""
+    global MOABEATS_STATUS
+    cfg = config.get("MOABEATS", {})
+    if not cfg.get("ENABLED", False):
+        return
+    try:
+        resp = requests.get(
+            cfg["API_URL"].rstrip("/") + "/api/display/status",
+            headers={"Authorization": f"Bearer {cfg['DISPLAY_SECRET']}"},
+            timeout=8,
+        )
+        if resp.status_code == 200:
+            with MOABEATS_STATUS_LOCK:
+                MOABEATS_STATUS = resp.json()
+        else:
+            logger.error(f"MoaBeats status fetch returned HTTP {resp.status_code}")
+    except Exception as e:
+        logger.error(f"MoaBeats status fetch failed: {e}")
+
 
 def get_lan_ip():
     try:
@@ -2614,6 +2689,137 @@ def draw_statusbar():
         DrawImage(dynamic_surf, images["path"], 5, size=15, fillcolor=BLUE).right(-5)
         if pygame.time.get_ticks() >= READING:
             READING = None
+
+
+def _moabeats_scroll_offset(max_offset):
+    """Time-based (no per-line state to track) ping-pong phase for an
+    overflowing MoaBeats panel line: pause at the start, scroll left to
+    reveal the cut-off tail, pause there, scroll back to the start (instead
+    of snapping), repeat. Self-corrects on its own if the content changes
+    mid-cycle since there's no stored state to go stale.
+    """
+    if max_offset <= 0:
+        return 0
+
+    scroll_speed = 30 * ZOOM  # px/sec
+    pause = 2.0  # seconds held at each end
+    scroll_duration = max_offset / scroll_speed
+    cycle = 2 * pause + 2 * scroll_duration
+
+    t = time.time() % cycle
+    if t < pause:
+        return 0
+    t -= pause
+    if t < scroll_duration:
+        return t * scroll_speed
+    t -= scroll_duration
+    if t < pause:
+        return max_offset
+    t -= pause
+    return max_offset - t * scroll_speed
+
+
+def _draw_moabeats_line(prefix, content, y, x_left, max_width):
+    """Renders one WG-panel line: the "ZU TUN:"-style prefix stays fixed in
+    place, only the content after it scrolls (clipped to the remaining
+    width) instead of truncating when it's wider than the available space,
+    so nothing is ever permanently hidden - see _moabeats_scroll_offset().
+    Item names are free-text with no length limit, so this is what stands
+    between a long name and running off-screen.
+    """
+    prefix_surf = FONT_TINY.render(prefix, True, SWEET_PURPLE)
+    display_surf.blit(prefix_surf, prefix_surf.get_rect(midleft=(x_left, y)))
+
+    content_x = x_left + prefix_surf.get_width()
+    content_max_width = max_width - prefix_surf.get_width()
+
+    content_surf = FONT_TINY.render(content, True, SWEET_PURPLE)
+    if content_surf.get_width() <= content_max_width:
+        display_surf.blit(content_surf, content_surf.get_rect(midleft=(content_x, y)))
+        return
+
+    max_offset = content_surf.get_width() - content_max_width
+    offset = _moabeats_scroll_offset(max_offset)
+    clip_rect = pygame.Rect(
+        content_x, y - content_surf.get_height() // 2 - 1, content_max_width, content_surf.get_height() + 2
+    )
+
+    previous_clip = display_surf.get_clip()
+    display_surf.set_clip(clip_rect)
+    display_surf.blit(content_surf, content_surf.get_rect(midleft=(content_x - offset, y)))
+    display_surf.set_clip(previous_clip)
+
+
+def draw_moabeats_panel():
+    """WG status band between the BVG rows and the footer: up to 3 labeled
+    lines (ZU TUN / ZU KAUFEN / ZU BESUCH), only the non-empty ones shown,
+    stacked from the top of the slot down. Runs every frame (independent of
+    the cached bvg_surf) so it always reflects the latest poll. Draws
+    directly onto display_surf at raw post-zoom pixel coordinates, same
+    convention as the CLEANING_DAY fullscreen block, since FONT_TINY is
+    already sized with ZOOM baked in.
+    """
+    if not config.get("MOABEATS", {}).get("ENABLED", False):
+        return
+
+    with MOABEATS_STATUS_LOCK:
+        status = dict(MOABEATS_STATUS)
+
+    # Sanity caps against a pathological API response (e.g. 30 overdue chores
+    # at once) - overflow itself is handled by scrolling (_draw_moabeats_line
+    # below), these just bound the render loop.
+    todo_items = []
+    for chore in status.get("overdue_chores", [])[:10]:
+        label = chore["name"]
+        if chore.get("assigned_to"):
+            label += f" ({chore['assigned_to']})"
+        todo_items.append(label)
+
+    shopping_items = [item["name"] for item in status.get("shopping", [])]  # API already caps at 3
+
+    visit_items = []
+    for visit in status.get("visits", [])[:10]:
+        visit_date = datetime.datetime.fromisoformat(visit["start"]).strftime("%-d.%-m.")
+        label = visit["guest"]
+        if visit.get("hosts"):
+            label += f" bei {visit['hosts'][0]}"
+        label += f" ab {visit_date}"
+        visit_items.append(label)
+
+    # Logical (pre-zoom) coordinates, same as row_y_start/footer below -
+    # a fixed SURFACE_HEIGHT-relative offset doesn't scale consistently
+    # against BVG_ROWS across different ZOOM/aspect ratios (was clashing
+    # with the last bus row on the local landscape dev display).
+    y_start = int(339 * ZOOM)
+    y_step = int(13 * ZOOM)
+    x_left = int(10 * ZOOM)  # matches DrawString.left()'s default margin
+    max_line_width = SURFACE_WIDTH - 2 * x_left
+
+    line_specs = []
+    if todo_items:
+        line_specs.append(("ZU TUN: ", ", ".join(todo_items)))
+    if shopping_items:
+        line_specs.append(("ZU KAUFEN: ", ", ".join(shopping_items)))
+    if visit_items:
+        line_specs.append(("ZU BESUCH: ", ", ".join(visit_items)))
+
+    if not line_specs:
+        idle_messages = [
+            "WG läuft. Alles gut.",
+            "Nichts zu tun — schön!",
+            "Sauber, entspannt, kein Stress.",
+            "Alles erledigt. Hörmi ist stolz.",
+        ]
+        day_hash = hashlib.md5(datetime.datetime.now().strftime("%Y-%m-%d").encode()).hexdigest()
+        idle_message = idle_messages[int(day_hash, 16) % len(idle_messages)]
+        surf = FONT_TINY.render(idle_message, True, SWEET_PURPLE)
+        display_surf.blit(surf, surf.get_rect(midleft=(x_left, y_start + y_step)))
+        return
+
+    for index, (prefix, content) in enumerate(line_specs):
+        _draw_moabeats_line(prefix, content, y_start + index * y_step, x_left, max_line_width)
+
+
 def draw_fps():
     DrawString(dynamic_surf, str(int(clock.get_fps())), FONT_SMALL_BOLD, RED, 20).left()
 
@@ -2647,6 +2853,7 @@ def loop():
     # Start the new scheduler
     scheduler.start_weather_updates()
     scheduler.start_bvg_updates()
+    scheduler.start_moabeats_updates()
 
     # Set X11 display power management settings
     # Sync OS blanking with app blanking timer
@@ -2781,6 +2988,8 @@ def loop():
             draw_time_layer()
             display_surf.blit(time_surf, (0, 0))
 
+            draw_moabeats_panel()
+
             # # draw the mouse events
             # mouse_surf.fill(BACKGROUND)
             # mouse_surf.set_colorkey(BACKGROUND)
@@ -2800,21 +3009,44 @@ def loop():
         elif datetime.datetime.today().weekday() == CLEANING_DAY:
             tft_surf.fill(BLACK)
 
+            # Headline anchored near the top (was vertically centered at the old,
+            # bigger 80px font) so the chore list below has real room to breathe.
+            headline_top = 50
+            headline_step = 42
+
             msg1 = CLEANING_FONT.render("IT'S", True, WHITE)
-            rect1 = msg1.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 - 135))
+            rect1 = msg1.get_rect(center=(DISPLAY_WIDTH // 2, headline_top))
             tft_surf.blit(msg1, rect1)
 
             msg2 = CLEANING_FONT.render("CLEANING", True, WHITE)
-            rect2 = msg2.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 - 45))
+            rect2 = msg2.get_rect(center=(DISPLAY_WIDTH // 2, headline_top + headline_step))
             tft_surf.blit(msg2, rect2)
 
             msg3 = CLEANING_FONT.render("DAY,", True, WHITE)
-            rect3 = msg3.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 + 45))
+            rect3 = msg3.get_rect(center=(DISPLAY_WIDTH // 2, headline_top + 2 * headline_step))
             tft_surf.blit(msg3, rect3)
 
             msg4 = CLEANING_FONT.render("YAY!", True, WHITE)
-            rect4 = msg4.get_rect(center=(DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2 + 135))
+            rect4 = msg4.get_rect(center=(DISPLAY_WIDTH // 2, headline_top + 3 * headline_step))
             tft_surf.blit(msg4, rect4)
+
+            # Real per-chore assignment list from MoaBeats, if configured - who's on
+            # what today. No done/not-done marker: cleaning_chores from the API is
+            # already filtered to not-yet-completed chores only, so there's nothing
+            # to distinguish.
+            if config.get("MOABEATS", {}).get("ENABLED", False):
+                with MOABEATS_STATUS_LOCK:
+                    cleaning_chores = list(MOABEATS_STATUS.get("cleaning_chores", []))
+
+                chore_y = headline_top + 3 * headline_step + 40
+                for chore in cleaning_chores[:6]:
+                    label = chore["name"]
+                    if chore.get("assigned_to"):
+                        label += f" ({chore['assigned_to']})"
+                    chore_surf = CLEANING_CHORE_FONT.render(label, True, SWEET_PURPLE)
+                    chore_rect = chore_surf.get_rect(center=(DISPLAY_WIDTH // 2, chore_y))
+                    tft_surf.blit(chore_surf, chore_rect)
+                    chore_y += 40
 
             pygame.display.update()
 

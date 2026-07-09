@@ -74,6 +74,12 @@
     "HOST": "0.0.0.0",
     "PORT": 8080
   },
+  "MOABEATS": {
+    "ENABLED": false,
+    "API_URL": "https://xxxxxxxxxxxx.up.railway.app",
+    "DISPLAY_SECRET": "xxxxxxxxxxxxxxxxxxxxxxxxx",
+    "POLL_INTERVAL": 300
+  },
   "SECRET_VIDEO": {
     "ENABLED": false,
     "PATH": "media/secret.mp4",

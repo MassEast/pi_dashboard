@@ -248,6 +248,35 @@ Set your theme file [darcula.json, light.json or example.json] in `config.json` 
 - On this day, instead of blanking out (going black) after the `DISPLAY_BLANK` timer expires, the screen will display a large "IT'S CLEANING DAY, YAY!" message.
 - The screen will stay on (preventing system blanking) to make sure the message is visible all day.
 - A simple touch on the display brings you back to the main dashboard.
+- If `MOABEATS` is enabled (see below) and returns `cleaning_chores` for today, the fullscreen also
+  lists each chore with who's assigned (e.g. `Küche (Ju)`) below the headline. `CLEANING_DAY` itself
+  stays the manual trigger for *whether* today is cleaning day - MoaBeats only supplies the names.
+
+#### MoaBeats WG Integration
+MoaBeats is a separate (not public) web app this WG uses to track chores, a shared shopping list,
+and upcoming guest visits. This integration is a one-way, read-only pull: `PiDashboard.py`
+periodically fetches a small JSON summary from MoaBeats' API and renders it on the display - it
+doesn't write anything back. If you don't run MoaBeats yourself, just leave `ENABLED: false` (the
+default) and ignore this section entirely.
+```json
+"MOABEATS": {
+  "ENABLED": false,
+  "API_URL": "https://your-moabeats-instance.up.railway.app",
+  "DISPLAY_SECRET": "shared secret, set as DISPLAY_SECRET on the MoaBeats side too",
+  "POLL_INTERVAL": 300
+}
+```
+- Polls a MoaBeats instance's `GET /api/display/status` for WG chores, shopping list, and upcoming
+  visits (bearer-token auth via `DISPLAY_SECRET`). If `ENABLED` is `false` or the block is missing
+  entirely, the whole feature is skipped - no crash, nothing shown.
+- A small status band (`ZU TUN:` / `ZU KAUFEN:` / `ZU BESUCH:`) is drawn between the BVG rows and
+  the footer, showing overdue chores + shopping on separate lines from upcoming visits. If a line's
+  content is wider than the display, it scrolls (pause → reveal the cut-off tail → pause → back)
+  instead of being cut off - nothing is ever permanently hidden. When everything's empty, a rotating
+  idle message ("WG läuft. Alles gut.", etc.) shows instead.
+- Polling pauses while the display is blank, same as weather/BVG, *except* on `CLEANING_DAY`: the
+  blanked screen is actively showing the cleaning-day fullscreen then, so it keeps polling to stay
+  current through the day rather than freezing on stale data.
 
 #### Emotion Logging Prompt
 ```json

@@ -81,6 +81,11 @@ through the JSON files in `logs/`:
   duplicating the read/aggregation logic.
 - **`utils.py`** — thin wrapper around the BVG (Berlin transit) `v6.bvg.transport.rest` API,
   used only by `PiDashboard.py`.
+- **MoaBeats integration** (optional, config-gated via `config.json["MOABEATS"]["ENABLED"]`) —
+  `PiDashboard.py` polls an external MoaBeats WG-chores instance's `GET /api/display/status` and
+  renders it two ways: a small always-on status band (`draw_moabeats_panel()`, with per-line
+  scrolling instead of truncation for overflowing content) and, on `CLEANING_DAY`, real chore names
+  added to the existing fullscreen reminder.
 - Two built-in safety mechanisms exist specifically because this runs headless/unattended on a
   touchscreen with no keyboard: an emergency-exit corner tap (top-left corner, 5 rapid taps
   anywhere within the hitbox — deliberately generous, not pixel-exact, because real touchscreen
