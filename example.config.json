@@ -78,7 +78,7 @@
     "ENABLED": false,
     "API_URL": "https://xxxxxxxxxxxx.up.railway.app",
     "DISPLAY_SECRET": "xxxxxxxxxxxxxxxxxxxxxxxxx",
-    "POLL_INTERVAL": 300
+    "POLL_INTERVAL": 1800
   },
   "SECRET_VIDEO": {
     "ENABLED": false,

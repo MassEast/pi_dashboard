@@ -263,7 +263,7 @@ default) and ignore this section entirely.
   "ENABLED": false,
   "API_URL": "https://your-moabeats-instance.up.railway.app",
   "DISPLAY_SECRET": "shared secret, set as DISPLAY_SECRET on the MoaBeats side too",
-  "POLL_INTERVAL": 300
+  "POLL_INTERVAL": 1800
 }
 ```
 - Polls a MoaBeats instance's `GET /api/display/status` for WG chores, shopping list, and upcoming
