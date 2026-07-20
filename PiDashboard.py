@@ -2779,11 +2779,15 @@ def draw_moabeats_panel():
 
     visit_items = []
     for visit in status.get("visits", [])[:10]:
-        visit_date = datetime.datetime.fromisoformat(visit["start"]).strftime("%-d.%-m.")
+        start_date = datetime.datetime.fromisoformat(visit["start"]).strftime("%-d.%-m.")
+        end_date = datetime.datetime.fromisoformat(visit["end"]).strftime("%-d.%-m.")
         label = visit["guest"]
         if visit.get("hosts"):
             label += f" bei {visit['hosts'][0]}"
-        label += f" ab {visit_date}"
+        if visit["end"] == visit["start"]:
+            label += f" am {start_date}"
+        else:
+            label += f" von {start_date} bis {end_date}"
         visit_items.append(label)
 
     # Logical (pre-zoom) coordinates, same as row_y_start/footer below -
