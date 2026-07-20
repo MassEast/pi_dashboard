@@ -97,18 +97,26 @@ if config["LOG_TO_FILES"]:
 # PIR Sensor - try to import RPi.GPIO if on Raspberry Pi
 try:
     import RPi.GPIO as GPIO
+
     GPIO_AVAILABLE = True
     logger.info("RPi.GPIO imported successfully - PIR Sensor support enabled")
 except ImportError:
     GPIO_AVAILABLE = False
-    logger.warning("RPi.GPIO not available - PIR Sensor support disabled (must run on Raspberry Pi)")
+    logger.warning(
+        "RPi.GPIO not available - PIR Sensor support disabled (must run on Raspberry Pi)"
+    )
 
 theme_config = config["THEME"]
 
 # Parse cleaning day config
 days_map = {
-    "Monday": 0, "Tuesday": 1, "Wednesday": 2, "Thursday": 3,
-    "Friday": 4, "Saturday": 5, "Sunday": 6
+    "Monday": 0,
+    "Tuesday": 1,
+    "Wednesday": 2,
+    "Thursday": 3,
+    "Friday": 4,
+    "Saturday": 5,
+    "Sunday": 6,
 }
 cleaning_day_name = config.get("CLEANING_DAY", "Monday")
 CLEANING_DAY = days_map.get(cleaning_day_name, 0)
@@ -445,7 +453,10 @@ def safe_network_monitor():
                 if os.path.exists(NETWORK_REBOOT_MARKER):
                     last_reboot_age = time.time() - os.path.getmtime(NETWORK_REBOOT_MARKER)
 
-                if last_reboot_age is not None and last_reboot_age < NETWORK_REBOOT_COOLDOWN_SECONDS:
+                if (
+                    last_reboot_age is not None
+                    and last_reboot_age < NETWORK_REBOOT_COOLDOWN_SECONDS
+                ):
                     logger.warning(
                         f"Network still down, but already rebooted for this {int(last_reboot_age)}s ago "
                         f"(cooldown {NETWORK_REBOOT_COOLDOWN_SECONDS}s) - skipping reboot this cycle."
@@ -471,6 +482,7 @@ def safe_network_monitor():
 
         # Check every 10 minutes
         time.sleep(600)
+
 
 # Start the monitor in a background thread
 monitor_thread = threading.Thread(target=safe_network_monitor, daemon=True)
@@ -619,7 +631,9 @@ def _ensure_catalog_entry(name, emoji=None, color=None, insert_after=None):
 
     style = EMOTION_DEFAULT_STYLE.get(normalized, EMOTION_FALLBACK_STYLE)
     resolved_emoji = emoji or style["emoji"]
-    resolved_color = color if isinstance(color, str) and EMOTION_COLOR_RE.match(color) else style["color"]
+    resolved_color = (
+        color if isinstance(color, str) and EMOTION_COLOR_RE.match(color) else style["color"]
+    )
     new_entry = {"name": normalized, "emoji": resolved_emoji, "color": resolved_color}
 
     # Determine insertion position based on insert_after.
@@ -668,16 +682,19 @@ def _build_llm_classification_prompt(new_emotion):
         for entry in EMOTION_CATALOG
     ]
 
-    return (
-        EMOTION_LLM_PROMPT_TEMPLATE
-        .replace("{{catalog_json}}", json.dumps(catalog, ensure_ascii=False))
-        .replace("{{new_emotion_json}}", json.dumps({"name": new_emotion}, ensure_ascii=False))
-    )
+    return EMOTION_LLM_PROMPT_TEMPLATE.replace(
+        "{{catalog_json}}", json.dumps(catalog, ensure_ascii=False)
+    ).replace("{{new_emotion_json}}", json.dumps({"name": new_emotion}, ensure_ascii=False))
 
 
 def _classify_custom_emotion(name):
     style = EMOTION_DEFAULT_STYLE.get(name, EMOTION_FALLBACK_STYLE)
-    fallback = {"name": name, "emoji": style["emoji"], "color": style["color"], "insert_after": None}
+    fallback = {
+        "name": name,
+        "emoji": style["emoji"],
+        "color": style["color"],
+        "insert_after": None,
+    }
 
     if not EMOTION_LLM_ENABLED or not EMOTION_LLM_API_KEY:
         return fallback
@@ -708,7 +725,10 @@ def _classify_custom_emotion(name):
         )
         response.raise_for_status()
         payload = response.json()
-        logger.info("🤖 LLM: Raw API response payload:\n%s", json.dumps(payload, ensure_ascii=False, indent=2))
+        logger.info(
+            "🤖 LLM: Raw API response payload:\n%s",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        )
 
         llm_text = ""
         if isinstance(payload.get("content"), list) and payload["content"]:
@@ -796,7 +816,12 @@ def _upsert_custom_slot(label):
     # Check if it exists in default options
     if normalized in EMOTION_OPTIONS:
         logger.info(f"✏️  Custom emotion: '{normalized}' already in default options")
-        return {"emotion": normalized, "added": False, "duplicate": True, "reason": "default-options"}
+        return {
+            "emotion": normalized,
+            "added": False,
+            "duplicate": True,
+            "reason": "default-options",
+        }
 
     # Check if it's already in custom slots
     if normalized in EMOTION_CUSTOM_SLOTS:
@@ -819,8 +844,15 @@ def _upsert_custom_slot(label):
     # Check if the LLM-suggested name already exists in catalog
     if any(entry.get("name") == llm_name for entry in EMOTION_CATALOG):
         # LLM corrected it to an existing emotion - use that instead (don't modify slots)
-        logger.info(f"✏️  Custom emotion: LLM corrected '{normalized}' → '{llm_name}' (already in catalog)")
-        return {"emotion": llm_name, "added": False, "duplicate": True, "reason": "llm-catalog-correction"}
+        logger.info(
+            f"✏️  Custom emotion: LLM corrected '{normalized}' → '{llm_name}' (already in catalog)"
+        )
+        return {
+            "emotion": llm_name,
+            "added": False,
+            "duplicate": True,
+            "reason": "llm-catalog-correction",
+        }
 
     # Truly new emotion - add to slots with the (possibly corrected) LLM name
     slots = list(EMOTION_CUSTOM_SLOTS)
@@ -834,7 +866,9 @@ def _upsert_custom_slot(label):
         replace_index = 0 if left_usage <= right_usage else 1
         old_emotion = slots[replace_index]
         slots[replace_index] = llm_name
-        logger.info(f"✏️  Custom emotion: Replaced '{old_emotion}' (usage={[left_usage, right_usage][replace_index]}) with '{llm_name}'")
+        logger.info(
+            f"✏️  Custom emotion: Replaced '{old_emotion}' (usage={[left_usage, right_usage][replace_index]}) with '{llm_name}'"
+        )
 
     # Add to catalog with LLM-suggested emoji, color, and position
     _ensure_catalog_entry(
@@ -846,7 +880,9 @@ def _upsert_custom_slot(label):
 
     EMOTION_CUSTOM_SLOTS = slots
     _persist_emotion_config(slots)
-    logger.info(f"✏️  Custom emotion: Successfully added '{llm_name}' to catalog and persisted config")
+    logger.info(
+        f"✏️  Custom emotion: Successfully added '{llm_name}' to catalog and persisted config"
+    )
     return {"emotion": llm_name, "added": True, "duplicate": False, "reason": "new"}
 
 
@@ -1190,7 +1226,9 @@ FONT_BIG = pygame.font.Font(FONT_PATH + FONT_MEDIUM, BIG_SIZE)
 # Between TINY and SMALL (closer to SMALL) - used for BVG departure times,
 # which needed to shrink from SMALL to fit 4 rows horizontally but were
 # unreadable at TINY.
-FONT_BUS_TIME = pygame.font.Font(FONT_PATH + FONT_MEDIUM, int(TINY_SIZE + (SMALL_SIZE - TINY_SIZE) * 0.65))
+FONT_BUS_TIME = pygame.font.Font(
+    FONT_PATH + FONT_MEDIUM, int(TINY_SIZE + (SMALL_SIZE - TINY_SIZE) * 0.65)
+)
 FONT_BIG_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, BIG_SIZE)
 DATE_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, DATE_SIZE)
 CLOCK_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, CLOCK_SIZE)
@@ -1791,7 +1829,6 @@ class WeatherUpdate(object):
         # )
         DrawString(new_surf, wind_speed_string, FONT_SMALL_BOLD, MAIN_FONT, 154).center(3, 2)
 
-
         DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 0)
         DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 1)
         DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 2)
@@ -1799,7 +1836,6 @@ class WeatherUpdate(object):
         DrawString(new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 0)
         DrawString(new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 1)
         DrawString(new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 2)
-
 
         weather_surf = new_surf
 
@@ -1898,11 +1934,17 @@ class BVGUpdate(object):
                 if icon_style == "double_left":
                     # Tighter spread than a plain overlap-for-effect pair,
                     # so it doesn't run into the bus icon to its right.
-                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90).left(-5)
-                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90).left(1)
+                    DrawImage(
+                        new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90
+                    ).left(-5)
+                    DrawImage(
+                        new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90
+                    ).left(1)
                 else:
                     angle = BVG_ROW_ICON_ANGLES.get(icon_style, 0)
-                    DrawImage(new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=angle).left(-3)
+                    DrawImage(
+                        new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=angle
+                    ).left(-3)
 
                 departure_times = []
                 departure_delays = []
@@ -1919,7 +1961,9 @@ class BVGUpdate(object):
                         departure_delays.append(departure["delay"])
                         departures_reported += 1
 
-                DrawImage(new_surf, images["bus"], row_y + 2, size=10).left(18)  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
+                DrawImage(new_surf, images["bus"], row_y + 2, size=10).left(
+                    18
+                )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
                 DrawString(new_surf, row_spec["line"] + ":", FONT_SMALL, ORANGE, row_y).left(30)
                 if departure_times:
                     departure_x = int(82 * ZOOM)
@@ -1930,7 +1974,9 @@ class BVGUpdate(object):
                             departure_x += comma_surface.get_width()
 
                         departure_color = _delay_to_departure_text_color(departure_delays[index])
-                        departure_surface = FONT_BUS_TIME.render(departure_time, True, departure_color)
+                        departure_surface = FONT_BUS_TIME.render(
+                            departure_time, True, departure_color
+                        )
                         new_surf.blit(departure_surface, (departure_x, int(row_y * ZOOM)))
                         departure_x += departure_surface.get_width()
                 else:
@@ -1957,6 +2003,17 @@ class BVGUpdate(object):
         pygame.time.delay(1500)
 
         return bvg_surf
+
+
+# Not using strftime("%a") here since LOCALE.ISO drives the system locale
+# (currently "en_GB") and the WG panel's own labels (ZU TUN/ZU KAUFEN/ZU
+# BESUCH) are German regardless of that setting.
+GERMAN_WEEKDAYS_ABBR = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+
+
+def _format_visit_date(iso_date):
+    dt = datetime.datetime.fromisoformat(iso_date)
+    return f"{GERMAN_WEEKDAYS_ABBR[dt.weekday()]}, {dt.strftime('%-d.%-m.')}"
 
 
 def _moabeats_fetch_status():
@@ -2137,9 +2194,13 @@ def draw_results_overlay():
     tft_surf.blit(fog, (0, 0))
 
     if EMOTION_MODAL_RECT is not None:
-        card = EMOTION_MODAL_RECT.inflate(-int(EMOTION_MODAL_RECT.width * 0.08), -int(EMOTION_MODAL_RECT.height * 0.08))
+        card = EMOTION_MODAL_RECT.inflate(
+            -int(EMOTION_MODAL_RECT.width * 0.08), -int(EMOTION_MODAL_RECT.height * 0.08)
+        )
     else:
-        fallback = dashboard_rect.inflate(-int(dashboard_rect.width * 0.10), -int(dashboard_rect.height * 0.10))
+        fallback = dashboard_rect.inflate(
+            -int(dashboard_rect.width * 0.10), -int(dashboard_rect.height * 0.10)
+        )
         card = fallback
 
     pygame.draw.rect(tft_surf, WHITE, card, border_radius=16)
@@ -2243,7 +2304,9 @@ def draw_emotion_prompt_overlay():
     title_line_1_text = "Most prevalent emotion"
     title_line_2_text = "right now?"
     max_title_width = close_rect.left - EMOTION_MODAL_RECT.left - 22
-    question_font = FONT_SMALL if FONT_SMALL.size(title_line_1_text)[0] <= max_title_width else FONT_TINY
+    question_font = (
+        FONT_SMALL if FONT_SMALL.size(title_line_1_text)[0] <= max_title_width else FONT_TINY
+    )
 
     title_center_x = int((EMOTION_MODAL_RECT.left + close_rect.left - 8) / 2)
     title_line_1 = question_font.render(title_line_1_text, True, BLACK)
@@ -2277,7 +2340,9 @@ def draw_emotion_prompt_overlay():
         typed = EMOTION_KEYBOARD_TEXT if EMOTION_KEYBOARD_TEXT else "type custom emotion"
         typed_color = BLACK if EMOTION_KEYBOARD_TEXT else DARK_GRAY
         typed_text = FONT_TINY.render(typed, True, typed_color)
-        tft_surf.blit(typed_text, typed_text.get_rect(midleft=(input_rect.left + 8, input_rect.centery)))
+        tft_surf.blit(
+            typed_text, typed_text.get_rect(midleft=(input_rect.left + 8, input_rect.centery))
+        )
 
         keys_area_top = input_rect.bottom + 8
         keys_area_bottom = action_y - 8
@@ -2342,12 +2407,20 @@ def draw_emotion_prompt_overlay():
     else:
         custom_row_height = 38
         button_area_bottom = action_y - custom_row_height - 16
-        options = EMOTION_SHUFFLED_OPTIONS if EMOTION_SHUFFLED_OPTIONS else get_emotion_prompt_options(max_count=16)
+        options = (
+            EMOTION_SHUFFLED_OPTIONS
+            if EMOTION_SHUFFLED_OPTIONS
+            else get_emotion_prompt_options(max_count=16)
+        )
         columns = get_emotion_grid_columns(len(options))
         rows = max(1, math.ceil(len(options) / columns))
 
-        button_width = int((EMOTION_MODAL_RECT.width - (2 * inner_pad) - ((columns - 1) * button_gap)) / columns)
-        button_height = int((button_area_bottom - button_area_top - ((rows - 1) * button_gap)) / rows)
+        button_width = int(
+            (EMOTION_MODAL_RECT.width - (2 * inner_pad) - ((columns - 1) * button_gap)) / columns
+        )
+        button_height = int(
+            (button_area_bottom - button_area_top - ((rows - 1) * button_gap)) / rows
+        )
 
         for idx, emotion in enumerate(options):
             row = idx // columns
@@ -2410,11 +2483,11 @@ def draw_emotion_prompt_overlay():
                         {"type": "slot", "emotion": label, "rect": custom_rect}
                     )
             else:
-                EMOTION_CUSTOM_BUTTON_RECTS.append(
-                    {"type": "trigger", "rect": custom_rect}
-                )
+                EMOTION_CUSTOM_BUTTON_RECTS.append({"type": "trigger", "rect": custom_rect})
 
-        show_rect = pygame.Rect(EMOTION_MODAL_RECT.left + inner_pad, action_y, action_width, action_height)
+        show_rect = pygame.Rect(
+            EMOTION_MODAL_RECT.left + inner_pad, action_y, action_width, action_height
+        )
         pygame.draw.rect(tft_surf, GREEN, show_rect, border_radius=10)
         pygame.draw.rect(tft_surf, DARK_GRAY, show_rect, width=2, border_radius=10)
 
@@ -2741,7 +2814,10 @@ def _draw_moabeats_line(prefix, content, y, x_left, max_width):
     max_offset = content_surf.get_width() - content_max_width
     offset = _moabeats_scroll_offset(max_offset)
     clip_rect = pygame.Rect(
-        content_x, y - content_surf.get_height() // 2 - 1, content_max_width, content_surf.get_height() + 2
+        content_x,
+        y - content_surf.get_height() // 2 - 1,
+        content_max_width,
+        content_surf.get_height() + 2,
     )
 
     previous_clip = display_surf.get_clip()
@@ -2779,8 +2855,8 @@ def draw_moabeats_panel():
 
     visit_items = []
     for visit in status.get("visits", [])[:10]:
-        start_date = datetime.datetime.fromisoformat(visit["start"]).strftime("%-d.%-m.")
-        end_date = datetime.datetime.fromisoformat(visit["end"]).strftime("%-d.%-m.")
+        start_date = _format_visit_date(visit["start"])
+        end_date = _format_visit_date(visit["end"])
         label = visit["guest"]
         if visit.get("hosts"):
             label += f" bei {visit['hosts'][0]}"
@@ -2801,11 +2877,11 @@ def draw_moabeats_panel():
 
     line_specs = []
     if todo_items:
-        line_specs.append(("ZU TUN: ", ", ".join(todo_items)))
+        line_specs.append(("TUN: ", ", ".join(todo_items)))
     if shopping_items:
-        line_specs.append(("ZU KAUFEN: ", ", ".join(shopping_items)))
+        line_specs.append(("KAUFEN: ", ", ".join(shopping_items)))
     if visit_items:
-        line_specs.append(("ZU BESUCH: ", ", ".join(visit_items)))
+        line_specs.append(("BESUCH: ", ", ".join(visit_items)))
 
     if not line_specs:
         idle_messages = [
@@ -2945,12 +3021,18 @@ def loop():
         global DISPLAY_BLANK
 
         activate_pending_emotion_prompt()
-        if EMOTION_CONFIRMATION_VISIBLE and time.time() - EMOTION_CONFIRMATION_OPENED_AT > EMOTION_CONFIRMATION_SECONDS:
+        if (
+            EMOTION_CONFIRMATION_VISIBLE
+            and time.time() - EMOTION_CONFIRMATION_OPENED_AT > EMOTION_CONFIRMATION_SECONDS
+        ):
             dismiss_emotion_confirmation("timeout")
         if DISPLAY_BLANK and EMOTION_PROMPT_VISIBLE:
             dismiss_emotion_prompt("display-blank")
         elif EMOTION_PROMPT_VISIBLE:
-            if not EMOTION_KEYBOARD_VISIBLE and time.time() - EMOTION_LAST_ACTIVITY_TS > DISPLAY_BLANK_AFTER:
+            if (
+                not EMOTION_KEYBOARD_VISIBLE
+                and time.time() - EMOTION_LAST_ACTIVITY_TS > DISPLAY_BLANK_AFTER
+            ):
                 dismiss_emotion_prompt("timeout")
 
         if not DISPLAY_BLANK:
@@ -3093,7 +3175,7 @@ def loop():
                         quit_all()
                     continue
                 else:
-                    exit_clicks = 0 # Reset if they click elsewhere
+                    exit_clicks = 0  # Reset if they click elsewhere
                 # ----------------------------
 
                 if handle_emotion_popup_click(mx, my):
