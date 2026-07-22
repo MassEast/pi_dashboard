@@ -1084,6 +1084,10 @@ def play_secret_video():
     global secret_video_last_path
 
     clips = sorted(glob.glob(os.path.join(SECRET_VIDEO_DIR, "*.mp4")))
+    # template.mp4 is a committed placeholder so the feature works out of the
+    # box on a fresh clone - exclude it from the pool once real clips exist.
+    real_clips = [c for c in clips if os.path.basename(c) != "template.mp4"]
+    clips = real_clips or clips
     if not clips:
         logger.warning(f"Secret video gesture triggered but no clips found in: {SECRET_VIDEO_DIR}")
         return
