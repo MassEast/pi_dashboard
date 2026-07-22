@@ -82,7 +82,7 @@
   },
   "SECRET_VIDEO": {
     "ENABLED": false,
-    "PATH": "media/secret.mp4",
+    "DIR": "media/secret_clips",
     "PLAYER_CMD": ["mpv", "--fullscreen", "--really-quiet", "--no-osc"],
     "GESTURE_TIMEOUT_SECONDS": 3
   },

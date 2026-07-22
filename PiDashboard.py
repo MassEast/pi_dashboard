@@ -25,6 +25,7 @@
 # SOFTWARE.
 
 import datetime
+import glob
 import hashlib
 import json
 import locale
@@ -499,15 +500,15 @@ LAST_MOTION_DETECTED_TIME = time.time()
 DISPLAY_BLANK_AFTER = config["TIMER"]["DISPLAY_BLANK"]
 DISPLAY_BLANK = False
 
-# Secret corner-tap gesture that plays a local video file full-screen.
-# Not wired to anything public - PATH points at a gitignored file that
+# Secret corner-tap gesture that plays a random local video clip full-screen.
+# Not wired to anything public - DIR points at a gitignored folder that
 # only exists locally (see media/ in .gitignore).
 SECRET_VIDEO_CONFIG = config.get("SECRET_VIDEO", {})
 SECRET_VIDEO_ENABLED = SECRET_VIDEO_CONFIG.get("ENABLED", False)
 # Resolved against PATH (script dir), matching every other config-relative
 # path in this file (config.json, THEME, ...) - NOT the process's cwd, which
 # for the autostarted process is $HOME, not the repo dir.
-SECRET_VIDEO_PATH = os.path.join(PATH, SECRET_VIDEO_CONFIG.get("PATH", ""))
+SECRET_VIDEO_DIR = os.path.join(PATH, SECRET_VIDEO_CONFIG.get("DIR", ""))
 SECRET_VIDEO_PLAYER_CMD = SECRET_VIDEO_CONFIG.get(
     "PLAYER_CMD", ["mpv", "--fullscreen", "--really-quiet", "--no-osc"]
 )
@@ -520,6 +521,7 @@ SECRET_VIDEO_GESTURE_TIMEOUT_SECONDS = SECRET_VIDEO_CONFIG.get("GESTURE_TIMEOUT_
 SECRET_VIDEO_GESTURE_SEQUENCE = ["TL", "TR", "BR", "BL"]
 secret_video_gesture_progress = 0
 secret_video_gesture_last_tap_ts = 0.0
+secret_video_last_path = None
 
 EMOTION_LAST_PROMPT_TS = 0.0
 EMOTION_PROMPT_VISIBLE = False
@@ -1079,11 +1081,19 @@ def handle_secret_video_gesture_tap(corner):
 
 
 def play_secret_video():
-    if not os.path.isfile(SECRET_VIDEO_PATH):
-        logger.warning(f"Secret video gesture triggered but file not found: {SECRET_VIDEO_PATH}")
+    global secret_video_last_path
+
+    clips = sorted(glob.glob(os.path.join(SECRET_VIDEO_DIR, "*.mp4")))
+    if not clips:
+        logger.warning(f"Secret video gesture triggered but no clips found in: {SECRET_VIDEO_DIR}")
         return
 
-    logger.info("Secret video gesture completed - playing video")
+    # Avoid repeating the same clip twice in a row when more than one exists.
+    choices = [c for c in clips if c != secret_video_last_path] or clips
+    video_path = random.choice(choices)
+    secret_video_last_path = video_path
+
+    logger.info(f"Secret video gesture completed - playing {os.path.basename(video_path)}")
     wake_display("secret_video_gesture", reason="secret_video_gesture")
 
     # xset's blank/dpms idle timers run at the X-server level, independent of
@@ -1093,7 +1103,7 @@ def play_secret_video():
     os.system("xset -dpms")
     try:
         subprocess.run(
-            [*SECRET_VIDEO_PLAYER_CMD, SECRET_VIDEO_INPUT_CONF_ARG, SECRET_VIDEO_PATH], check=False
+            [*SECRET_VIDEO_PLAYER_CMD, SECRET_VIDEO_INPUT_CONF_ARG, video_path], check=False
         )
     except FileNotFoundError:
         logger.error(f"Video player command not found: {SECRET_VIDEO_PLAYER_CMD[0]}")

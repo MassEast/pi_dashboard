@@ -92,4 +92,7 @@ uptime.json
 .DS_Store
 docs/PROGRESS.md
 tmp_prompt_just_for_me.txt
-media/
+media/*
+!media/secret_clips/
+media/secret_clips/*
+!media/secret_clips/template.mp4
