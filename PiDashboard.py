@@ -522,6 +522,9 @@ SECRET_VIDEO_GESTURE_SEQUENCE = ["TL", "TR", "BR", "BL"]
 secret_video_gesture_progress = 0
 secret_video_gesture_last_tap_ts = 0.0
 secret_video_last_path = None
+# Shuffled "bag" of clips not yet played this cycle - refilled once exhausted
+# so every clip is seen once before any repeats (see play_secret_video()).
+secret_video_queue = []
 
 EMOTION_LAST_PROMPT_TS = 0.0
 EMOTION_PROMPT_VISIBLE = False
@@ -1081,7 +1084,7 @@ def handle_secret_video_gesture_tap(corner):
 
 
 def play_secret_video():
-    global secret_video_last_path
+    global secret_video_last_path, secret_video_queue
 
     clips = sorted(glob.glob(os.path.join(SECRET_VIDEO_DIR, "*.mp4")))
     # template.mp4 is a committed placeholder so the feature works out of the
@@ -1092,9 +1095,18 @@ def play_secret_video():
         logger.warning(f"Secret video gesture triggered but no clips found in: {SECRET_VIDEO_DIR}")
         return
 
-    # Avoid repeating the same clip twice in a row when more than one exists.
-    choices = [c for c in clips if c != secret_video_last_path] or clips
-    video_path = random.choice(choices)
+    # Shuffled playthrough: refill and reshuffle the bag once it's exhausted
+    # (or once the clip pool on disk has changed), so every clip plays once
+    # before any repeats instead of pure random.choice() clustering.
+    if not secret_video_queue or not set(secret_video_queue) <= set(clips):
+        secret_video_queue = clips.copy()
+        random.shuffle(secret_video_queue)
+        # Avoid an immediate repeat across the bag boundary (last clip of the
+        # previous cycle landing first in the new one).
+        if len(secret_video_queue) > 1 and secret_video_queue[-1] == secret_video_last_path:
+            secret_video_queue[-1], secret_video_queue[0] = secret_video_queue[0], secret_video_queue[-1]
+
+    video_path = secret_video_queue.pop()
     secret_video_last_path = video_path
 
     logger.info(f"Secret video gesture completed - playing {os.path.basename(video_path)}")
