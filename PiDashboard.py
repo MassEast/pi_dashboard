@@ -512,10 +512,11 @@ SECRET_VIDEO_DIR = os.path.join(PATH, SECRET_VIDEO_CONFIG.get("DIR", ""))
 SECRET_VIDEO_PLAYER_CMD = SECRET_VIDEO_CONFIG.get(
     "PLAYER_CMD", ["mpv", "--fullscreen", "--really-quiet", "--no-osc"]
 )
-# Always appended (not user-configurable): binds tap-to-quit, see
-# mpv_touch_input.conf. Kept out of PLAYER_CMD so its path can be resolved
-# against PATH here rather than baked as a fragile relative string in config.json.
-SECRET_VIDEO_INPUT_CONF_ARG = f"--input-conf={PATH}mpv_touch_input.conf"
+# Always appended (not user-configurable): handles tap-to-quit and
+# hold-to-scrub, see mpv_touch_input.lua. Kept out of PLAYER_CMD so its path
+# can be resolved against PATH here rather than baked as a fragile relative
+# string in config.json.
+SECRET_VIDEO_SCRIPT_ARG = f"--script={PATH}mpv_touch_input.lua"
 SECRET_VIDEO_GESTURE_TIMEOUT_SECONDS = SECRET_VIDEO_CONFIG.get("GESTURE_TIMEOUT_SECONDS", 3)
 # Order of corners that must be tapped in sequence to trigger playback.
 SECRET_VIDEO_GESTURE_SEQUENCE = ["TL", "TR", "BR", "BL"]
@@ -1119,7 +1120,7 @@ def play_secret_video():
     os.system("xset -dpms")
     try:
         subprocess.run(
-            [*SECRET_VIDEO_PLAYER_CMD, SECRET_VIDEO_INPUT_CONF_ARG, video_path], check=False
+            [*SECRET_VIDEO_PLAYER_CMD, SECRET_VIDEO_SCRIPT_ARG, video_path], check=False
         )
     except FileNotFoundError:
         logger.error(f"Video player command not found: {SECRET_VIDEO_PLAYER_CMD[0]}")
