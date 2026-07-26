@@ -543,6 +543,11 @@ EMOTION_BUTTON_RECTS = []
 EMOTION_ACTION_RECTS = {}
 EMOTION_QR_SURFACE = None
 EMOTION_QR_URL_CACHE = None
+# Footer "emolog/stats: <url>" text is clickable to pop the same results QR
+# standalone (outside the emotion-prompt flow) - see handle_emolog_footer_click().
+EMOLOG_FOOTER_RECT = None
+EMOLOG_QR_OPENED_AT = 0.0
+EMOLOG_QR_AUTO_CLOSE_SECONDS = 20
 EMOTION_SHUFFLED_OPTIONS = []
 EMOTION_CUSTOM_SLOTS = []
 EMOTION_CUSTOM_BUTTON_RECTS = []
@@ -1935,7 +1940,7 @@ class BVGUpdate(object):
 
     @staticmethod
     def create_surface():
-        global bvg_surf, UPDATED_BVG_TIME, BVG_STOP_INFORMATION
+        global bvg_surf, UPDATED_BVG_TIME, BVG_STOP_INFORMATION, EMOLOG_FOOTER_RECT
         new_surf = pygame.Surface((SURFACE_WIDTH, SURFACE_HEIGHT))
         new_surf.fill(BACKGROUND)
         new_surf.set_colorkey(BACKGROUND)
@@ -2024,6 +2029,17 @@ class BVGUpdate(object):
         DrawImage(new_surf, images["refresh"], 373, size=10, fillcolor=YELLOW).right(55)
         DrawString(new_surf, actuality_msg, FONT_SUPER_TINY, WHITE, 375).right(-3)
         DrawString(new_surf, emolog_msg, FONT_SUPER_TINY, SWEET_PURPLE, 383).left()
+        # Clickable hit zone for the text above - absolute on-screen coords,
+        # matching how this surface ends up blitted onto tft_surf (see
+        # tft_surf.blit(create_scaled_surf(display_surf, ...), FIT_SCREEN) in
+        # loop()). Same left()/y positioning math as DrawString itself.
+        emolog_size = FONT_SUPER_TINY.size(emolog_msg)
+        EMOLOG_FOOTER_RECT = pygame.Rect(
+            FIT_SCREEN[0] + int(10 * ZOOM),
+            FIT_SCREEN[1] + int(383 * ZOOM),
+            emolog_size[0],
+            emolog_size[1],
+        )
 
         bvg_surf = new_surf
 
@@ -2523,8 +2539,21 @@ def draw_emotion_prompt_overlay():
 
         EMOTION_ACTION_RECTS = {"close": close_rect, "show_results": show_rect}
 
-    if EMOTION_RESULTS_VISIBLE:
-        draw_results_overlay()
+
+def handle_emolog_footer_click(mx, my):
+    """Tapping the "emolog/stats: <url>" footer text pops the same results QR
+    shown inside the emotion prompt, but standalone - see EMOLOG_FOOTER_RECT
+    and the EMOTION_RESULTS_VISIBLE auto-close check in loop()."""
+    global EMOTION_RESULTS_VISIBLE, EMOLOG_QR_OPENED_AT
+
+    if EMOTION_PROMPT_VISIBLE or EMOTION_RESULTS_VISIBLE:
+        return False
+    if not EMOLOG_FOOTER_RECT or not EMOLOG_FOOTER_RECT.collidepoint((mx, my)):
+        return False
+
+    EMOTION_RESULTS_VISIBLE = True
+    EMOLOG_QR_OPENED_AT = time.time()
+    return True
 
 
 def handle_emotion_popup_click(mx, my):
@@ -2534,12 +2563,14 @@ def handle_emotion_popup_click(mx, my):
         dismiss_emotion_confirmation("tap")
         return True
 
-    if not EMOTION_PROMPT_VISIBLE:
+    if not EMOTION_PROMPT_VISIBLE and not EMOTION_RESULTS_VISIBLE:
         return False
 
     touch_emotion_prompt_activity()
 
     if EMOTION_RESULTS_VISIBLE:
+        # Also covers the standalone footer-triggered QR (EMOTION_PROMPT_VISIBLE
+        # False, EMOTION_RESULTS_VISIBLE True) - tap anywhere closes it there too.
         EMOTION_RESULTS_VISIBLE = False
         return True
 
@@ -3045,7 +3076,7 @@ def loop():
     exit_clicks = 0
 
     while running:
-        global DISPLAY_BLANK
+        global DISPLAY_BLANK, EMOTION_RESULTS_VISIBLE
 
         activate_pending_emotion_prompt()
         if (
@@ -3053,6 +3084,14 @@ def loop():
             and time.time() - EMOTION_CONFIRMATION_OPENED_AT > EMOTION_CONFIRMATION_SECONDS
         ):
             dismiss_emotion_confirmation("timeout")
+        # Standalone footer-triggered QR only (the prompt's own "show results"
+        # QR is closed by dismiss_emotion_prompt() instead, e.g. on timeout).
+        if (
+            EMOTION_RESULTS_VISIBLE
+            and not EMOTION_PROMPT_VISIBLE
+            and time.time() - EMOLOG_QR_OPENED_AT > EMOLOG_QR_AUTO_CLOSE_SECONDS
+        ):
+            EMOTION_RESULTS_VISIBLE = False
         if DISPLAY_BLANK and EMOTION_PROMPT_VISIBLE:
             dismiss_emotion_prompt("display-blank")
         elif EMOTION_PROMPT_VISIBLE:
@@ -3115,6 +3154,8 @@ def loop():
 
             draw_emotion_prompt_overlay()
             draw_emotion_confirmation_overlay()
+            if EMOTION_RESULTS_VISIBLE:
+                draw_results_overlay()
 
             # update the display with all surfaces merged into the main one
             pygame.display.update()
@@ -3206,6 +3247,9 @@ def loop():
                 # ----------------------------
 
                 if handle_emotion_popup_click(mx, my):
+                    continue
+
+                if handle_emolog_footer_click(mx, my):
                     continue
 
                 if DISPLAY_BLANK:
