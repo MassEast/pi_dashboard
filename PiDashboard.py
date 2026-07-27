@@ -870,6 +870,10 @@ QUIZ_SCAN_THUMB_CENTER = None
 QUIZ_SCAN_THUMB_RADIUS = 0
 QUIZ_MATRIX_FONT = None
 QUIZ_MATRIX_COLUMNS = []
+# Shuffled per scan session in start_quiz_scan() - QUIZ_SCAN_MESSAGES itself
+# stays in its declared order, otherwise every scan cycles the exact same
+# messages in the exact same order starting from index 0.
+QUIZ_SCAN_MESSAGES_SESSION = []
 QUIZ_QUESTIONS = []
 QUIZ_QUESTION_INDEX = 0
 QUIZ_ANSWER_RECTS = []
@@ -3363,10 +3367,23 @@ def activate_quiz():
     logger.info("Quiz activated")
 
 
+def show_quiz_results_only():
+    """Entry point for "Nur Ergebnisse anzeigen" on the name stage - skips
+    straight to the results triangle without taking the quiz, so there's no
+    own-result dot, just everyone else's stored results."""
+    global QUIZ_STAGE, QUIZ_OWN_RESULT, QUIZ_ALL_RESULTS, QUIZ_LAST_ACTIVITY_TS
+
+    QUIZ_OWN_RESULT = None
+    QUIZ_ALL_RESULTS = read_quiz_results(QUIZ_LOG_PATH)
+    QUIZ_STAGE = "results"
+    QUIZ_LAST_ACTIVITY_TS = time.time()
+
+
 def start_quiz_scan():
     global QUIZ_STAGE, QUIZ_SCAN_OPENED_AT, QUIZ_MATRIX_COLUMNS
     global QUIZ_QUESTIONS, QUIZ_QUESTION_INDEX, QUIZ_VOTES, QUIZ_ANSWER_RECTS
     global QUIZ_SCAN_HELD, QUIZ_SCAN_HELD_SECONDS, QUIZ_SCAN_LAST_TICK
+    global QUIZ_SCAN_MESSAGES_SESSION
 
     QUIZ_STAGE = "scan"
     QUIZ_SCAN_OPENED_AT = time.time()
@@ -3374,6 +3391,8 @@ def start_quiz_scan():
     QUIZ_SCAN_HELD_SECONDS = 0.0
     QUIZ_SCAN_LAST_TICK = time.time()
     QUIZ_MATRIX_COLUMNS = []
+    QUIZ_SCAN_MESSAGES_SESSION = list(QUIZ_SCAN_MESSAGES)
+    random.shuffle(QUIZ_SCAN_MESSAGES_SESSION)
     selected_questions = random.sample(QUIZ_QUESTION_BANK, min(QUIZ_LENGTH, len(QUIZ_QUESTION_BANK)))
     QUIZ_QUESTIONS = []
     for q in selected_questions:
@@ -3490,8 +3509,16 @@ def draw_quiz_name_stage(card):
     title = FONT_SMALL_BOLD.render("Wer bist du?", True, BLACK)
     tft_surf.blit(title, title.get_rect(midtop=(card.centerx, card.top + 14)))
 
+    # Skip taking the quiz entirely and just look at the results triangle -
+    # a small link rather than a full button, tap target padded out for
+    # touch even though the text itself is tiny.
+    results_link_text = FONT_SUPER_TINY.render("Nur Ergebnisse anzeigen", True, VIOLET)
+    results_link_rect = results_link_text.get_rect(midtop=(card.centerx, card.top + 36))
+    tft_surf.blit(results_link_text, results_link_rect)
+    results_link_hitbox = results_link_rect.inflate(20, 16)
+
     action_width = card.width - 2 * inner_pad
-    input_rect = pygame.Rect(card.left + inner_pad, card.top + 46, action_width, 32)
+    input_rect = pygame.Rect(card.left + inner_pad, results_link_hitbox.bottom + 6, action_width, 32)
     pygame.draw.rect(tft_surf, (245, 245, 245), input_rect, border_radius=8)
     pygame.draw.rect(tft_surf, DARK_GRAY, input_rect, width=1, border_radius=8)
     typed = QUIZ_NAME_TEXT if QUIZ_NAME_TEXT else "Name eintippen"
@@ -3544,7 +3571,11 @@ def draw_quiz_name_stage(card):
     start_text = FONT_SMALL_BOLD.render("Los geht's", True, BLACK)
     tft_surf.blit(start_text, start_text.get_rect(center=start_rect.center))
 
-    QUIZ_NAME_ACTION_RECTS = {"close": close_rect, "start": start_rect if start_enabled else None}
+    QUIZ_NAME_ACTION_RECTS = {
+        "close": close_rect,
+        "start": start_rect if start_enabled else None,
+        "results_only": results_link_hitbox,
+    }
 
 
 def _draw_fingerprint_icon(surf, center, radius, color, width=2):
@@ -3635,7 +3666,8 @@ def draw_quiz_scan_stage():
         prompt = "SCAN ABGESCHLOSSEN"
     elif QUIZ_SCAN_HELD:
         # Slow enough to actually read - was cycling every 0.6s, now 2.2s.
-        prompt = QUIZ_SCAN_MESSAGES[int(QUIZ_SCAN_HELD_SECONDS / 2.2) % len(QUIZ_SCAN_MESSAGES)]
+        messages = QUIZ_SCAN_MESSAGES_SESSION or QUIZ_SCAN_MESSAGES
+        prompt = messages[int(QUIZ_SCAN_HELD_SECONDS / 2.2) % len(messages)]
     elif QUIZ_SCAN_HELD_SECONDS > 0:
         prompt = "PAUSIERT - DAUMEN WIEDER AUFLEGEN"
     else:
@@ -3832,8 +3864,8 @@ def draw_quiz_results_stage(card):
     # name tag just below itself, in the same spot the label would
     # otherwise sit - so those two get pushed further down/inward.
     top_label_gap = 6
-    bottom_label_gap = 24
-    corner_shift = 34
+    bottom_label_gap = 34
+    corner_shift = 50
     area_left = card.left + inner_pad
     area_right = card.right - inner_pad
     area_top = title_rect.bottom + axis_label_font.get_height() + top_label_gap
@@ -4006,6 +4038,11 @@ def handle_quiz_click(mx, my):
         start_rect = QUIZ_NAME_ACTION_RECTS.get("start")
         if start_rect and start_rect.collidepoint((mx, my)):
             start_quiz_scan()
+            return True
+
+        results_only_rect = QUIZ_NAME_ACTION_RECTS.get("results_only")
+        if results_only_rect and results_only_rect.collidepoint((mx, my)):
+            show_quiz_results_only()
             return True
 
         for key_button in QUIZ_NAME_RECTS:
