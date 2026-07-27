@@ -89,6 +89,7 @@ logs/latest_weather.json
 *.log
 emotions*.json
 uptime.json
+quiz_results.json
 .DS_Store
 docs/PROGRESS.md
 tmp_prompt_just_for_me.txt
@@ -96,3 +97,8 @@ media/*
 !media/secret_clips/
 media/secret_clips/*
 !media/secret_clips/template.mp4
+
+# Apple/iOS-style emoji PNGs - proprietary, local-use-only override for the
+# quiz icons (see icons/quiz_emoji_*.png, the CC-BY Twemoji versions, for
+# the committed fallback everyone else's clone actually gets).
+icons/*_ios.png

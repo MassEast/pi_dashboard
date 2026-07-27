@@ -86,6 +86,9 @@
     "PLAYER_CMD": ["mpv", "--fullscreen", "--really-quiet", "--no-osc"],
     "GESTURE_TIMEOUT_SECONDS": 3
   },
+  "QUIZ": {
+    "ENABLED": false
+  },
   "ENV": "Pi",
   "LOG_TO_FILES": false,
   "LOG_UPTIME": true

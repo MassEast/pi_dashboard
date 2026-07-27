@@ -49,6 +49,7 @@ from PIL import Image, ImageDraw
 import qrcode
 
 from emotion_store import append_emotion_event, read_emotion_events
+from quiz_store import read_quiz_results, submit_quiz_result
 from uptime_store import append_uptime_event
 from utils import get_stop_data
 
@@ -62,6 +63,7 @@ FONT_PATH = PATH + "fonts/"
 LOG_PATH = PATH + "logs/"
 UPTIME_LOG_PATH = PATH + "logs/"
 EMOTION_LOG_PATH = PATH + "logs/"
+QUIZ_LOG_PATH = PATH + "logs/"
 
 # Load config file
 config_data = open(PATH + "config.json").read()
@@ -526,6 +528,360 @@ secret_video_last_path = None
 # Shuffled "bag" of clips not yet played this cycle - refilled once exhausted
 # so every clip is seen once before any repeats (see play_secret_video()).
 secret_video_queue = []
+
+# "atzig fotzig mausig" personality quiz (inspired by
+# https://atzigfotzigmausig.de/quiz, questions are original) - a TEST button
+# opens name entry -> fake biometric scan -> QUIZ_LENGTH random questions ->
+# a ternary-plot results screen showing every past participant's dot.
+QUIZ_CONFIG = config.get("QUIZ", {})
+QUIZ_ENABLED = QUIZ_CONFIG.get("ENABLED", False)
+QUIZ_LENGTH = 13
+QUIZ_NAME_MAX_CHARS = 16
+QUIZ_SCAN_SECONDS = 8.0  # of actual held time, not wall-clock (see QUIZ_SCAN_HELD)
+QUIZ_IDLE_TIMEOUT_SECONDS = 30
+# Each question has exactly 3 options, one per axis - order within a question
+# is intentionally varied so the axis can't be guessed from button position.
+QUIZ_QUESTION_BANK = [
+    {
+        "text": "Jemand schneidet dir an der Kasse die Schlange. Du...",
+        "options": [
+            {"label": "sagst nix, ärgerst dich innerlich", "axis": "mausig"},
+            {"label": "motzt direkt drauf los", "axis": "atzig"},
+            {"label": "fragst keck, ob sie's eilig haben", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Dein Putzplan-Status laut MoaBeats?",
+        "options": [
+            {"label": "längst erledigt, heimlich", "axis": "mausig"},
+            {"label": "mach ich wenn ich Bock hab", "axis": "atzig"},
+            {"label": "verhandle meinen Dienst gegen Gefallen", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Wie flirtest du?",
+        "options": [
+            {"label": "gar nicht, ich werd rot", "axis": "mausig"},
+            {"label": "direkt fragen", "axis": "atzig"},
+            {"label": "doppeldeutige Kommentare", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Dein Ton in der WG-Gruppe?",
+        "options": [
+            {"label": 'Herzchen und "passt das für alle?"', "axis": "mausig"},
+            {"label": "CAPS LOCK und viele Ausrufezeichen", "axis": "atzig"},
+            {"label": "Ironie mit Emojis, viel Subtext", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Ein Kompliment bekommst du.",
+        "options": [
+            {"label": "guckst weg, murmelst danke", "axis": "mausig"},
+            {"label": '"ich weiß"', "axis": "atzig"},
+            {"label": "gibst es doppelt zurück", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Sex-/Dating-Storys im Gruppenchat - dein Beitrag?",
+        "options": [
+            {"label": "liest nur mit", "axis": "mausig"},
+            {"label": "postet unkommentiert ein Meme dazu", "axis": "atzig"},
+            {"label": "liefert die detaillierteste Story im Chat", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Du merkst, der Herd ist noch an - 2 Straßen weiter.",
+        "options": [
+            {"label": "Panik, sofort umdrehen", "axis": "mausig"},
+            {"label": "whatever, wird schon", "axis": "atzig"},
+            {
+                "label": "postest in der WG-Gruppe, dass es eine Belohnung gibt, wer den Herd rettet",
+                "axis": "fotzig",
+            },
+        ],
+    },
+    {
+        "text": "Dein Statement zum heutigen Test hier?",
+        "options": [
+            {"label": '"musste mich überreden lassen"', "axis": "mausig"},
+            {"label": '"wollt ich eh grad machen"', "axis": "atzig"},
+            {"label": '"hab schon 3 Freund*innen reingezogen"', "axis": "fotzig"},
+        ],
+    },
+    # --- Candidates ported from atzigfotzigmausig.de/quiz, axis mapping is our own
+    # editorial guess (the site doesn't expose its mapping to the client) - pick
+    # a subset together and drop the rest, see chat for context.
+    {
+        "text": "Wer ist dein*e Kindheitsheld*in?",
+        "options": [
+            {"label": "Balu (Das Dschungelbuch)", "axis": "mausig"},
+            {"label": "Rémy (Ratatouille)", "axis": "atzig"},
+            {"label": "Pippi Langstrumpf", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Wenn in Berlin, clubbe ich hier.",
+        "options": [
+            {"label": "Sisyphos", "axis": "mausig"},
+            {"label": "Berghain", "axis": "atzig"},
+            {"label": "KitKatClub", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Dein Celebrity Crush?",
+        "options": [
+            {"label": "Tom Holland", "axis": "mausig"},
+            {"label": "Margot Robbie", "axis": "atzig"},
+            {"label": "Harry Styles", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Wie kommst du von A nach B?",
+        "options": [
+            {"label": "Spazieren", "axis": "mausig"},
+            {"label": "E-Roller", "axis": "atzig"},
+            {"label": "Uber", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Was ist am ehesten dein Lieblingsessen?",
+        "options": [
+            {"label": "Pfannkuchen", "axis": "mausig"},
+            {"label": "Bratwurst", "axis": "atzig"},
+            {"label": "Sushi", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Dein nächster Urlaub geht...",
+        "options": [
+            {"label": "ins Allgäu", "axis": "mausig"},
+            {"label": "auf Malle", "axis": "atzig"},
+            {"label": "nach Marseille", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Was machst du Sonntags?",
+        "options": [
+            {"label": "Babysitten", "axis": "mausig"},
+            {"label": "Auskatern", "axis": "atzig"},
+            {"label": "Sektbrunch", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Sport deiner Wahl?",
+        "options": [
+            {"label": "Pilates", "axis": "mausig"},
+            {"label": "Ballsport", "axis": "atzig"},
+            {"label": "Reiten", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Welches Spaßgetränk trinkst du am liebsten?",
+        "options": [
+            {"label": "Voelkel Biozischhh", "axis": "mausig"},
+            {"label": "Club Mate", "axis": "atzig"},
+            {"label": "Iced Matcha Latte", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Diese Blumen bekomme ich am liebsten geschenkt.",
+        "options": [
+            {"label": "Tulpen", "axis": "mausig"},
+            {"label": "Lilien", "axis": "atzig"},
+            {"label": "Fleischfressende Pflanze", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Hier hatte ich das letzte Mal Sex.",
+        "options": [
+            {"label": "Zu Hause im Bett", "axis": "mausig"},
+            {"label": "Im Auto", "axis": "atzig"},
+            {"label": "Auf der Clubtoilette", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Was zockst du am liebsten?",
+        "options": [
+            {"label": "Animal Crossing", "axis": "mausig"},
+            {"label": "GTA", "axis": "atzig"},
+            {"label": "Sims", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Das kaufe ich beim Baumarkt.",
+        "options": [
+            {"label": "Ohrenschutz", "axis": "mausig"},
+            {"label": "Bohrhammer", "axis": "atzig"},
+            {"label": "ein Seil", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Reality-TV gucke ich...",
+        "options": [
+            {"label": "Love is Blind", "axis": "mausig"},
+            {"label": "Berlin - Tag & Nacht", "axis": "atzig"},
+            {"label": "Too Hot to Handle", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Was machst du, wenn der Kontrolleur kommt?",
+        "options": [
+            {"label": "ich zeig natürlich mein Ticket", "axis": "mausig"},
+            {"label": "ich binde meine Schnürsenkel um zu sprinten", "axis": "atzig"},
+            {"label": "ich rede mich gekonnt raus", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Das will ich mir im Kino ansehen.",
+        "options": [
+            {"label": "Zootopia 2", "axis": "mausig"},
+            {"label": "Die Odyssee", "axis": "atzig"},
+            {"label": "Wuthering Heights (Sturmhöhe)", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Das nimmst du dir aus der Backwarenabteilung.",
+        "options": [
+            {"label": "Bio Sauerteigweck", "axis": "mausig"},
+            {"label": "Schoggokrossong", "axis": "atzig"},
+            {"label": "Eclair", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Beim ersten Date tust du am liebsten...",
+        "options": [
+            {"label": "Spaziergang im Park", "axis": "mausig"},
+            {"label": "Macker im Billard abziehen", "axis": "atzig"},
+            {"label": "Cocktailbar", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Welches Kleidungsstück passt zu deinem Stil?",
+        "options": [
+            {"label": "gestrickter Pullover", "axis": "mausig"},
+            {"label": "Jeans", "axis": "atzig"},
+            {"label": "Croptop", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Welche Schuhe ziehst du an?",
+        "options": [
+            {"label": "Loafers", "axis": "mausig"},
+            {"label": "Dr. Martens", "axis": "atzig"},
+            {"label": "Cowboy Boots", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Deine Rolle im Gruppenprojekt?",
+        "options": [
+            {"label": '"welches Gruppenprojekt?"', "axis": "mausig"},
+            {"label": "ich mach alles", "axis": "atzig"},
+            {"label": "yappen", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Wen hörst du am liebsten?",
+        "options": [
+            {"label": "Mark Forster", "axis": "mausig"},
+            {"label": "SSIO", "axis": "atzig"},
+            {"label": "Mama Ikkimel", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Einkaufsladen of choice?",
+        "options": [
+            {"label": "dm", "axis": "mausig"},
+            {"label": "Netto", "axis": "atzig"},
+            {"label": "Bioladen", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Welches Musikgenre hast du zuletzt gehört?",
+        "options": [
+            {"label": "Pop oder R&B", "axis": "mausig"},
+            {"label": "Metal oder Techno", "axis": "atzig"},
+            {"label": "Jazz oder Klassik", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Beziehungsstatus?",
+        "options": [
+            {"label": "langjährige Beziehung", "axis": "mausig"},
+            {"label": "Single", "axis": "atzig"},
+            {"label": "F+ oder Situationship", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Wo bist du im Club?",
+        "options": [
+            {"label": "ich passe auf die Getränke auf", "axis": "mausig"},
+            {"label": "vorne links, wo die Musik am besten schallert", "axis": "atzig"},
+            {"label": "ich lege auf, na klar", "axis": "fotzig"},
+        ],
+    },
+    {
+        "text": "Was ist dein meistbenutztes Emoji?",
+        "options": [
+            {"label": "keine Emojis", "axis": "mausig"},
+            {
+                "icons": ["quiz_emoji_hug", "quiz_emoji_point_right", "quiz_emoji_point_left"],
+                "axis": "atzig",
+            },
+            {"icons": ["quiz_emoji_devil", "quiz_emoji_heart_fire"], "axis": "fotzig"},
+        ],
+    },
+]
+# Cycled one-at-a-time during the fake "biometric" scan animation - purely
+# decorative, not real analysis of anything.
+QUIZ_SCAN_MESSAGES = [
+    "ANALYSIERE MUNDWINKEL-ASYMMETRIE...",
+    "MESSE SCHNAPPATMUNGS-FREQUENZ...",
+    "KALIBRIERE AURA-SÄTTIGUNG...",
+    "MESSE DAUMENDRUCK IN NEWTON...",
+    "INTERPOLIERE VIBE...",
+    "VIBE ZU GROSS FÜR INT32 - RUNDE AB...",
+    "PRÜFE KAFFEEBEDARF...",
+    "ENTSCHLÜSSLE HANDSCHRIFT DER SEELE...",
+    "SYNCHRONISIERE MIT MOND...",
+    "ZÄHLE INNERE DÄMONEN...",
+    "FRAGE NACHBAR*INNEN OB DAS OK IST...",
+    "BIOMETRIE: 87% MENSCH, 13% VIBES...",
+    "FINGERABDRUCK ERKANNT: 3.5 DAUMEN...",
+    "STARTE PERSÖNLICHKEITS-ROULETTE...",
+]
+QUIZ_AXIS_COLOR = {"mausig": (110, 160, 255), "atzig": (255, 90, 90), "fotzig": (255, 150, 60)}
+
+# QUIZ_STAGE: None (inactive) -> "name" -> "scan" -> "question" -> "results".
+QUIZ_STAGE = None
+QUIZ_LAST_ACTIVITY_TS = 0.0
+QUIZ_BUTTON_RECT = None
+QUIZ_NAME_TEXT = ""
+QUIZ_NAME_RECTS = []
+QUIZ_NAME_ACTION_RECTS = {}
+QUIZ_SCAN_OPENED_AT = 0.0
+# Hold-to-scan: progress and animation only advance while a finger is held
+# down on the thumbprint icon (see draw_quiz_scan_stage()); released time
+# doesn't count and doesn't reset progress, it just pauses.
+QUIZ_SCAN_HELD = False
+QUIZ_SCAN_HELD_SECONDS = 0.0
+QUIZ_SCAN_LAST_TICK = 0.0
+QUIZ_SCAN_THUMB_CENTER = None
+QUIZ_SCAN_THUMB_RADIUS = 0
+QUIZ_MATRIX_FONT = None
+QUIZ_MATRIX_COLUMNS = []
+QUIZ_QUESTIONS = []
+QUIZ_QUESTION_INDEX = 0
+QUIZ_ANSWER_RECTS = []
+QUIZ_VOTES = {"mausig": 0, "atzig": 0, "fotzig": 0}
+QUIZ_OWN_RESULT = None
+QUIZ_ALL_RESULTS = []
+# Other participants' names only show while their dot is held down, to keep
+# the triangle from turning into label soup - see draw_quiz_results_stage()
+# and the "results" branch of handle_quiz_click()/the MOUSEBUTTONUP handler.
+QUIZ_RESULTS_DOT_HITBOXES = []
+QUIZ_RESULTS_HELD_NAME = None
+QUIZ_RESULTS_ACTION_RECTS = {}
 
 EMOTION_LAST_PROMPT_TS = 0.0
 EMOTION_PROMPT_VISIBLE = False
@@ -1110,7 +1466,10 @@ def play_secret_video():
         # Avoid an immediate repeat across the bag boundary (last clip of the
         # previous cycle landing first in the new one).
         if len(secret_video_queue) > 1 and secret_video_queue[-1] == secret_video_last_path:
-            secret_video_queue[-1], secret_video_queue[0] = secret_video_queue[0], secret_video_queue[-1]
+            secret_video_queue[-1], secret_video_queue[0] = (
+                secret_video_queue[0],
+                secret_video_queue[-1],
+            )
 
     video_path = secret_video_queue.pop()
     secret_video_last_path = video_path
@@ -1124,9 +1483,7 @@ def play_secret_video():
     os.system("xset s off")
     os.system("xset -dpms")
     try:
-        subprocess.run(
-            [*SECRET_VIDEO_PLAYER_CMD, SECRET_VIDEO_SCRIPT_ARG, video_path], check=False
-        )
+        subprocess.run([*SECRET_VIDEO_PLAYER_CMD, SECRET_VIDEO_SCRIPT_ARG, video_path], check=False)
     except FileNotFoundError:
         logger.error(f"Video player command not found: {SECRET_VIDEO_PLAYER_CMD[0]}")
     finally:
@@ -2119,7 +2476,7 @@ def activate_pending_emotion_prompt():
     global EMOTION_KEYBOARD_TEXT, EMOTION_CUSTOM_BUTTON_RECTS, EMOTION_KEYBOARD_RECTS
     global EMOTION_LAST_ACTIVITY_TS
 
-    if not EMOTION_ENABLED or DISPLAY_BLANK:
+    if not EMOTION_ENABLED or DISPLAY_BLANK or QUIZ_STAGE is not None:
         return
 
     with EMOTION_PENDING_LOCK:
@@ -2958,6 +3315,715 @@ def draw_moabeats_panel():
         _draw_moabeats_line(prefix, content, y_start + index * y_step, x_left, max_line_width)
 
 
+def _quiz_wrap_text(font, text, max_width):
+    words = text.split(" ")
+    lines = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if not current or font.size(candidate)[0] <= max_width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _quiz_apply_keyboard_token(token):
+    global QUIZ_NAME_TEXT
+
+    if token == "back":
+        QUIZ_NAME_TEXT = QUIZ_NAME_TEXT[:-1]
+    elif token == "clear":
+        QUIZ_NAME_TEXT = ""
+    elif token == "space":
+        if QUIZ_NAME_TEXT and len(QUIZ_NAME_TEXT) < QUIZ_NAME_MAX_CHARS:
+            QUIZ_NAME_TEXT += " "
+    elif len(QUIZ_NAME_TEXT) < QUIZ_NAME_MAX_CHARS:
+        QUIZ_NAME_TEXT += token
+
+
+def activate_quiz():
+    """Opens the quiz at the name-entry stage - manually triggered by the
+    TEST button only, independent of the emotion-prompt system (but yields
+    to it if it happens to already be open, and vice versa - see the
+    QUIZ_STAGE check added to activate_pending_emotion_prompt())."""
+    global QUIZ_STAGE, QUIZ_NAME_TEXT, QUIZ_NAME_RECTS, QUIZ_NAME_ACTION_RECTS, QUIZ_LAST_ACTIVITY_TS
+
+    if not QUIZ_ENABLED or DISPLAY_BLANK or EMOTION_PROMPT_VISIBLE or EMOTION_RESULTS_VISIBLE:
+        return
+
+    QUIZ_STAGE = "name"
+    QUIZ_NAME_TEXT = ""
+    QUIZ_NAME_RECTS = []
+    QUIZ_NAME_ACTION_RECTS = {}
+    QUIZ_LAST_ACTIVITY_TS = time.time()
+    logger.info("Quiz activated")
+
+
+def start_quiz_scan():
+    global QUIZ_STAGE, QUIZ_SCAN_OPENED_AT, QUIZ_MATRIX_COLUMNS
+    global QUIZ_QUESTIONS, QUIZ_QUESTION_INDEX, QUIZ_VOTES, QUIZ_ANSWER_RECTS
+    global QUIZ_SCAN_HELD, QUIZ_SCAN_HELD_SECONDS, QUIZ_SCAN_LAST_TICK
+
+    QUIZ_STAGE = "scan"
+    QUIZ_SCAN_OPENED_AT = time.time()
+    QUIZ_SCAN_HELD = False
+    QUIZ_SCAN_HELD_SECONDS = 0.0
+    QUIZ_SCAN_LAST_TICK = time.time()
+    QUIZ_MATRIX_COLUMNS = []
+    selected_questions = random.sample(QUIZ_QUESTION_BANK, min(QUIZ_LENGTH, len(QUIZ_QUESTION_BANK)))
+    QUIZ_QUESTIONS = []
+    for q in selected_questions:
+        # Shuffle a copy so the axis isn't always in the same answer slot -
+        # QUIZ_QUESTION_BANK itself must stay untouched, it's reused every quiz.
+        shuffled_options = list(q["options"])
+        random.shuffle(shuffled_options)
+        QUIZ_QUESTIONS.append({"text": q["text"], "options": shuffled_options})
+    QUIZ_QUESTION_INDEX = 0
+    QUIZ_VOTES = {"mausig": 0, "atzig": 0, "fotzig": 0}
+    QUIZ_ANSWER_RECTS = []
+
+
+def handle_quiz_scan_release():
+    global QUIZ_SCAN_HELD
+    QUIZ_SCAN_HELD = False
+
+
+def handle_quiz_results_release():
+    global QUIZ_RESULTS_HELD_NAME
+    QUIZ_RESULTS_HELD_NAME = None
+
+
+def handle_quiz_answer(axis):
+    global QUIZ_STAGE, QUIZ_QUESTION_INDEX, QUIZ_VOTES, QUIZ_OWN_RESULT, QUIZ_ALL_RESULTS
+
+    QUIZ_VOTES[axis] += 1
+    QUIZ_QUESTION_INDEX += 1
+
+    if QUIZ_QUESTION_INDEX < len(QUIZ_QUESTIONS):
+        return
+
+    result = submit_quiz_result(
+        QUIZ_LOG_PATH,
+        QUIZ_NAME_TEXT.strip() or "anonym",
+        QUIZ_VOTES["mausig"],
+        QUIZ_VOTES["atzig"],
+        QUIZ_VOTES["fotzig"],
+    )
+    logger.info(f"Quiz result logged: {result}")
+    QUIZ_OWN_RESULT = result
+    QUIZ_ALL_RESULTS = read_quiz_results(QUIZ_LOG_PATH)
+    QUIZ_STAGE = "results"
+
+
+def dismiss_quiz(reason):
+    global QUIZ_STAGE, QUIZ_NAME_TEXT, QUIZ_NAME_RECTS, QUIZ_NAME_ACTION_RECTS
+    global QUIZ_QUESTIONS, QUIZ_QUESTION_INDEX, QUIZ_ANSWER_RECTS, QUIZ_OWN_RESULT
+    global QUIZ_RESULTS_HELD_NAME, QUIZ_RESULTS_ACTION_RECTS
+
+    if QUIZ_STAGE is None:
+        return
+
+    QUIZ_STAGE = None
+    QUIZ_NAME_TEXT = ""
+    QUIZ_NAME_RECTS = []
+    QUIZ_NAME_ACTION_RECTS = {}
+    QUIZ_QUESTIONS = []
+    QUIZ_QUESTION_INDEX = 0
+    QUIZ_ANSWER_RECTS = []
+    QUIZ_OWN_RESULT = None
+    QUIZ_RESULTS_HELD_NAME = None
+    QUIZ_RESULTS_ACTION_RECTS = {}
+    logger.info(f"Quiz dismissed ({reason})")
+
+
+def draw_quiz_button():
+    """Small "TEST" pill, bottom-right corner - first-pass placement (the
+    footer/BVG-status area right above it is already tightly packed), likely
+    needs a live nudge once seen on the real touchscreen, same as the WG
+    panel and footer positions were tuned earlier."""
+    global QUIZ_BUTTON_RECT
+
+    if not QUIZ_ENABLED or QUIZ_STAGE is not None:
+        QUIZ_BUTTON_RECT = None
+        return
+
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+    button_width, button_height = int(48 * ZOOM), int(12 * ZOOM)
+    QUIZ_BUTTON_RECT = pygame.Rect(
+        dashboard_rect.right - button_width - int(2 * ZOOM),
+        dashboard_rect.bottom - button_height - int(2 * ZOOM),
+        button_width,
+        button_height,
+    )
+    pygame.draw.rect(tft_surf, GREEN, QUIZ_BUTTON_RECT, border_radius=5)
+    pygame.draw.rect(tft_surf, DARK_GRAY, QUIZ_BUTTON_RECT, width=1, border_radius=5)
+    label = FONT_SUPER_TINY.render("AFM TEST", True, BLACK)
+    tft_surf.blit(label, label.get_rect(center=QUIZ_BUTTON_RECT.center))
+
+
+def handle_quiz_button_click(mx, my):
+    if DISPLAY_BLANK:
+        # Let this tap fall through to the normal wake-display handling
+        # instead of silently swallowing it via a stale pre-blank rect.
+        return False
+    if QUIZ_BUTTON_RECT and QUIZ_BUTTON_RECT.collidepoint((mx, my)):
+        activate_quiz()
+        return True
+    return False
+
+
+def draw_quiz_name_stage(card):
+    global QUIZ_NAME_RECTS, QUIZ_NAME_ACTION_RECTS
+
+    inner_pad = 14
+    close_size = 26
+    close_rect = pygame.Rect(card.right - close_size - 10, card.top + 10, close_size, close_size)
+    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
+    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
+    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
+    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
+
+    title = FONT_SMALL_BOLD.render("Wer bist du?", True, BLACK)
+    tft_surf.blit(title, title.get_rect(midtop=(card.centerx, card.top + 14)))
+
+    action_width = card.width - 2 * inner_pad
+    input_rect = pygame.Rect(card.left + inner_pad, card.top + 46, action_width, 32)
+    pygame.draw.rect(tft_surf, (245, 245, 245), input_rect, border_radius=8)
+    pygame.draw.rect(tft_surf, DARK_GRAY, input_rect, width=1, border_radius=8)
+    typed = QUIZ_NAME_TEXT if QUIZ_NAME_TEXT else "Name eintippen"
+    typed_color = BLACK if QUIZ_NAME_TEXT else DARK_GRAY
+    typed_text = FONT_TINY.render(typed, True, typed_color)
+    tft_surf.blit(
+        typed_text, typed_text.get_rect(midleft=(input_rect.left + 8, input_rect.centery))
+    )
+
+    action_height = 36
+    action_y = card.bottom - action_height - inner_pad
+    keys_area_top = input_rect.bottom + 8
+    keys_area_bottom = action_y - 8
+
+    QUIZ_NAME_RECTS = []
+    keyboard_rows = ["qwertzuiop", "asdfghjkl", "yxcvbnm"]
+    key_height = max(18, int((keys_area_bottom - keys_area_top - 3 * 6) / 4))
+    row_y = keys_area_top
+    for row_chars in keyboard_rows:
+        chars = list(row_chars)
+        gap = 4
+        key_width = int((action_width - (len(chars) - 1) * gap) / len(chars))
+        for idx, char in enumerate(chars):
+            key_x = card.left + inner_pad + idx * (key_width + gap)
+            key_rect = pygame.Rect(key_x, row_y, key_width, key_height)
+            pygame.draw.rect(tft_surf, SWEET_PURPLE, key_rect, border_radius=5)
+            pygame.draw.rect(tft_surf, VIOLET, key_rect, width=1, border_radius=5)
+            key_text = FONT_SUPER_TINY.render(char, True, BLACK)
+            tft_surf.blit(key_text, key_text.get_rect(center=key_rect.center))
+            QUIZ_NAME_RECTS.append({"token": char, "rect": key_rect})
+        row_y += key_height + 6
+
+    fn_tokens = ["space", "back", "clear"]
+    gap = 6
+    fn_width = int((action_width - 2 * gap) / 3)
+    for idx, token in enumerate(fn_tokens):
+        fn_x = card.left + inner_pad + idx * (fn_width + gap)
+        fn_rect = pygame.Rect(fn_x, row_y, fn_width, key_height)
+        pygame.draw.rect(tft_surf, (230, 230, 230), fn_rect, border_radius=5)
+        pygame.draw.rect(tft_surf, DARK_GRAY, fn_rect, width=1, border_radius=5)
+        fn_text = FONT_SUPER_TINY.render(token, True, BLACK)
+        tft_surf.blit(fn_text, fn_text.get_rect(center=fn_rect.center))
+        QUIZ_NAME_RECTS.append({"token": token, "rect": fn_rect})
+
+    start_rect = pygame.Rect(card.left + inner_pad, action_y, action_width, action_height)
+    start_enabled = len(QUIZ_NAME_TEXT.strip()) > 0
+    start_color = GREEN if start_enabled else (200, 200, 200)
+    pygame.draw.rect(tft_surf, start_color, start_rect, border_radius=10)
+    pygame.draw.rect(tft_surf, DARK_GRAY, start_rect, width=2, border_radius=10)
+    start_text = FONT_SMALL_BOLD.render("Los geht's", True, BLACK)
+    tft_surf.blit(start_text, start_text.get_rect(center=start_rect.center))
+
+    QUIZ_NAME_ACTION_RECTS = {"close": close_rect, "start": start_rect if start_enabled else None}
+
+
+def _draw_fingerprint_icon(surf, center, radius, color, width=2):
+    """Nested partial loops with a small deterministic per-ring wobble
+    (not per-frame random, so the shape holds still rather than jittering)
+    and a gap at the bottom, roughly like a real fingerprint's ridge lines
+    and delta point - a lot more convincing than plain concentric circles."""
+    cx, cy = center
+    ring_count = 6
+    for ring in range(ring_count):
+        base_r = radius * (1 - ring / (ring_count + 0.5))
+        if base_r <= 3:
+            continue
+        points = []
+        steps = 28
+        for step in range(steps + 1):
+            degrees = -100 + 200 * step / steps  # ~160deg gap at the bottom
+            angle = math.radians(degrees)
+            wobble = 2.2 * math.sin(ring * 1.6 + degrees * 0.08)
+            r = base_r + wobble
+            x = cx + r * math.sin(angle)
+            y = cy - r * math.cos(angle) * 1.2  # taller than wide, like a real print
+            points.append((x, y))
+        pygame.draw.lines(surf, color, False, points, width)
+
+
+def draw_quiz_scan_stage():
+    """Dadaist fake "biometric" scan - pure decoration, not real analysis of
+    anything. Progress and the rain animation only advance while
+    QUIZ_SCAN_HELD is True (finger held on the thumbprint icon) - released
+    time pauses both without losing progress. See handle_quiz_click() (sets
+    QUIZ_SCAN_HELD True on a press inside the thumbprint circle) and
+    handle_quiz_scan_release() (MOUSEBUTTONUP anywhere sets it False)."""
+    global QUIZ_MATRIX_FONT, QUIZ_MATRIX_COLUMNS, QUIZ_SCAN_HELD_SECONDS
+    global QUIZ_SCAN_LAST_TICK, QUIZ_SCAN_THUMB_CENTER, QUIZ_SCAN_THUMB_RADIUS
+
+    now = time.time()
+    dt = max(0.0, now - QUIZ_SCAN_LAST_TICK)
+    QUIZ_SCAN_LAST_TICK = now
+    if QUIZ_SCAN_HELD:
+        QUIZ_SCAN_HELD_SECONDS = min(QUIZ_SCAN_SECONDS, QUIZ_SCAN_HELD_SECONDS + dt)
+
+    tft_surf.fill(BLACK)
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+
+    if QUIZ_MATRIX_FONT is None:
+        QUIZ_MATRIX_FONT = pygame.font.SysFont("monospace", max(8, int(12 * ZOOM)))
+
+    glyph_w = QUIZ_MATRIX_FONT.size("A")[0] or 8
+    line_h = QUIZ_MATRIX_FONT.get_height()
+    trail_len = 7
+    column_count = max(1, dashboard_rect.width // glyph_w)
+    # ASCII only - a pygame Font/SysFont on the Pi can silently fail to
+    # render non-ASCII glyphs (bit us with emoji in the question bank).
+    matrix_chars = "01ATZIGFOTZIGMAUSIG#$%&@*+-<>/\\"
+
+    if len(QUIZ_MATRIX_COLUMNS) != column_count:
+        QUIZ_MATRIX_COLUMNS = [
+            {
+                "y": float(random.randint(dashboard_rect.top - 400, dashboard_rect.bottom)),
+                "chars": [random.choice(matrix_chars) for _ in range(trail_len)],
+            }
+            for _ in range(column_count)
+        ]
+
+    for col in range(column_count):
+        column = QUIZ_MATRIX_COLUMNS[col]
+        x = dashboard_rect.left + col * glyph_w
+        if QUIZ_SCAN_HELD:
+            column["y"] += 14 * ZOOM
+            column["chars"].insert(0, random.choice(matrix_chars))
+            del column["chars"][trail_len:]
+            if column["y"] > dashboard_rect.bottom:
+                column["y"] = float(dashboard_rect.top - trail_len * line_h)
+        for i, char in enumerate(column["chars"]):
+            y = column["y"] - i * line_h
+            if y < dashboard_rect.top - line_h or y > dashboard_rect.bottom:
+                continue
+            fade = max(0.0, 1.0 - i / trail_len)
+            color = (int(40 * fade), int(255 * fade), int(120 * fade))
+            glyph = QUIZ_MATRIX_FONT.render(char, True, color)
+            tft_surf.blit(glyph, (x, int(y)))
+
+    scan_green = (140, 255, 180)
+    progress = QUIZ_SCAN_HELD_SECONDS / QUIZ_SCAN_SECONDS
+
+    if QUIZ_SCAN_HELD_SECONDS >= QUIZ_SCAN_SECONDS:
+        prompt = "SCAN ABGESCHLOSSEN"
+    elif QUIZ_SCAN_HELD:
+        # Slow enough to actually read - was cycling every 0.6s, now 2.2s.
+        prompt = QUIZ_SCAN_MESSAGES[int(QUIZ_SCAN_HELD_SECONDS / 2.2) % len(QUIZ_SCAN_MESSAGES)]
+    elif QUIZ_SCAN_HELD_SECONDS > 0:
+        prompt = "PAUSIERT - DAUMEN WIEDER AUFLEGEN"
+    else:
+        prompt = "DAUMEN UNTEN AUF DER FLÄCHE SCANNEN"
+
+    # Progress bar up top - a ring around the fingerprint looked nice but a
+    # real thumb covers it while scanning, so the fill/percent live here
+    # instead, always visible.
+    bar_margin = 16
+    bar_height = int(14 * ZOOM)
+    bar_rect = pygame.Rect(
+        dashboard_rect.left + bar_margin,
+        dashboard_rect.top + 12,
+        dashboard_rect.width - 2 * bar_margin,
+        bar_height,
+    )
+    pygame.draw.rect(tft_surf, (25, 60, 40), bar_rect, border_radius=bar_height // 2)
+    fill_width = int(bar_rect.width * min(progress, 1.0))
+    if fill_width > 0:
+        fill_rect = pygame.Rect(bar_rect.left, bar_rect.top, fill_width, bar_rect.height)
+        pygame.draw.rect(tft_surf, scan_green, fill_rect, border_radius=bar_height // 2)
+    pygame.draw.rect(tft_surf, scan_green, bar_rect, width=1, border_radius=bar_height // 2)
+
+    pct_surf = FONT_TINY.render(f"{int(progress * 100)}%", True, scan_green)
+    pct_rect = pct_surf.get_rect(midtop=(dashboard_rect.centerx, bar_rect.bottom + 4))
+    tft_surf.blit(pct_surf, pct_rect)
+
+    # Cycling status message below the bar, big - this is the thing meant to
+    # actually be read. The static "BIOMETRISCHER SCAN" label is a small
+    # footer caption at the bottom instead.
+    message_font = FONT_SMALL
+    message_lines = _quiz_wrap_text(message_font, prompt, dashboard_rect.width - 16)
+    message_line_h = message_font.get_height()
+    message_top = pct_rect.bottom + 8
+    for i, line in enumerate(message_lines):
+        line_surf = message_font.render(line, True, scan_green)
+        tft_surf.blit(
+            line_surf,
+            line_surf.get_rect(center=(dashboard_rect.centerx, message_top + i * message_line_h)),
+        )
+    message_bottom = message_top + len(message_lines) * message_line_h
+
+    # Fake fingerprint the participant must hold to keep the scan running -
+    # a real icon (Twemoji, see README credits) rather than a hand-drawn
+    # approximation, tinted to match the scan's green/held-state color.
+    thumb_radius = int(46 * ZOOM)
+    thumb_center = (
+        dashboard_rect.centerx,
+        max(dashboard_rect.centery + int(10 * ZOOM), message_bottom + thumb_radius + 26),
+    )
+    QUIZ_SCAN_THUMB_CENTER = thumb_center
+    QUIZ_SCAN_THUMB_RADIUS = thumb_radius
+    ridge_color = scan_green if QUIZ_SCAN_HELD else (70, 160, 100)
+
+    fingerprint_img = images.get("quiz_fingerprint")
+    if fingerprint_img is not None:
+        icon_diameter = thumb_radius * 2.2
+        DrawImage(
+            tft_surf, fingerprint_img, size=icon_diameter / ZOOM, fillcolor=ridge_color
+        ).draw_absolut_position(
+            (thumb_center[0] - icon_diameter / 2, thumb_center[1] - icon_diameter / 2)
+        )
+    else:
+        _draw_fingerprint_icon(tft_surf, thumb_center, thumb_radius, ridge_color)
+
+    title_surf = FONT_SUPER_TINY.render("BIOMETRISCHER SCAN", True, (90, 180, 130))
+    tft_surf.blit(
+        title_surf,
+        title_surf.get_rect(midbottom=(dashboard_rect.centerx, dashboard_rect.bottom - 8)),
+    )
+
+
+def draw_quiz_question_stage(card):
+    global QUIZ_ANSWER_RECTS
+
+    if QUIZ_QUESTION_INDEX >= len(QUIZ_QUESTIONS):
+        return
+
+    question = QUIZ_QUESTIONS[QUIZ_QUESTION_INDEX]
+    inner_pad = 14
+    action_width = card.width - 2 * inner_pad
+
+    progress = (
+        f"Frage {QUIZ_QUESTION_INDEX + 1}/{len(QUIZ_QUESTIONS)}"
+        f" - zufällig aus {len(QUIZ_QUESTION_BANK)} Fragen ausgewählt"
+    )
+    progress_surf = FONT_SUPER_TINY.render(progress, True, DARK_GRAY)
+    progress_rect = progress_surf.get_rect(midtop=(card.centerx, card.top + 8))
+    tft_surf.blit(progress_surf, progress_rect)
+
+    question_font = FONT_SMALL_BOLD
+    question_lines = _quiz_wrap_text(question_font, question["text"], action_width)
+    question_line_h = question_font.get_height()
+    question_top = progress_rect.bottom + 6
+    for i, line in enumerate(question_lines):
+        line_surf = question_font.render(line, True, BLACK)
+        tft_surf.blit(
+            line_surf, line_surf.get_rect(midtop=(card.centerx, question_top + i * question_line_h))
+        )
+    question_bottom = question_top + len(question_lines) * question_line_h
+
+    button_area_top = question_bottom + 10
+    button_gap = 8
+    button_height = int((card.bottom - inner_pad - button_area_top - 2 * button_gap) / 3)
+    answer_font = FONT_SMALL
+    answer_line_h = answer_font.get_height()
+
+    QUIZ_ANSWER_RECTS = []
+    for idx, option in enumerate(question["options"]):
+        button_rect = pygame.Rect(
+            card.left + inner_pad,
+            button_area_top + idx * (button_height + button_gap),
+            action_width,
+            button_height,
+        )
+        pygame.draw.rect(tft_surf, SWEET_PURPLE, button_rect, border_radius=10)
+        pygame.draw.rect(tft_surf, VIOLET, button_rect, width=2, border_radius=10)
+
+        if "icons" in option:
+            icon_px = min(button_rect.height - 12, 40)
+            icon_gap = 14
+            total_w = len(option["icons"]) * icon_px + (len(option["icons"]) - 1) * icon_gap
+            start_x = button_rect.centerx - total_w / 2
+            for i, icon_key in enumerate(option["icons"]):
+                # Prefer a local-only iOS-style override (gitignored,
+                # proprietary Apple artwork - never committed) over the
+                # CC-BY Twemoji version everyone else's clone falls back to.
+                icon_img = images.get(f"{icon_key}_ios") or images.get(icon_key)
+                if icon_img is None:
+                    continue
+                icon_x = start_x + i * (icon_px + icon_gap)
+                icon_y = button_rect.centery - icon_px / 2
+                DrawImage(tft_surf, icon_img, size=icon_px / ZOOM).draw_absolut_position(
+                    (icon_x, icon_y)
+                )
+        else:
+            label_lines = _quiz_wrap_text(answer_font, option["label"], action_width - 16)
+            total_text_h = len(label_lines) * answer_line_h
+            text_top = button_rect.centery - total_text_h / 2
+            for i, line in enumerate(label_lines):
+                line_surf = answer_font.render(line, True, BLACK)
+                tft_surf.blit(
+                    line_surf,
+                    line_surf.get_rect(midtop=(button_rect.centerx, text_top + i * answer_line_h)),
+                )
+
+        QUIZ_ANSWER_RECTS.append({"axis": option["axis"], "rect": button_rect})
+
+
+def draw_quiz_results_stage(card):
+    global QUIZ_RESULTS_ACTION_RECTS
+
+    inner_pad = 10
+    close_size = 26
+    close_rect = pygame.Rect(card.right - close_size - 10, card.top + 10, close_size, close_size)
+    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
+    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
+    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
+    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
+    QUIZ_RESULTS_ACTION_RECTS = {"close": close_rect}
+
+    title_font = FONT_SMALL_BOLD
+    title_max_width = close_rect.left - card.left - 2 * inner_pad
+    title_lines = _quiz_wrap_text(title_font, "Dein Ergebnis im AFM Test", title_max_width)
+    title_line_h = title_font.get_height()
+    for i, line in enumerate(title_lines):
+        line_surf = title_font.render(line, True, BLACK)
+        tft_surf.blit(
+            line_surf, line_surf.get_rect(midtop=(card.centerx, card.top + 8 + i * title_line_h))
+        )
+    title_rect = pygame.Rect(card.left, card.top + 8, card.width, len(title_lines) * title_line_h)
+
+    hint_font = FONT_SUPER_TINY
+    hint_lines = _quiz_wrap_text(
+        hint_font, "Punkt halten zeigt Namen - X zum Schließen", card.width - 2 * inner_pad
+    )
+    hint_line_h = hint_font.get_height()
+    hint_rect = pygame.Rect(
+        card.left,
+        card.bottom - 6 - len(hint_lines) * hint_line_h,
+        card.width,
+        len(hint_lines) * hint_line_h,
+    )
+
+    # The triangle fills the full card width - only a thin vertical strip is
+    # reserved top/bottom for the ATZIG/MAUSIG/FOTZIG labels, which hang
+    # outside the triangle right at each corner. MAUSIG/FOTZIG are nudged
+    # inward (toward center) rather than hanging further out past the base
+    # corners, so they don't need horizontal margin too and can't clip past
+    # the card's left/right edge.
+    axis_label_font = FONT_SMALL_BOLD
+    # MAUSIG/FOTZIG need more room than ATZIG: a dot landing right on the
+    # bl/br corner (e.g. a 100% mausig or fotzig result) draws its own
+    # name tag just below itself, in the same spot the label would
+    # otherwise sit - so those two get pushed further down/inward.
+    top_label_gap = 6
+    bottom_label_gap = 24
+    corner_shift = 34
+    area_left = card.left + inner_pad
+    area_right = card.right - inner_pad
+    area_top = title_rect.bottom + axis_label_font.get_height() + top_label_gap
+    area_bottom = hint_rect.top - axis_label_font.get_height() - bottom_label_gap
+    area_width = area_right - area_left
+    area_height = area_bottom - area_top
+
+    side = min(area_width, area_height / (math.sqrt(3) / 2))
+    height = side * (math.sqrt(3) / 2)
+    center_x = (area_left + area_right) / 2
+    top_y = area_top + (area_height - height) / 2
+    base_y = top_y + height
+
+    top_vertex = (center_x, top_y)
+    bl_vertex = (center_x - side / 2, base_y)
+    br_vertex = (center_x + side / 2, base_y)
+
+    triangle_fill = (240, 228, 255)
+    pygame.draw.polygon(tft_surf, triangle_fill, [top_vertex, bl_vertex, br_vertex])
+    pygame.draw.polygon(tft_surf, VIOLET, [top_vertex, bl_vertex, br_vertex], width=3)
+
+    centroid = (
+        (top_vertex[0] + bl_vertex[0] + br_vertex[0]) / 3,
+        (top_vertex[1] + bl_vertex[1] + br_vertex[1]) / 3,
+    )
+    for vertex in (top_vertex, bl_vertex, br_vertex):
+        pygame.draw.line(tft_surf, SWEET_PURPLE, centroid, vertex, 1)
+    pygame.draw.circle(tft_surf, SWEET_PURPLE, (int(centroid[0]), int(centroid[1])), 2)
+
+    atzig_label = axis_label_font.render("ATZIG", True, QUIZ_AXIS_COLOR["atzig"])
+    tft_surf.blit(
+        atzig_label, atzig_label.get_rect(midbottom=(top_vertex[0], top_vertex[1] - top_label_gap))
+    )
+    mausig_label = axis_label_font.render("MAUSIG", True, QUIZ_AXIS_COLOR["mausig"])
+    tft_surf.blit(
+        mausig_label,
+        mausig_label.get_rect(
+            midtop=(bl_vertex[0] + corner_shift, bl_vertex[1] + bottom_label_gap)
+        ),
+    )
+    fotzig_label = axis_label_font.render("FOTZIG", True, QUIZ_AXIS_COLOR["fotzig"])
+    tft_surf.blit(
+        fotzig_label,
+        fotzig_label.get_rect(
+            midtop=(br_vertex[0] - corner_shift, br_vertex[1] + bottom_label_gap)
+        ),
+    )
+
+    def ternary_point(mausig, atzig, fotzig):
+        total = mausig + atzig + fotzig
+        if total <= 0:
+            return (card.centerx, (top_vertex[1] + bl_vertex[1]) / 2)
+        fm, fa, ff = mausig / total, atzig / total, fotzig / total
+        x = bl_vertex[0] * fm + br_vertex[0] * ff + top_vertex[0] * fa
+        y = bl_vertex[1] * fm + br_vertex[1] * ff + top_vertex[1] * fa
+        return (x, y)
+
+    global QUIZ_RESULTS_DOT_HITBOXES
+    QUIZ_RESULTS_DOT_HITBOXES = []
+
+    own_name = QUIZ_OWN_RESULT.get("name") if QUIZ_OWN_RESULT else None
+    dot_hit_radius = 12
+    for entry in QUIZ_ALL_RESULTS:
+        if entry.get("name") == own_name:
+            continue  # own marker drawn separately, always visible
+        x, y = ternary_point(entry.get("mausig", 0), entry.get("atzig", 0), entry.get("fotzig", 0))
+        pygame.draw.circle(tft_surf, SWEET_PURPLE, (int(x), int(y)), 4)
+        pygame.draw.circle(tft_surf, VIOLET, (int(x), int(y)), 4, width=1)
+        QUIZ_RESULTS_DOT_HITBOXES.append({"name": entry.get("name", "?"), "pos": (x, y)})
+        if entry.get("name") == QUIZ_RESULTS_HELD_NAME:
+            name_surf = FONT_TINY.render(entry.get("name", "?"), True, BLACK)
+            name_rect = name_surf.get_rect(midtop=(int(x), int(y) + 8))
+            pygame.draw.rect(tft_surf, WHITE, name_rect.inflate(6, 4), border_radius=4)
+            pygame.draw.rect(tft_surf, DARK_GRAY, name_rect.inflate(6, 4), width=1, border_radius=4)
+            tft_surf.blit(name_surf, name_rect)
+
+    # Own result: always visible, unmistakable - a big red dot, clearly
+    # bigger than the other participants' small purple dots.
+    if QUIZ_OWN_RESULT:
+        x, y = ternary_point(
+            QUIZ_OWN_RESULT.get("mausig", 0),
+            QUIZ_OWN_RESULT.get("atzig", 0),
+            QUIZ_OWN_RESULT.get("fotzig", 0),
+        )
+        own_radius = 9
+        pygame.draw.circle(tft_surf, RED, (int(x), int(y)), own_radius)
+        pygame.draw.circle(tft_surf, BLACK, (int(x), int(y)), own_radius, width=2)
+        name_surf = FONT_TINY.render(QUIZ_OWN_RESULT.get("name", "?"), True, BLACK)
+        name_rect = name_surf.get_rect(midtop=(int(x), int(y) + own_radius + 4))
+        pygame.draw.rect(tft_surf, WHITE, name_rect.inflate(6, 4), border_radius=4)
+        pygame.draw.rect(tft_surf, RED, name_rect.inflate(6, 4), width=1, border_radius=4)
+        tft_surf.blit(name_surf, name_rect)
+
+    for i, line in enumerate(hint_lines):
+        line_surf = hint_font.render(line, True, DARK_GRAY)
+        tft_surf.blit(
+            line_surf, line_surf.get_rect(midtop=(card.centerx, hint_rect.top + i * hint_line_h))
+        )
+
+
+def draw_quiz_overlay():
+    if QUIZ_STAGE is None:
+        return
+
+    if QUIZ_STAGE == "scan":
+        draw_quiz_scan_stage()
+        return
+
+    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
+    fog.fill((0, 0, 0, 170))
+    tft_surf.blit(fog, (0, 0))
+
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+    margin_x = int(dashboard_rect.width * 0.08)
+    margin_y = int(dashboard_rect.height * 0.06)
+    card = pygame.Rect(
+        dashboard_rect.left + margin_x,
+        dashboard_rect.top + margin_y,
+        dashboard_rect.width - 2 * margin_x,
+        dashboard_rect.height - 2 * margin_y,
+    )
+    pygame.draw.rect(tft_surf, WHITE, card, border_radius=16)
+    pygame.draw.rect(tft_surf, DARK_GRAY, card, width=2, border_radius=16)
+
+    if QUIZ_STAGE == "name":
+        draw_quiz_name_stage(card)
+    elif QUIZ_STAGE == "question":
+        draw_quiz_question_stage(card)
+    elif QUIZ_STAGE == "results":
+        draw_quiz_results_stage(card)
+
+
+def handle_quiz_click(mx, my):
+    global QUIZ_SCAN_HELD, QUIZ_LAST_ACTIVITY_TS, QUIZ_RESULTS_HELD_NAME
+
+    if QUIZ_STAGE is None:
+        return False
+
+    QUIZ_LAST_ACTIVITY_TS = time.time()
+
+    if QUIZ_STAGE == "scan":
+        if QUIZ_SCAN_THUMB_CENTER is not None:
+            cx, cy = QUIZ_SCAN_THUMB_CENTER
+            if ((mx - cx) ** 2 + (my - cy) ** 2) ** 0.5 <= QUIZ_SCAN_THUMB_RADIUS:
+                QUIZ_SCAN_HELD = True
+        return True  # swallow all other taps - not skippable, only holdable
+
+    if QUIZ_STAGE == "results":
+        close_rect = QUIZ_RESULTS_ACTION_RECTS.get("close")
+        if close_rect and close_rect.collidepoint((mx, my)):
+            dismiss_quiz("close-button")
+            return True
+        # No tap-anywhere-closes here (unlike the other quiz overlays) -
+        # missing a dot by a few px used to close the whole screen, which
+        # made holding a dot to see its name basically unusable. Closing is
+        # only via the X button now, or the 30s idle timeout.
+        for hitbox in QUIZ_RESULTS_DOT_HITBOXES:
+            hx, hy = hitbox["pos"]
+            if ((mx - hx) ** 2 + (my - hy) ** 2) ** 0.5 <= 12:
+                QUIZ_RESULTS_HELD_NAME = hitbox["name"]
+                return True
+        return True
+
+    if QUIZ_STAGE == "name":
+        close_rect = QUIZ_NAME_ACTION_RECTS.get("close")
+        if close_rect and close_rect.collidepoint((mx, my)):
+            dismiss_quiz("cancel")
+            return True
+
+        start_rect = QUIZ_NAME_ACTION_RECTS.get("start")
+        if start_rect and start_rect.collidepoint((mx, my)):
+            start_quiz_scan()
+            return True
+
+        for key_button in QUIZ_NAME_RECTS:
+            if key_button["rect"].collidepoint((mx, my)):
+                _quiz_apply_keyboard_token(key_button["token"])
+                return True
+        return True
+
+    if QUIZ_STAGE == "question":
+        for answer in QUIZ_ANSWER_RECTS:
+            if answer["rect"].collidepoint((mx, my)):
+                handle_quiz_answer(answer["axis"])
+                return True
+        return True
+
+    return True
+
+
 def draw_fps():
     DrawString(dynamic_surf, str(int(clock.get_fps())), FONT_SMALL_BOLD, RED, 20).left()
 
@@ -3076,7 +4142,15 @@ def loop():
     exit_clicks = 0
 
     while running:
-        global DISPLAY_BLANK, EMOTION_RESULTS_VISIBLE
+        global DISPLAY_BLANK, EMOTION_RESULTS_VISIBLE, QUIZ_STAGE
+
+        if QUIZ_STAGE == "scan" and QUIZ_SCAN_HELD_SECONDS >= QUIZ_SCAN_SECONDS:
+            QUIZ_STAGE = "question"
+        if (
+            QUIZ_STAGE is not None
+            and time.time() - QUIZ_LAST_ACTIVITY_TS > QUIZ_IDLE_TIMEOUT_SECONDS
+        ):
+            dismiss_quiz("idle-timeout")
 
         activate_pending_emotion_prompt()
         if (
@@ -3156,6 +4230,9 @@ def loop():
             draw_emotion_confirmation_overlay()
             if EMOTION_RESULTS_VISIBLE:
                 draw_results_overlay()
+
+            draw_quiz_button()
+            draw_quiz_overlay()
 
             # update the display with all surfaces merged into the main one
             pygame.display.update()
@@ -3252,6 +4329,12 @@ def loop():
                 if handle_emolog_footer_click(mx, my):
                     continue
 
+                if handle_quiz_click(mx, my):
+                    continue
+
+                if handle_quiz_button_click(mx, my):
+                    continue
+
                 if DISPLAY_BLANK:
                     logger.info("Going from idle to active.")
                     wake_display("touch", reason="screen_touch")
@@ -3263,6 +4346,16 @@ def loop():
 
                 if pygame.MOUSEBUTTONDOWN:
                     draw_event()
+
+            elif event.type == pygame.MOUSEBUTTONUP:
+                # Only meaningful during two quiz stages: "scan" (lifting
+                # stops the hold-thumbprint progress, see
+                # draw_quiz_scan_stage()) and "results" (lifting hides
+                # whichever other participant's name was being held).
+                if QUIZ_STAGE == "scan":
+                    handle_quiz_scan_release()
+                elif QUIZ_STAGE == "results":
+                    handle_quiz_results_release()
 
             elif event.type == pygame.KEYDOWN:
 

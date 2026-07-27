@@ -336,6 +336,17 @@ default) and ignore this section entirely.
 - **Emotion prompt**: effectively suppressed during playback — the main loop is blocked on the player process, so no prompt logic runs until it exits.
 - **Screen blanking**: `play_secret_video()` explicitly suspends `xset s`/`dpms` for the duration and restores the normal `DISPLAY_BLANK` timers afterward. Without this, X11's idle timer (which runs independent of the blocked dashboard loop) could still blank the physical display mid-playback on a long, untouched video.
 
+#### AFM Test (Quiz)
+```json
+"QUIZ": {
+  "ENABLED": false
+}
+```
+- A small button in the bottom-right corner opens a dadaist personality-quiz easter egg: name entry (on-screen QWERTZ keyboard) → a fake "biometric" scan you hold a fingerprint icon down for → a random subset of multiple-choice questions from `QUIZ_QUESTION_BANK` (in `PiDashboard.py`), each option scored onto one of three axes (`mausig`/`atzig`/`fotzig`) → a ternary-plot results screen showing your own result against every previously stored participant's.
+- Disabled by default. Results persist to `quiz_results.json` (gitignored); retaking under the same name replaces the old entry instead of adding a new one.
+- Quiz-only feature, no web dashboard integration.
+- Question wording/answers are partly inspired by, partly directly ported from [atzigfotzigmausig.de/quiz](https://atzigfotzigmausig.de/quiz) - see Credits.
+
 ## Starting the Dashboard without a Service
 
 This is certainly not the optimal solution, as any power failure or simply a reboot of the Pi would mean you have to start things up manually again.
@@ -396,3 +407,5 @@ autostart-app output, which for the standard LXDE-pi session is
   - default font: [google - roboto](https://fonts.google.com/)
   - darcula font: [jetbrains - mono](https://www.jetbrains.com/lp/mono/)
   - moon phase rendering: [@miyaichi for his awesome fork](https://github.com/miyaichi/WeatherPi) and great ideas
+- quiz emoji icons (`icons/quiz_emoji_*.png`): [Twemoji](https://github.com/jdecked/twemoji), graphics licensed [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- AFM Test quiz: concept and a number of the questions are inspired by / ported from [atzigfotzigmausig.de/quiz](https://atzigfotzigmausig.de/quiz)
