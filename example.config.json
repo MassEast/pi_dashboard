@@ -89,6 +89,11 @@
   "QUIZ": {
     "ENABLED": false
   },
+  "WIFI": {
+    "ENABLED": false,
+    "SSID": "your-wifi-ssid",
+    "PASSWORD": "your-wifi-password"
+  },
   "ENV": "Pi",
   "LOG_TO_FILES": false,
   "LOG_UPTIME": true

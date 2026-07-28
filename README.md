@@ -347,6 +347,18 @@ default) and ignore this section entirely.
 - Quiz-only feature, no web dashboard integration.
 - Question wording/answers are partly inspired by, partly directly ported from [atzigfotzigmausig.de/quiz](https://atzigfotzigmausig.de/quiz) - see Credits.
 
+#### WiFi QR Button
+```json
+"WIFI": {
+  "ENABLED": false,
+  "SSID": "your-wifi-ssid",
+  "PASSWORD": "your-wifi-password"
+}
+```
+- **Not related to the Pi's own network connection** (that's configured at the OS level, e.g. via `raspi-config` or `wpa_supplicant`) - this is purely the household WiFi network's credentials, used only to render a scannable join-QR so guests don't have to be told the password out loud.
+- Adds a small "WIFI" button next to the clock. Tapping it shows a QR code (standard `WIFI:` payload - a phone camera app offers to join the network directly from it) plus the SSID as text, auto-closes after 20s or on tap.
+- Disabled by default.
+
 ## Starting the Dashboard without a Service
 
 This is certainly not the optimal solution, as any power failure or simply a reboot of the Pi would mean you have to start things up manually again.

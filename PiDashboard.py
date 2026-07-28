@@ -535,6 +535,14 @@ secret_video_queue = []
 # a ternary-plot results screen showing every past participant's dot.
 QUIZ_CONFIG = config.get("QUIZ", {})
 QUIZ_ENABLED = QUIZ_CONFIG.get("ENABLED", False)
+
+# WLAN QR button next to the clock - tap it to show a scannable WIFI:
+# connect QR code for the household's actual wifi, instead of reading the
+# password out to every guest. See README for what these keys are for.
+WIFI_CONFIG = config.get("WIFI", {})
+WIFI_ENABLED = WIFI_CONFIG.get("ENABLED", False)
+WIFI_SSID = WIFI_CONFIG.get("SSID", "")
+WIFI_PASSWORD = WIFI_CONFIG.get("PASSWORD", "")
 QUIZ_LENGTH = 13
 QUIZ_NAME_MAX_CHARS = 16
 QUIZ_SCAN_SECONDS = 8.0  # of actual held time, not wall-clock (see QUIZ_SCAN_HELD)
@@ -886,6 +894,11 @@ QUIZ_ALL_RESULTS = []
 QUIZ_RESULTS_DOT_HITBOXES = []
 QUIZ_RESULTS_HELD_NAME = None
 QUIZ_RESULTS_ACTION_RECTS = {}
+
+WIFI_BUTTON_RECT = None
+WIFI_QR_VISIBLE = False
+WIFI_QR_OPENED_AT = 0.0
+WIFI_QR_AUTO_CLOSE_SECONDS = 20
 
 EMOTION_LAST_PROMPT_TS = 0.0
 EMOTION_PROMPT_VISIBLE = False
@@ -3105,6 +3118,93 @@ def draw_time_layer():
     DrawString(time_surf, date_time_string, CLOCK_FONT, MAIN_FONT, 15).center(1, 0)
 
 
+def draw_wifi_button():
+    """Small "WIFI" pill right next to the clock - not the top-left corner,
+    that's one of the 4 secret-video easter-egg gesture corners and a click
+    handler there would swallow taps meant for that gesture."""
+    global WIFI_BUTTON_RECT
+
+    if not WIFI_ENABLED or QUIZ_STAGE is not None:
+        WIFI_BUTTON_RECT = None
+        return
+
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+
+    # Mirror draw_time_layer()'s own math (y=15, center(1, 0)) to find the
+    # clock row's actual on-screen box, so this can't drift out of sync with
+    # wherever the clock actually renders.
+    clock_string = convert_timestamp(time.time(), theme["DATE_FORMAT"]["TIME"])
+    clock_width, clock_height = CLOCK_FONT.size(clock_string)
+    clock_top = dashboard_rect.top + int(15 * ZOOM)
+
+    button_width, button_height = int(30 * ZOOM), int(14 * ZOOM)
+    gap = int(6 * ZOOM)
+    WIFI_BUTTON_RECT = pygame.Rect(
+        dashboard_rect.centerx + clock_width // 2 + gap,
+        clock_top + clock_height // 2 - button_height // 2,
+        button_width,
+        button_height,
+    )
+    pygame.draw.rect(tft_surf, BLUE, WIFI_BUTTON_RECT, border_radius=5)
+    pygame.draw.rect(tft_surf, DARK_GRAY, WIFI_BUTTON_RECT, width=1, border_radius=5)
+    label = FONT_SUPER_TINY.render("WIFI", True, WHITE)
+    tft_surf.blit(label, label.get_rect(center=WIFI_BUTTON_RECT.center))
+
+
+def handle_wifi_button_click(mx, my):
+    global WIFI_QR_VISIBLE, WIFI_QR_OPENED_AT
+
+    if DISPLAY_BLANK:
+        # Let this tap fall through to the normal wake-display handling
+        # instead of silently swallowing it via a stale pre-blank rect.
+        return False
+    if WIFI_BUTTON_RECT and WIFI_BUTTON_RECT.collidepoint((mx, my)):
+        WIFI_QR_VISIBLE = True
+        WIFI_QR_OPENED_AT = time.time()
+        return True
+    return False
+
+
+def draw_wifi_qr_overlay():
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+
+    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
+    fog.fill((0, 0, 0, 200))
+    tft_surf.blit(fog, (0, 0))
+
+    card = dashboard_rect.inflate(
+        -int(dashboard_rect.width * 0.10), -int(dashboard_rect.height * 0.10)
+    )
+    pygame.draw.rect(tft_surf, WHITE, card, border_radius=16)
+    pygame.draw.rect(tft_surf, DARK_GRAY, card, width=2, border_radius=16)
+
+    title = FONT_SMALL_BOLD.render("WLAN verbinden", True, BLACK)
+    tft_surf.blit(title, title.get_rect(midtop=(card.centerx, card.top + 12)))
+
+    # Standard WIFI: QR payload format - a phone's camera app offers to join
+    # the network directly from this, no typing the password out loud.
+    wifi_qr_data = f"WIFI:T:WPA;S:{WIFI_SSID};P:{WIFI_PASSWORD};;"
+    qr_size = min(card.width - 36, card.height - 124)
+    qr_surface = get_qr_surface(wifi_qr_data, pixel_size=max(120, qr_size))
+    qr_rect = qr_surface.get_rect(center=(card.centerx, card.centery + 12))
+    tft_surf.blit(qr_surface, qr_rect)
+
+    ssid_text = FONT_TINY.render(f"SSID: {WIFI_SSID}", True, BLACK)
+    tft_surf.blit(ssid_text, ssid_text.get_rect(midbottom=(card.centerx, card.bottom - 26)))
+
+    hint_text = FONT_SUPER_TINY.render("Tap anywhere to close", True, DARK_GRAY)
+    tft_surf.blit(hint_text, hint_text.get_rect(midbottom=(card.centerx, card.bottom - 8)))
+
+
+def handle_wifi_qr_click(mx, my):
+    global WIFI_QR_VISIBLE
+
+    if not WIFI_QR_VISIBLE:
+        return False
+    WIFI_QR_VISIBLE = False
+    return True
+
+
 def draw_moon_layer(surf, y, size):
     # based on @miyaichi's fork -> great idea :)
     _size = 1000
@@ -3507,13 +3607,16 @@ def draw_quiz_name_stage(card):
     tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
 
     title = FONT_SMALL_BOLD.render("Wer bist du?", True, BLACK)
-    tft_surf.blit(title, title.get_rect(midtop=(card.centerx, card.top + 14)))
+    title_rect = title.get_rect(midtop=(card.centerx, card.top + 14))
+    tft_surf.blit(title, title_rect)
 
     # Skip taking the quiz entirely and just look at the results triangle -
     # a small link rather than a full button, tap target padded out for
-    # touch even though the text itself is tiny.
+    # touch even though the text itself is tiny. Positioned off title_rect's
+    # actual measured bottom (not a hardcoded offset) so it can't clash with
+    # the title regardless of font metrics/rendering differences.
     results_link_text = FONT_SUPER_TINY.render("Nur Ergebnisse anzeigen", True, VIOLET)
-    results_link_rect = results_link_text.get_rect(midtop=(card.centerx, card.top + 36))
+    results_link_rect = results_link_text.get_rect(midtop=(card.centerx, title_rect.bottom + 8))
     tft_surf.blit(results_link_text, results_link_rect)
     results_link_hitbox = results_link_rect.inflate(20, 16)
 
@@ -4179,7 +4282,7 @@ def loop():
     exit_clicks = 0
 
     while running:
-        global DISPLAY_BLANK, EMOTION_RESULTS_VISIBLE, QUIZ_STAGE
+        global DISPLAY_BLANK, EMOTION_RESULTS_VISIBLE, QUIZ_STAGE, WIFI_QR_VISIBLE
 
         if QUIZ_STAGE == "scan" and QUIZ_SCAN_HELD_SECONDS >= QUIZ_SCAN_SECONDS:
             QUIZ_STAGE = "question"
@@ -4203,6 +4306,8 @@ def loop():
             and time.time() - EMOLOG_QR_OPENED_AT > EMOLOG_QR_AUTO_CLOSE_SECONDS
         ):
             EMOTION_RESULTS_VISIBLE = False
+        if WIFI_QR_VISIBLE and time.time() - WIFI_QR_OPENED_AT > WIFI_QR_AUTO_CLOSE_SECONDS:
+            WIFI_QR_VISIBLE = False
         if DISPLAY_BLANK and EMOTION_PROMPT_VISIBLE:
             dismiss_emotion_prompt("display-blank")
         elif EMOTION_PROMPT_VISIBLE:
@@ -4270,6 +4375,10 @@ def loop():
 
             draw_quiz_button()
             draw_quiz_overlay()
+
+            draw_wifi_button()
+            if WIFI_QR_VISIBLE:
+                draw_wifi_qr_overlay()
 
             # update the display with all surfaces merged into the main one
             pygame.display.update()
@@ -4370,6 +4479,12 @@ def loop():
                     continue
 
                 if handle_quiz_button_click(mx, my):
+                    continue
+
+                if handle_wifi_qr_click(mx, my):
+                    continue
+
+                if handle_wifi_button_click(mx, my):
                     continue
 
                 if DISPLAY_BLANK:
