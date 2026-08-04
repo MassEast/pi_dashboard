@@ -242,6 +242,8 @@ function renderUptime(payload) {
         const screenNode = card.querySelector('[data-field="screen"]');
         const bvgNode = card.querySelector('[data-field="bvg"]');
         const weatherNode = card.querySelector('[data-field="weather"]');
+        const internetNode = card.querySelector('[data-field="internet"]');
+        const internetOutagesNode = card.querySelector('[data-field="internetOutages"]');
         const rebootNode = card.querySelector('[data-field="reboots"]');
 
         if (screenNode) {
@@ -252,6 +254,12 @@ function renderUptime(payload) {
         }
         if (weatherNode) {
             weatherNode.textContent = formatPercent(windowData.weather?.uptime_pct);
+        }
+        if (internetNode) {
+            internetNode.textContent = formatPercent(windowData.internet?.uptime_pct);
+        }
+        if (internetOutagesNode) {
+            internetOutagesNode.textContent = formatCount(windowData.internet?.down_events);
         }
         if (rebootNode) {
             rebootNode.textContent = formatCount(windowData.reboot_count);
