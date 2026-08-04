@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import threading
+import uuid
 
 STORE_FILE = "quiz_results.json"
 _STORE_LOCK = threading.Lock()
@@ -53,13 +54,13 @@ def _recover_if_corrupt(file_path):
 
 
 def submit_quiz_result(log_dir, name, mausig, atzig, fotzig, store_file=STORE_FILE):
-    """Stores one participant's raw per-axis vote counts, replacing any
-    earlier result under the same (whitespace/case-normalized) name so a
-    retake updates their dot instead of adding a duplicate."""
+    """Stores one participant's raw per-axis vote counts as a new entry -
+    retakes under the same name add another dot (with its own id) rather
+    than replacing the previous one, so the results triangle can show each
+    person's full spread across repeat takes."""
     os.makedirs(log_dir, exist_ok=True)
     file_path = _store_path(log_dir, store_file)
     normalized_name = " ".join(name.strip().split())
-    match_key = normalized_name.lower()
 
     with _STORE_LOCK:
         try:
@@ -69,10 +70,8 @@ def submit_quiz_result(log_dir, name, mausig, atzig, fotzig, store_file=STORE_FI
                 _recover_if_corrupt(file_path)
             payload = _default_payload()
 
-        payload["results"] = [
-            result for result in payload["results"] if result.get("name", "").lower() != match_key
-        ]
         result = {
+            "id": uuid.uuid4().hex,
             "name": normalized_name,
             "mausig": mausig,
             "atzig": atzig,

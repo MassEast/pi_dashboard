@@ -4029,10 +4029,14 @@ def draw_quiz_results_stage(card):
     global QUIZ_RESULTS_DOT_HITBOXES
     QUIZ_RESULTS_DOT_HITBOXES = []
 
-    own_name = QUIZ_OWN_RESULT.get("name") if QUIZ_OWN_RESULT else None
+    # Identified by id, not name - two entries can share a name (repeat
+    # takes), and only the one just submitted this session should be
+    # skipped here in favor of its own big-red-dot marker below; any older
+    # entries under the same name still need to show up as regular dots.
+    own_id = QUIZ_OWN_RESULT.get("id") if QUIZ_OWN_RESULT else None
     dot_hit_radius = 12
     for entry in QUIZ_ALL_RESULTS:
-        if entry.get("name") == own_name:
+        if own_id is not None and entry.get("id") == own_id:
             continue  # own marker drawn separately, always visible
         x, y = ternary_point(entry.get("mausig", 0), entry.get("atzig", 0), entry.get("fotzig", 0))
         pygame.draw.circle(tft_surf, SWEET_PURPLE, (int(x), int(y)), 4)
