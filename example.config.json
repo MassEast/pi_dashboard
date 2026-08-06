@@ -87,7 +87,8 @@
     "GESTURE_TIMEOUT_SECONDS": 3
   },
   "QUIZ": {
-    "ENABLED": false
+    "ENABLED": false,
+    "IDLE_TIMEOUT_SECONDS": 90
   },
   "WIFI": {
     "ENABLED": false,

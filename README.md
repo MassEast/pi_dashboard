@@ -339,11 +339,13 @@ default) and ignore this section entirely.
 #### AFM Test (Quiz)
 ```json
 "QUIZ": {
-  "ENABLED": false
+  "ENABLED": false,
+  "IDLE_TIMEOUT_SECONDS": 90
 }
 ```
 - A small button in the bottom-right corner opens a dadaist personality-quiz easter egg: name entry (on-screen QWERTZ keyboard) → a fake "biometric" scan you hold a fingerprint icon down for → a random subset of multiple-choice questions from `QUIZ_QUESTION_BANK` (in `PiDashboard.py`), each option scored onto one of three axes (`mausig`/`atzig`/`fotzig`) → a ternary-plot results screen showing your own result against every previously stored participant's.
-- Disabled by default. Results persist to `quiz_results.json` (gitignored); retaking under the same name replaces the old entry instead of adding a new one.
+- Disabled by default. Results persist to `quiz_results.json` (gitignored); each submission is a new entry (with its own id) - retaking under the same name adds another dot rather than replacing the old one, so the results triangle shows a person's full spread across retakes. Holding any of their dots labels all of them.
+- `IDLE_TIMEOUT_SECONDS` (default `90`) closes the quiz after this many seconds without a tap, at any stage - resets on every tap, so it only fires on genuine inactivity, not time spent reading a question.
 - Quiz-only feature, no web dashboard integration.
 - Question wording/answers are partly inspired by, partly directly ported from [atzigfotzigmausig.de/quiz](https://atzigfotzigmausig.de/quiz) - see Credits.
 

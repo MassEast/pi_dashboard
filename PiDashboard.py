@@ -546,7 +546,9 @@ WIFI_PASSWORD = WIFI_CONFIG.get("PASSWORD", "")
 QUIZ_LENGTH = 13
 QUIZ_NAME_MAX_CHARS = 16
 QUIZ_SCAN_SECONDS = 8.0  # of actual held time, not wall-clock (see QUIZ_SCAN_HELD)
-QUIZ_IDLE_TIMEOUT_SECONDS = 30
+# Resets on every tap (see handle_quiz_click) - too low and people get kicked
+# out mid-question while still reading/deciding, not actually idle.
+QUIZ_IDLE_TIMEOUT_SECONDS = QUIZ_CONFIG.get("IDLE_TIMEOUT_SECONDS", 90)
 # Each question has exactly 3 options, one per axis - order within a question
 # is intentionally varied so the axis can't be guessed from button position.
 QUIZ_QUESTION_BANK = [
