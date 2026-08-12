@@ -109,6 +109,8 @@ def _window_to_timedelta(window):
         return datetime.timedelta(hours=24)
     if window == "7d":
         return datetime.timedelta(days=7)
+    if window == "30d":
+        return datetime.timedelta(days=30)
     return datetime.timedelta(hours=24)
 
 
@@ -139,31 +141,99 @@ def _channel_summary(events, start, now, up_event, down_event, default_up=True):
         if state_is_up:
             up_duration += event_dt - last_transition
 
+        was_up = state_is_up
         last_transition = event_dt
 
         if event_name == up_event:
             state_is_up = True
-            up_count += 1
+            # Only count a real recovery (transition out of a down state), not a
+            # redundant up_event logged while already up.
+            if not was_up:
+                up_count += 1
         else:
             state_is_up = False
-            down_count += 1
+            # Only count a real new outage (transition out of an up state). A repeat
+            # down_event while already down - e.g. the network monitor re-detecting
+            # the same still-ongoing outage after it self-rebooted - is the same
+            # outage continuing, not a second one.
+            if was_up:
+                down_count += 1
 
     if state_is_up:
         up_duration += now - last_transition
 
     total_window = max((now - start).total_seconds(), 1.0)
     up_seconds = max(up_duration.total_seconds(), 0.0)
+    down_seconds = max(total_window - up_seconds, 0.0)
     uptime_pct = min(max((up_seconds / total_window) * 100.0, 0.0), 100.0)
 
     return {
         "uptime_seconds": round(up_seconds, 2),
         "uptime_pct": round(uptime_pct, 2),
+        "downtime_seconds": round(down_seconds, 2),
+        "downtime_hours": round(down_seconds / 3600.0, 2),
         "up_events": up_count,
         "down_events": down_count,
     }
 
 
-def build_uptime_summary(log_dir, windows=("24h", "7d")):
+def build_internet_outage_log(log_dir, window="7d"):
+    """
+    List of internet outages (down_event -> next up_event), most recent first, that
+    overlap the given window. Consecutive internet_down events without an
+    intervening internet_up (e.g. from the network monitor's own reboot loop
+    re-detecting a still-ongoing outage) collapse into a single outage spanning
+    from the first down to the eventual recovery - see _channel_summary's
+    down_count fix above for the same underlying issue.
+    """
+    now = datetime.datetime.now().astimezone()
+    start = now - _window_to_timedelta(window)
+    events = read_uptime_events(log_dir)
+
+    relevant_events = []
+    for event in events:
+        event_name = event.get("event")
+        if event_name not in {"internet_up", "internet_down"}:
+            continue
+        event_dt = _parse_iso(event.get("ts_iso"))
+        if event_dt is None or event_dt > now:
+            continue
+        relevant_events.append((event_dt, event_name))
+
+    relevant_events.sort(key=lambda item: item[0])
+
+    outages = []
+    open_start = None
+    for event_dt, event_name in relevant_events:
+        if event_name == "internet_down":
+            if open_start is None:
+                open_start = event_dt
+        else:
+            if open_start is not None:
+                outages.append((open_start, event_dt))
+                open_start = None
+
+    if open_start is not None:
+        outages.append((open_start, None))
+
+    windowed = [
+        outage for outage in outages if (outage[1] if outage[1] is not None else now) >= start
+    ]
+
+    return [
+        {
+            "start_iso": outage_start.isoformat(),
+            "end_iso": outage_end.isoformat() if outage_end is not None else None,
+            "ongoing": outage_end is None,
+            "duration_seconds": round(
+                ((outage_end if outage_end is not None else now) - outage_start).total_seconds(), 2
+            ),
+        }
+        for outage_start, outage_end in reversed(windowed)
+    ]
+
+
+def build_uptime_summary(log_dir, windows=("24h", "7d", "30d")):
     now = datetime.datetime.now().astimezone()
     events = read_uptime_events(log_dir)
 

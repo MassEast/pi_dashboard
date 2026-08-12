@@ -62,6 +62,7 @@ const chartContext = document.getElementById("emotionChart").getContext("2d");
 const totalCountNode = document.getElementById("totalCount");
 const updatedAtNode = document.getElementById("updatedAt");
 const uptimeCards = [...document.querySelectorAll(".uptime-window")];
+const outageListNode = document.getElementById("outageList");
 const windowButtons = [...document.querySelectorAll('.control-group[aria-label="Time window selector"] .window-btn')];
 const flatCurrentBtn = document.getElementById("flatCurrentBtn");
 const flatArchiveBtn = document.getElementById("flatArchiveBtn");
@@ -233,6 +234,67 @@ function formatCount(value) {
     return `${value}`;
 }
 
+function formatIsoDateTime(isoString) {
+    if (!isoString) {
+        return "-";
+    }
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) {
+        return "-";
+    }
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${day}.${month} ${hours}:${minutes}`;
+}
+
+function formatDuration(seconds) {
+    if (seconds == null || Number.isNaN(seconds)) {
+        return "-";
+    }
+    const totalMinutes = Math.round(seconds / 60);
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    if (hours === 0) {
+        return `${minutes}m`;
+    }
+    return `${hours}h ${minutes}m`;
+}
+
+function renderOutages(outages) {
+    if (!outageListNode) {
+        return;
+    }
+    outageListNode.innerHTML = "";
+
+    if (!outages || outages.length === 0) {
+        const empty = document.createElement("li");
+        empty.className = "outage-empty";
+        empty.textContent = "No outages in the last 30 days.";
+        outageListNode.appendChild(empty);
+        return;
+    }
+
+    for (const outage of outages) {
+        const row = document.createElement("li");
+        row.className = "outage-row";
+
+        const range = document.createElement("span");
+        range.className = "outage-range";
+        const endLabel = outage.ongoing ? "ongoing" : formatIsoDateTime(outage.end_iso);
+        range.textContent = `${formatIsoDateTime(outage.start_iso)} → ${endLabel}`;
+
+        const duration = document.createElement("span");
+        duration.className = outage.ongoing ? "outage-duration outage-ongoing" : "outage-duration";
+        duration.textContent = formatDuration(outage.duration_seconds);
+
+        row.appendChild(range);
+        row.appendChild(duration);
+        outageListNode.appendChild(row);
+    }
+}
+
 function renderUptime(payload) {
     const windows = payload?.windows || {};
 
@@ -243,6 +305,7 @@ function renderUptime(payload) {
         const bvgNode = card.querySelector('[data-field="bvg"]');
         const weatherNode = card.querySelector('[data-field="weather"]');
         const internetNode = card.querySelector('[data-field="internet"]');
+        const internetDowntimeNode = card.querySelector('[data-field="internetDowntime"]');
         const internetOutagesNode = card.querySelector('[data-field="internetOutages"]');
         const rebootNode = card.querySelector('[data-field="reboots"]');
 
@@ -257,6 +320,9 @@ function renderUptime(payload) {
         }
         if (internetNode) {
             internetNode.textContent = formatPercent(windowData.internet?.uptime_pct);
+        }
+        if (internetDowntimeNode) {
+            internetDowntimeNode.textContent = formatHours(windowData.internet?.downtime_hours);
         }
         if (internetOutagesNode) {
             internetOutagesNode.textContent = formatCount(windowData.internet?.down_events);
@@ -423,10 +489,11 @@ async function refresh() {
 
     const window = currentWindow === "emotion" ? "alltime" : currentWindow;
     const archiveParam = viewingArchive ? "&archive=1" : "";
-    const [catalogResult, emotionResult, uptimeResult] = await Promise.allSettled([
+    const [catalogResult, emotionResult, uptimeResult, outagesResult] = await Promise.allSettled([
         fetch("/api/emotions/catalog").then((response) => response.json()),
         fetch(`/api/emotions/bars?window=${window}${archiveParam}`).then((response) => response.json()),
         fetch("/api/uptime").then((response) => response.json()),
+        fetch("/api/uptime/internet_outages?window=30d").then((response) => response.json()),
     ]);
 
     if (catalogResult.status === "fulfilled") {
@@ -446,6 +513,10 @@ async function refresh() {
 
     if (uptimeResult.status === "fulfilled") {
         renderUptime(uptimeResult.value);
+    }
+
+    if (outagesResult.status === "fulfilled") {
+        renderOutages(outagesResult.value.outages);
     }
 }
 

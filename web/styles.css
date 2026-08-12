@@ -151,7 +151,7 @@ body {
 
 .uptime-grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 14px;
 }
 
@@ -192,6 +192,47 @@ body {
     font-size: 1.06rem;
     font-weight: 600;
     text-align: right;
+}
+
+.outage-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.outage-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(168, 85, 247, 0.08);
+    border: 1px solid rgba(168, 85, 247, 0.14);
+}
+
+.outage-range {
+    font-size: 0.92rem;
+}
+
+.outage-duration {
+    font-weight: 600;
+    font-size: 0.92rem;
+    white-space: nowrap;
+}
+
+.outage-duration.outage-ongoing {
+    color: #dc2626;
+}
+
+.outage-empty {
+    opacity: 0.65;
+    font-size: 0.92rem;
+    padding: 6px 2px;
 }
 
 .footer {

@@ -69,6 +69,10 @@
                             <dd data-field="internet">-</dd>
                         </div>
                         <div>
+                            <dt>Internet downtime</dt>
+                            <dd data-field="internetDowntime">-</dd>
+                        </div>
+                        <div>
                             <dt>Internet outages</dt>
                             <dd data-field="internetOutages">-</dd>
                         </div>
@@ -99,6 +103,44 @@
                             <dd data-field="internet">-</dd>
                         </div>
                         <div>
+                            <dt>Internet downtime</dt>
+                            <dd data-field="internetDowntime">-</dd>
+                        </div>
+                        <div>
+                            <dt>Internet outages</dt>
+                            <dd data-field="internetOutages">-</dd>
+                        </div>
+                        <div>
+                            <dt>Reboots</dt>
+                            <dd data-field="reboots">-</dd>
+                        </div>
+                    </dl>
+                </article>
+
+                <article class="uptime-window" data-window="30d">
+                    <h3>1 month</h3>
+                    <dl class="uptime-metrics">
+                        <div>
+                            <dt>Avg screen time / day</dt>
+                            <dd data-field="screen">-</dd>
+                        </div>
+                        <div>
+                            <dt>BVG uptime</dt>
+                            <dd data-field="bvg">-</dd>
+                        </div>
+                        <div>
+                            <dt>Weather uptime</dt>
+                            <dd data-field="weather">-</dd>
+                        </div>
+                        <div>
+                            <dt>Internet uptime</dt>
+                            <dd data-field="internet">-</dd>
+                        </div>
+                        <div>
+                            <dt>Internet downtime</dt>
+                            <dd data-field="internetDowntime">-</dd>
+                        </div>
+                        <div>
                             <dt>Internet outages</dt>
                             <dd data-field="internetOutages">-</dd>
                         </div>
@@ -109,6 +151,17 @@
                     </dl>
                 </article>
             </div>
+        </section>
+
+        <section class="card uptime-card" aria-label="Internet outage log">
+            <div class="section-head">
+                <div>
+                    <p class="eyebrow">Internet outages (last 30 days)</p>
+                </div>
+            </div>
+            <ul class="outage-list" id="outageList">
+                <li class="outage-empty">Loading...</li>
+            </ul>
         </section>
 
         <footer class="footer">
