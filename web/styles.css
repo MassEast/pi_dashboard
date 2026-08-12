@@ -110,6 +110,10 @@ body {
     margin-bottom: 14px;
 }
 
+.section-head > div {
+    width: 100%;
+}
+
 .eyebrow {
     margin: 0 0 4px;
     text-transform: uppercase;
@@ -129,7 +133,7 @@ body {
     margin: 4px 0 0;
     font-size: 0.82rem;
     opacity: 0.65;
-    max-width: 62ch;
+    max-width: 100%;
     line-height: 1.4;
 }
 
