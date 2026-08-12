@@ -43,6 +43,25 @@ file, not `logs/`, when debugging runtime behavior on-device with file logging o
 `/mnt/ramdisk` instead of `logs/` to reduce SD card writes; anything else, e.g. `"STAGE"`, is for
 local/laptop development).
 
+## Deploying to the Pi
+
+Always `git commit` + `git push` here, then `git pull` on the Pi — never `scp` code changes
+directly onto the Pi. The Pi is a `git@github.com:MassEast/pi_dashboard.git` checkout of this same
+repo; `scp`ing files there creates an uncommitted, unpushed divergence between the Pi's disk, this
+repo, and GitHub that's easy to lose track of and that a later `git pull` on the Pi will refuse to
+apply (`... would be overwritten by merge`) until the stray files are dealt with by hand.
+
+After `git pull` on the Pi, restart whichever process actually changed:
+- `web_server.py` changes: safe to restart any time, invisible to whoever's using the kiosk
+  display. It isn't managed by systemd, so a manual restart needs `setsid` (not just `nohup ... &`)
+  to actually detach from the SSH session — otherwise it dies the moment the SSH connection closes:
+  `sudo pkill -f 'web_server.py'; sudo setsid ./venv/bin/python3 web_server.py > /tmp/web_server_manual.log 2>&1 < /dev/null &`
+- `PiDashboard.py` changes: restarting it is visible on the physical touchscreen (the display
+  blanks/reloads) — don't restart it without confirming with Ju first, since someone may be looking
+  at it. A full `sudo reboot` restarts both processes cleanly via the `pidashboard.desktop`
+  autostart entry and is often simpler than manually managing the foregrounded process, but is
+  even more visible/disruptive — same rule applies.
+
 ## Configuration
 
 - `config.json` is gitignored (real API keys, BVG stop IDs, wifi-adjacent secrets never belong in

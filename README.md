@@ -316,7 +316,8 @@ default) and ignore this section entirely.
 - Access from same Wi-Fi: `http://<pi-ip>:8080`
 - Emotion data is read from persistent `logs/emotions.json`.
 - Web server file logging is controlled by `LOG_TO_FILES` in `config.json`.
-- The bottom stats panel shows uptime summaries for `24h` and `7d` side by side, including average screen time per day, BVG uptime, weather uptime, and reboot counts.
+- The bottom stats panel shows uptime summaries for `24h`, `7d`, and `30d` (1 month) side by side, including average screen time per day, BVG uptime, weather uptime, internet uptime/downtime, internet outage counts, and reboot counts.
+- Below that, an internet outage log lists every individual outage from the last 30 days with its start time, end time (or "ongoing"), and duration. Outages are derived from raw connectivity-check events and collapse consecutive `internet_down` events with no `internet_up` in between - e.g. from the safety-reboot loop below re-detecting a still-ongoing outage after each reboot - into a single entry, so one real outage doesn't get counted or listed multiple times.
 - Uptime history persists in `logs/uptime.json` and is independent from the RAM-disk logging path.
 
 #### Secret Video Playback
