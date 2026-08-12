@@ -432,6 +432,7 @@ def safe_network_monitor():
                     reason="google.com reachable",
                 )
                 NETWORK_AVAILABLE = True
+                retry_fallback_emotion_classifications()
         except Exception:
             if NETWORK_AVAILABLE:
                 record_uptime_event(
@@ -451,6 +452,7 @@ def safe_network_monitor():
                         reason="google.com reachable after retry",
                     )
                     NETWORK_AVAILABLE = True
+                    retry_fallback_emotion_classifications()
             except Exception:
                 last_reboot_age = None
                 if os.path.exists(NETWORK_REBOOT_MARKER):
@@ -1160,6 +1162,56 @@ def _classify_custom_emotion(name):
     except Exception as llm_ex:
         logger.info(f"🤖 LLM: Classification failed for '{name}': {llm_ex}, using fallback")
         return fallback
+
+
+def retry_fallback_emotion_classifications():
+    """
+    Re-run LLM classification for catalog entries stuck on EMOTION_FALLBACK_STYLE ("?" / gray) -
+    most commonly because the LLM call in _classify_custom_emotion failed for lack of internet at
+    the moment someone typed a new custom emotion. Called from safe_network_monitor() whenever
+    internet comes back up, so those emojis get backfilled automatically instead of staying wrong
+    until someone notices and fixes them by hand.
+    """
+    if not EMOTION_LLM_ENABLED or not EMOTION_LLM_API_KEY:
+        return
+
+    stuck_entries = [
+        entry
+        for entry in EMOTION_CATALOG
+        if entry.get("name") != EMOTION_UNKNOWN_OPTION
+        and entry.get("emoji") == EMOTION_FALLBACK_STYLE["emoji"]
+        and entry.get("color") == EMOTION_FALLBACK_STYLE["color"]
+    ]
+    if not stuck_entries:
+        return
+
+    logger.info(
+        f"🤖 LLM: Internet back up - retrying classification for {len(stuck_entries)} "
+        f"emotion(s) stuck on fallback style: {[entry['name'] for entry in stuck_entries]}"
+    )
+
+    # This runs inside safe_network_monitor(), whose own try/except is reserved for judging
+    # whether the network itself is up (it drives the auto-reboot logic) - an unrelated failure
+    # here (e.g. disk write) must not get misread as "network still down".
+    try:
+        changed = False
+        for entry in stuck_entries:
+            classification = _classify_custom_emotion(entry["name"])
+            if (
+                classification["emoji"] == EMOTION_FALLBACK_STYLE["emoji"]
+                and classification["color"] == EMOTION_FALLBACK_STYLE["color"]
+            ):
+                logger.info(f"🤖 LLM: '{entry['name']}' still classifies to fallback style, leaving as-is")
+                continue
+            entry["emoji"] = classification["emoji"]
+            entry["color"] = classification["color"]
+            changed = True
+            logger.info(f"🤖 LLM: Backfilled '{entry['name']}' -> {entry['emoji']} {entry['color']}")
+
+        if changed:
+            _persist_emotion_config(EMOTION_CUSTOM_SLOTS)
+    except Exception as retry_ex:
+        logger.warning(f"🤖 LLM: Fallback-emoji retry pass failed: {retry_ex}")
 
 
 def touch_emotion_prompt_activity():
@@ -2753,14 +2805,32 @@ def draw_emotion_prompt_overlay():
             action_width,
             34,
         )
+        at_char_limit = len(EMOTION_KEYBOARD_TEXT) >= EMOTION_KEYBOARD_MAX_CHARS
         pygame.draw.rect(tft_surf, (245, 245, 245), input_rect, border_radius=8)
-        pygame.draw.rect(tft_surf, DARK_GRAY, input_rect, width=1, border_radius=8)
+        pygame.draw.rect(
+            tft_surf,
+            ORANGE if at_char_limit else DARK_GRAY,
+            input_rect,
+            width=2 if at_char_limit else 1,
+            border_radius=8,
+        )
 
         typed = EMOTION_KEYBOARD_TEXT if EMOTION_KEYBOARD_TEXT else "type custom emotion"
         typed_color = BLACK if EMOTION_KEYBOARD_TEXT else DARK_GRAY
         typed_text = FONT_TINY.render(typed, True, typed_color)
         tft_surf.blit(
             typed_text, typed_text.get_rect(midleft=(input_rect.left + 8, input_rect.centery))
+        )
+
+        # Typing is hard-capped at EMOTION_KEYBOARD_MAX_CHARS (see _apply_emotion_keyboard_token) -
+        # show the counter so hitting that cap is visible instead of keys silently doing nothing.
+        counter_text = FONT_SUPER_TINY.render(
+            f"{len(EMOTION_KEYBOARD_TEXT)}/{EMOTION_KEYBOARD_MAX_CHARS}",
+            True,
+            ORANGE if at_char_limit else DARK_GRAY,
+        )
+        tft_surf.blit(
+            counter_text, counter_text.get_rect(midright=(input_rect.right - 8, input_rect.centery))
         )
 
         keys_area_top = input_rect.bottom + 8

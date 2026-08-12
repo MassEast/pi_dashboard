@@ -74,8 +74,16 @@ let currentPayload = null;
 let chartIsHistogram = null;
 let hiddenEmotionKeys = new Set();
 
+function clearPendingLegendClick() {
+    if (pendingLegendClick.timer) {
+        clearTimeout(pendingLegendClick.timer);
+    }
+    pendingLegendClick = { key: null, timer: null };
+}
+
 function setActiveWindow(windowValue) {
     currentWindow = windowValue;
+    clearPendingLegendClick();
     for (const btn of windowButtons) {
         btn.classList.toggle("active", btn.dataset.window === currentWindow);
     }
@@ -375,6 +383,61 @@ const emojiPlugin = {
     },
 };
 
+let pendingLegendClick = { key: null, timer: null };
+const LEGEND_DOUBLE_CLICK_MS = 300;
+
+function scheduleLegendClick(key, onSingleClick, onDoubleClick) {
+    if (pendingLegendClick.key === key && pendingLegendClick.timer) {
+        clearTimeout(pendingLegendClick.timer);
+        pendingLegendClick = { key: null, timer: null };
+        onDoubleClick();
+        return;
+    }
+
+    pendingLegendClick.key = key;
+    pendingLegendClick.timer = setTimeout(() => {
+        pendingLegendClick = { key: null, timer: null };
+        onSingleClick();
+    }, LEGEND_DOUBLE_CLICK_MS);
+}
+
+function toggleLegendItem(chart, datasetIndex, emotionKey) {
+    if (currentWindow === "emotion") {
+        if (!emotionKey || !currentPayload) return;
+        if (hiddenEmotionKeys.has(emotionKey)) {
+            hiddenEmotionKeys.delete(emotionKey);
+        } else {
+            hiddenEmotionKeys.add(emotionKey);
+        }
+        upsertChart(currentPayload.labels, currentPayload.series);
+        return;
+    }
+
+    chart.isDatasetVisible(datasetIndex) ? chart.hide(datasetIndex) : chart.show(datasetIndex);
+}
+
+function isolateOrRestoreLegendItem(chart, datasetIndex, emotionKey) {
+    if (currentWindow === "emotion") {
+        if (!emotionKey || !currentPayload) return;
+        const order = getEmotionHistogramOrder(currentPayload.series);
+        const isolated =
+            order.length > 1 &&
+            order.every((key) => (key === emotionKey) !== hiddenEmotionKeys.has(key));
+        hiddenEmotionKeys = isolated ? new Set() : new Set(order.filter((key) => key !== emotionKey));
+        upsertChart(currentPayload.labels, currentPayload.series);
+        return;
+    }
+
+    const datasets = chart.data.datasets;
+    const isolated =
+        datasets.length > 1 &&
+        datasets.every((_, idx) => chart.isDatasetVisible(idx) === (idx === datasetIndex));
+    datasets.forEach((_, idx) => {
+        const shouldShow = isolated ? true : idx === datasetIndex;
+        chart.isDatasetVisible(idx) === shouldShow || (shouldShow ? chart.show(idx) : chart.hide(idx));
+    });
+}
+
 function upsertChart(labels, series) {
     const isHistogram = currentWindow === "emotion";
     const chartData = isHistogram ? toHistogramData(series) : { labels, datasets: toDatasets(series) };
@@ -400,24 +463,16 @@ function upsertChart(labels, series) {
             legend: {
                 position: "bottom",
                 onClick(legendEvent, legendItem, legend) {
-                    if (currentWindow !== "emotion") {
-                        Chart.defaults.plugins.legend.onClick.call(this, legendEvent, legendItem, legend);
-                        return;
-                    }
+                    const chart = legend.chart;
+                    const datasetIndex = legendItem.datasetIndex;
+                    const emotionKey = chart.data.datasets[datasetIndex]?.emotionKey;
+                    const clickKey = currentWindow === "emotion" ? emotionKey : datasetIndex;
 
-                    const dataset = legend.chart.data.datasets[legendItem.datasetIndex];
-                    const emotionKey = dataset?.emotionKey;
-                    if (!emotionKey || !currentPayload) {
-                        return;
-                    }
-
-                    if (hiddenEmotionKeys.has(emotionKey)) {
-                        hiddenEmotionKeys.delete(emotionKey);
-                    } else {
-                        hiddenEmotionKeys.add(emotionKey);
-                    }
-
-                    upsertChart(currentPayload.labels, currentPayload.series);
+                    scheduleLegendClick(
+                        clickKey,
+                        () => toggleLegendItem(chart, datasetIndex, emotionKey),
+                        () => isolateOrRestoreLegendItem(chart, datasetIndex, emotionKey),
+                    );
                 },
                 labels: {
                     font: {
@@ -529,6 +584,7 @@ for (const btn of windowButtons) {
 
 function setViewingArchive(archive) {
     viewingArchive = archive;
+    clearPendingLegendClick();
     if (flatCurrentBtn) flatCurrentBtn.classList.toggle("active", !archive);
     if (flatArchiveBtn) flatArchiveBtn.classList.toggle("active", archive);
 }
