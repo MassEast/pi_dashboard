@@ -118,6 +118,71 @@ def test_build_internet_outage_log_marks_ongoing_outage():
         print("PASS: build_internet_outage_log marks a still-open outage as ongoing")
 
 
+def test_last_channel_is_up_detects_dangling_down():
+    with tempfile.TemporaryDirectory() as log_dir:
+        now = datetime.datetime.now().astimezone()
+        events = [{"event": "internet_down", "ts_iso": _iso(now - datetime.timedelta(days=5))}]
+        uptime_store._safe_write_payload(uptime_store._store_path(log_dir), {"version": 1, "events": events})
+        assert uptime_store.last_channel_is_up(log_dir, "internet_up", "internet_down") is False
+    print("PASS: last_channel_is_up reports down when the last event is an unmatched internet_down")
+
+
+def test_last_channel_is_up_true_after_recovery():
+    with tempfile.TemporaryDirectory() as log_dir:
+        now = datetime.datetime.now().astimezone()
+        events = [
+            {"event": "internet_down", "ts_iso": _iso(now - datetime.timedelta(hours=2))},
+            {"event": "internet_up", "ts_iso": _iso(now - datetime.timedelta(hours=1))},
+        ]
+        uptime_store._safe_write_payload(uptime_store._store_path(log_dir), {"version": 1, "events": events})
+        assert uptime_store.last_channel_is_up(log_dir, "internet_up", "internet_down") is True
+    print("PASS: last_channel_is_up reports up once a matching internet_up followed the down")
+
+
+def test_last_channel_is_up_defaults_when_no_events():
+    with tempfile.TemporaryDirectory() as log_dir:
+        assert uptime_store.last_channel_is_up(log_dir, "internet_up", "internet_down", default_up=True) is True
+    print("PASS: last_channel_is_up falls back to default_up with no history")
+
+
+def test_reconciled_outage_stays_separate_from_later_real_outage():
+    """
+    Reproduces the exact field bug (2026-08-13 -> 2026-08-18 false 5-day outage):
+    a self-reboot silently stranded an internet_down with no matching internet_up
+    (safe_network_monitor() reset NETWORK_AVAILABLE to True in memory without
+    logging the recovery), and 5 days later an unrelated real outage's internet_up
+    wrongly closed the old one, making that later outage look 5 days long.
+    Confirms that with safe_network_monitor()'s post-restart reconciliation step
+    logging the missing internet_up (simulated here directly, since that function
+    lives in PiDashboard.py and isn't unit-testable standalone), the two outages
+    stay separate instead of merging.
+    """
+    with tempfile.TemporaryDirectory() as log_dir:
+        now = datetime.datetime.now().astimezone()
+        first_down = now - datetime.timedelta(days=5)
+        events = [{"event": "internet_down", "ts_iso": _iso(first_down)}]
+        uptime_store._safe_write_payload(uptime_store._store_path(log_dir), {"version": 1, "events": events})
+
+        # Reconciliation runs on the next restart, finds the channel still marked
+        # down, re-checks connectivity, and logs the recovery it never got to log.
+        assert uptime_store.last_channel_is_up(log_dir, "internet_up", "internet_down") is False
+        reconciled_up = first_down + datetime.timedelta(minutes=2)
+        events.append({"event": "internet_up", "ts_iso": _iso(reconciled_up)})
+
+        second_down = now - datetime.timedelta(minutes=30)
+        second_up = now - datetime.timedelta(minutes=5)
+        events.append({"event": "internet_down", "ts_iso": _iso(second_down)})
+        events.append({"event": "internet_up", "ts_iso": _iso(second_up)})
+        uptime_store._safe_write_payload(uptime_store._store_path(log_dir), {"version": 1, "events": events})
+
+        outages = uptime_store.build_internet_outage_log(log_dir, window="30d")
+        assert len(outages) == 2, f"expected 2 separate short outages, got {len(outages)}: {outages}"
+        durations = sorted(o["duration_seconds"] for o in outages)
+        assert abs(durations[0] - 120) < 1, durations
+        assert abs(durations[1] - 1500) < 1, durations
+    print("PASS: reconciling a dangling internet_down on restart keeps a later real outage from merging into it")
+
+
 def test_window_to_timedelta_has_30d():
     delta = uptime_store._window_to_timedelta("30d")
     assert delta == datetime.timedelta(days=30), f"expected 30 days, got {delta}"
@@ -166,6 +231,10 @@ if __name__ == "__main__":
         test_channel_summary_counts_genuinely_separate_outages,
         test_build_internet_outage_log_merges_and_reports_full_span,
         test_build_internet_outage_log_marks_ongoing_outage,
+        test_last_channel_is_up_detects_dangling_down,
+        test_last_channel_is_up_true_after_recovery,
+        test_last_channel_is_up_defaults_when_no_events,
+        test_reconciled_outage_stays_separate_from_later_real_outage,
         test_window_to_timedelta_has_30d,
         test_build_uptime_summary_default_windows_include_30d,
         test_internet_outages_route,

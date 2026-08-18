@@ -50,7 +50,7 @@ import qrcode
 
 from emotion_store import append_emotion_event, read_emotion_events
 from quiz_store import read_quiz_results, submit_quiz_result
-from uptime_store import append_uptime_event
+from uptime_store import append_uptime_event, last_channel_is_up
 from utils import get_stop_data
 
 # Allow the system to manage blanking
@@ -416,6 +416,26 @@ def safe_network_monitor():
     """
 
     global NETWORK_AVAILABLE
+
+    # NETWORK_AVAILABLE always starts True on process boot, regardless of what it
+    # was before this restart - including restarts caused by this very monitor's
+    # own no-internet reboot. If the last event we ever logged was internet_down,
+    # that gap must be closed explicitly here; otherwise it silently stays "open"
+    # until some unrelated, much-later internet_down/internet_up pair closes it,
+    # making that later outage's duration look like it started days earlier than
+    # it did. Runs immediately (not after the 10min safety delay below) since it
+    # only ever logs, never reboots.
+    if not last_channel_is_up(UPTIME_LOG_PATH, "internet_up", "internet_down", default_up=True):
+        try:
+            requests.get("https://www.google.com", timeout=5)
+            record_uptime_event(
+                "internet_up",
+                source="network_monitor",
+                reason="google.com reachable after restart",
+            )
+            NETWORK_AVAILABLE = True
+        except Exception:
+            NETWORK_AVAILABLE = False
 
     logger.info("Network monitor started - 10min safety delay initiated...")
     time.sleep(600)

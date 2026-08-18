@@ -487,9 +487,13 @@ function upsertChart(labels, series) {
             x: {
                 stacked: true,
                 ticks: {
-                    autoSkip: useSmartDateTicks,
+                    // autoSkip/rotation must stay on for every window, not just the
+                    // "smart" date ones - "hour" alone can have 24 labels, and on a
+                    // phone-width viewport those cram/overlap without Chart.js being
+                    // allowed to thin or angle them to fit the actual space.
+                    autoSkip: true,
                     maxTicksLimit: useSmartDateTicks ? (currentWindow === "30d" ? 10 : 12) : undefined,
-                    maxRotation: useSmartDateTicks ? 32 : 0,
+                    maxRotation: 45,
                     minRotation: 0,
                     callback(value, index, ticks) {
                         const label = this.getLabelForValue(value);

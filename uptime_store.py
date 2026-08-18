@@ -97,6 +97,24 @@ def read_uptime_events(log_dir):
     return payload["events"]
 
 
+def last_channel_is_up(log_dir, up_event, down_event, default_up=True):
+    """
+    True/False for whether a channel was last known up/down per the persisted
+    event log, ignoring unrelated event types. Used to reconcile in-memory state
+    (e.g. a global reset to True on process restart) against what was actually
+    last recorded, so a restart can't silently strand a channel's "down" state
+    without ever logging the matching "up" - see safe_network_monitor() in
+    PiDashboard.py, which calls this before assuming NETWORK_AVAILABLE is True.
+    """
+    for event in reversed(read_uptime_events(log_dir)):
+        name = event.get("event")
+        if name == up_event:
+            return True
+        if name == down_event:
+            return False
+    return default_up
+
+
 def _parse_iso(value):
     try:
         return datetime.datetime.fromisoformat(value)
