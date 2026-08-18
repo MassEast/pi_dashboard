@@ -404,7 +404,16 @@ function scheduleLegendClick(key, onSingleClick, onDoubleClick) {
 function toggleLegendItem(chart, datasetIndex, emotionKey) {
     if (currentWindow === "emotion") {
         if (!emotionKey || !currentPayload) return;
-        if (hiddenEmotionKeys.has(emotionKey)) {
+        const order = getEmotionHistogramOrder(currentPayload.series);
+        const wouldHideLastVisible =
+            !hiddenEmotionKeys.has(emotionKey) &&
+            order.every((key) => key === emotionKey || hiddenEmotionKeys.has(key));
+        if (wouldHideLastVisible) {
+            // Hiding the only series still shown would empty the chart with no
+            // obvious way back (e.g. right after isolating via double-click) -
+            // restore everything instead of hiding the last one.
+            hiddenEmotionKeys = new Set();
+        } else if (hiddenEmotionKeys.has(emotionKey)) {
             hiddenEmotionKeys.delete(emotionKey);
         } else {
             hiddenEmotionKeys.add(emotionKey);
@@ -413,6 +422,14 @@ function toggleLegendItem(chart, datasetIndex, emotionKey) {
         return;
     }
 
+    const datasets = chart.data.datasets;
+    const wouldHideLastVisible =
+        chart.isDatasetVisible(datasetIndex) &&
+        datasets.every((_, idx) => idx === datasetIndex || !chart.isDatasetVisible(idx));
+    if (wouldHideLastVisible) {
+        datasets.forEach((_, idx) => chart.isDatasetVisible(idx) || chart.show(idx));
+        return;
+    }
     chart.isDatasetVisible(datasetIndex) ? chart.hide(datasetIndex) : chart.show(datasetIndex);
 }
 
