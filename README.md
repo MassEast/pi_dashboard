@@ -362,6 +362,36 @@ default) and ignore this section entirely.
 - Adds a small "WIFI" button next to the clock. Tapping it shows a QR code (standard `WIFI:` payload - a phone camera app offers to join the network directly from it) plus the SSID as text, auto-closes after 20s or on tap.
 - Disabled by default.
 
+#### MERZ (dadaist easter-egg minigame)
+```json
+"MERZ": {
+  "ENABLED": false,
+  "IDLE_TIMEOUT_SECONDS": 60
+}
+```
+- A small "MERZ" button under the WIFI button opens a full-screen tap-to-throw minigame: a
+  pixel-art portrait of the German chancellor wanders around a flat backdrop (tap "EIER" or
+  "KLÖTEN" to pick which you're currently throwing) while you tap anywhere to lob one at him. He
+  periodically has a chance to juke sideways when a throw lands close to him, so landing a hit
+  isn't guaranteed even with good aim. A live hit counter shows in the corner - no persistence, no
+  score/round structure, resets every time you open it.
+- He also periodically "says" something in a speech bubble from his mouth, with a year/source line
+  underneath - some lines are real, verbatim (not paraphrased), independently re-verified quotes
+  from actual controversial statements he's made in office (see the `MERZ_TAUNTS` comment block in
+  `PiDashboard.py` for the full quotes and links to coverage of each), mixed in with plain
+  non-factual joke reaction lines that have no year/source line. The two look the same in the
+  bubble otherwise on purpose, but only the ones with a citation underneath are presented as things
+  he actually said.
+- The sprite (`icons/merz_sprite.png`) is a small transparent-background pixel-art cutout derived
+  from a real photo (background removed with OpenCV GrabCut, downsampled, palette-quantized, scaled
+  back up with nearest-neighbor for the blocky look) - two earlier from-scratch hand-drawn attempts
+  didn't read as him clearly enough. See `dev/generate_merz_sprite.py` for the exact crop/settings
+  and the source photo's license (an EU-owned press photo that explicitly permits derivative works
+  - deliberately not an alternative candidate photo whose White House source explicitly forbids
+  manipulation).
+- Disabled by default. Closes via the corner-X, or automatically after `IDLE_TIMEOUT_SECONDS`
+  (default 60) of no taps.
+
 ## Starting the Dashboard without a Service
 
 This is certainly not the optimal solution, as any power failure or simply a reboot of the Pi would mean you have to start things up manually again.

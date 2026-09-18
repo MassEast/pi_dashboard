@@ -569,6 +569,15 @@ WIFI_CONFIG = config.get("WIFI", {})
 WIFI_ENABLED = WIFI_CONFIG.get("ENABLED", False)
 WIFI_SSID = WIFI_CONFIG.get("SSID", "")
 WIFI_PASSWORD = WIFI_CONFIG.get("PASSWORD", "")
+
+# "Merz Leck Eier" - dadaist easter-egg minigame, MERZ button next to WIFI.
+# Tap-to-throw eggs/testicles at a pixel-caricature of the chancellor, who
+# wanders/dodges. Taunt lines mix his own on-record quotes (sourced, see
+# MERZ_TAUNTS below) with plain silly reaction lines - no scoreboard/
+# persistence, just a live hit counter for the current session.
+MERZ_CONFIG = config.get("MERZ", {})
+MERZ_ENABLED = MERZ_CONFIG.get("ENABLED", False)
+MERZ_IDLE_TIMEOUT_SECONDS = MERZ_CONFIG.get("IDLE_TIMEOUT_SECONDS", 60)
 QUIZ_LENGTH = 13
 QUIZ_NAME_MAX_CHARS = 16
 QUIZ_SCAN_SECONDS = 8.0  # of actual held time, not wall-clock (see QUIZ_SCAN_HELD)
@@ -931,6 +940,112 @@ WIFI_BUTTON_RECT = None
 WIFI_QR_VISIBLE = False
 WIFI_QR_OPENED_AT = 0.0
 WIFI_QR_AUTO_CLOSE_SECONDS = 20
+
+# --- MERZ minigame state ---
+MERZ_BUTTON_RECT = None
+MERZ_VISIBLE = False
+MERZ_LAST_ACTIVITY_TS = 0.0
+MERZ_ACTION_RECTS = {}
+MERZ_PROJECTILE_KIND = "egg"  # or "testicle", flipped via the in-game toggle
+MERZ_HITS = 0
+# Position is in the overlay's own coordinate space (DISPLAY_WIDTH/HEIGHT,
+# it's drawn full-bleed over tft_surf, not scaled through the 240x400
+# dashboard surface like the rest of the UI). X wanders between bounds set
+# in draw_merz_overlay() once it knows the actual screen size; Y only bobs
+# a few px around a fixed baseline.
+MERZ_X = 0.0
+MERZ_BASE_Y = 0.0
+MERZ_WANDER_TARGET_X = None
+MERZ_WANDER_SPEED = 55.0  # px/sec
+MERZ_NEXT_WANDER_AT = 0.0
+MERZ_DODGE_UNTIL = 0.0
+MERZ_HIT_FLINCH_UNTIL = 0.0
+MERZ_LAST_TICK = 0.0
+MERZ_PROJECTILES = []  # each: {start:(x,y), target:(x,y), started_at, duration, kind}
+MERZ_SPLATS = []  # each: {pos, started_at, kind: "hit"/"miss", text}
+MERZ_TAUNT_TEXT = None
+MERZ_TAUNT_META = None  # "year · source" line for real quotes, None for reaction lines
+MERZ_TAUNT_SHOWN_AT = 0.0
+MERZ_TAUNT_NEXT_AT = 0.0
+MERZ_TAUNT_DISPLAY_SECONDS = 4.5
+
+# Real, on-record statements kept verbatim (only trimmed with a leading/
+# trailing "..." where shortened for bubble length, never paraphrased or
+# reworded), mixed with plain non-factual reaction lines for game texture -
+# the two look the same in the speech bubble on purpose (it's a joke), but
+# only entries with a "year"/"source" are presented as actual quotes (see
+# draw_merz_overlay(), rendered as a smaller line under the quote itself).
+# Independently re-verified (date/venue, not just wording) before shipping:
+#  - „...die kleinen Paschas, da mal etwas zurechtweisen.“ - full sentence:
+#    "Und dann wollen sie diese Kinder zur Ordnung rufen und die Folge ist,
+#    dass die Väter in den Schulen erscheinen und sich das verbitten.
+#    Insbesondere wenn es sich um Lehrerinnen handelt, dass sie ihre Söhne,
+#    die kleinen Paschas, da mal etwas zurechtweisen." - "Markus Lanz"
+#    (ZDF), 11.01.2023 -
+#    https://politik.watson.de/unterhaltung/politik/566805846-nach-pascha-aussage-bei-markus-lanz-heftige-kritik-an-friedrich-merz
+#  - „Wir erleben mittlerweile einen Sozialtourismus dieser Flüchtlinge nach
+#    Deutschland...“ - full: "...nach Deutschland, zurück in die Ukraine,
+#    nach Deutschland, zurück in die Ukraine." - Bild TV, 26.09.2022 (not
+#    2023 - initially misdated, corrected after re-verification) -
+#    https://www.tagesspiegel.de/politik/nach-aussage-zu-sozialtourismus-faeser-wirft-merz-stimmungsmache-gegen-fluchtlinge-aus-ukraine-vor-8687668.html
+#  - „Die sitzen beim Arzt und lassen sich die Zähne neu machen.“ - WELT
+#    TALK, 27.09.2023 -
+#    https://www.tagesspiegel.de/politik/erbarmlicher-populismus-merz-erntet-heftige-kritik-fur-aussage-uber-asylbewerber-beim-zahnarzt-10540855.html
+#  - „...wir haben natürlich immer im Stadtbild noch dieses Problem...“ -
+#    full: "...und deswegen ist der Bundesinnenminister ja auch dabei,
+#    jetzt in sehr großem Umfang auch Rückführungen zu ermöglichen und
+#    durchzuführen." - Pressekonferenz mit MP Dietmar Woidke, 14.10.2025,
+#    triggered nationwide protests -
+#    https://www.stuttgarter-zeitung.de/inhalt.friedrich-merz-stadtbild-aussage-wortlaut-mhsd.c674d7a6-52bd-4cbf-a68a-12f1700128fc.html
+MERZ_TAUNTS = [
+    {
+        "text": "„...die kleinen Paschas, da mal etwas zurechtweisen.“",
+        "year": "2023",
+        "source": "Markus Lanz",
+    },
+    {
+        "text": "„Wir erleben mittlerweile einen Sozialtourismus dieser Flüchtlinge nach Deutschland...“",
+        "year": "2022",
+        "source": "Bild TV",
+    },
+    {
+        "text": "„Die sitzen beim Arzt und lassen sich die Zähne neu machen.“",
+        "year": "2023",
+        "source": "WELT TALK",
+    },
+    {
+        "text": "„...wir haben natürlich immer im Stadtbild noch dieses Problem...“",
+        "year": "2025",
+        "source": "Pressekonferenz",
+    },
+    {"text": "IHR SEID ZU FAUL!!!"},
+    {"text": "MEINE FRISUR!!"},
+    {"text": "HÖRT SOFORT AUF DAMIT!"},
+    {"text": "ICH BIN DER KANZLER!!"},
+]
+
+# Pixel-grid caricature, drawn as filled squares (see draw_merz_sprite).
+# Hand-drawn pixel-grid attempts (checked against reference photos, twice)
+# still didn't read as him clearly enough, so the sprite is now derived
+# from a real photo instead: downsampled + palette-quantized + scaled back
+# up with nearest-neighbor for the blocky look. See
+# dev/generate_merz_sprite.py for the exact crop/settings and the source
+# photo's license (an EU-owned press photo that explicitly permits
+# derivative works - deliberately not the alternative candidate photo,
+# whose White House source explicitly forbids manipulation).
+MERZ_SPRITE_PATH = ICON_PATH + "merz_sprite.png"
+MERZ_SPRITE_IMG = None  # lazily loaded on first use, see _get_merz_sprite_img()
+
+
+def _get_merz_sprite_img():
+    """Loads/caches the sprite lazily rather than at module import time -
+    pygame.image.load(...).convert() needs a display surface to already
+    exist, and this module defines MERZ globals before tft_surf is
+    created further down the file."""
+    global MERZ_SPRITE_IMG
+    if MERZ_SPRITE_IMG is None:
+        MERZ_SPRITE_IMG = pygame.image.load(MERZ_SPRITE_PATH).convert_alpha()
+    return MERZ_SPRITE_IMG
 
 EMOTION_LAST_PROMPT_TS = 0.0
 EMOTION_PROMPT_VISIBLE = False
@@ -3224,7 +3339,7 @@ def draw_wifi_button():
     handler there would swallow taps meant for that gesture."""
     global WIFI_BUTTON_RECT
 
-    if not WIFI_ENABLED or QUIZ_STAGE is not None:
+    if not WIFI_ENABLED or QUIZ_STAGE is not None or MERZ_VISIBLE:
         WIFI_BUTTON_RECT = None
         return
 
@@ -3254,7 +3369,7 @@ def draw_wifi_button():
 def handle_wifi_button_click(mx, my):
     global WIFI_QR_VISIBLE, WIFI_QR_OPENED_AT
 
-    if DISPLAY_BLANK:
+    if DISPLAY_BLANK or MERZ_VISIBLE:
         # Let this tap fall through to the normal wake-display handling
         # instead of silently swallowing it via a stale pre-blank rect.
         return False
@@ -3302,6 +3417,433 @@ def handle_wifi_qr_click(mx, my):
     if not WIFI_QR_VISIBLE:
         return False
     WIFI_QR_VISIBLE = False
+    return True
+
+
+def draw_merz_button():
+    """Small "MERZ" pill directly under the WIFI button - computes the same
+    clock-row geometry independently so it still shows up even if WIFI is
+    disabled."""
+    global MERZ_BUTTON_RECT
+
+    if not MERZ_ENABLED or QUIZ_STAGE is not None or WIFI_QR_VISIBLE or MERZ_VISIBLE:
+        MERZ_BUTTON_RECT = None
+        return
+
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+    clock_string = convert_timestamp(time.time(), theme["DATE_FORMAT"]["TIME"])
+    clock_width, clock_height = CLOCK_FONT.size(clock_string)
+    clock_top = dashboard_rect.top + int(15 * ZOOM)
+
+    button_width, button_height = int(30 * ZOOM), int(14 * ZOOM)
+    gap = int(6 * ZOOM)
+    row_y = clock_top + clock_height // 2 - button_height // 2
+    if WIFI_ENABLED:
+        row_y += button_height + int(4 * ZOOM)
+    MERZ_BUTTON_RECT = pygame.Rect(
+        dashboard_rect.centerx + clock_width // 2 + gap,
+        row_y,
+        button_width,
+        button_height,
+    )
+    pygame.draw.rect(tft_surf, RED, MERZ_BUTTON_RECT, border_radius=5)
+    pygame.draw.rect(tft_surf, DARK_GRAY, MERZ_BUTTON_RECT, width=1, border_radius=5)
+    label = FONT_SUPER_TINY.render("MERZ", True, WHITE)
+    tft_surf.blit(label, label.get_rect(center=MERZ_BUTTON_RECT.center))
+
+
+def activate_merz_game():
+    global MERZ_VISIBLE, MERZ_HITS, MERZ_PROJECTILES, MERZ_SPLATS
+    global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT, MERZ_LAST_ACTIVITY_TS
+    global MERZ_X, MERZ_BASE_Y, MERZ_WANDER_TARGET_X, MERZ_NEXT_WANDER_AT
+    global MERZ_DODGE_UNTIL, MERZ_HIT_FLINCH_UNTIL, MERZ_LAST_TICK
+
+    if (
+        not MERZ_ENABLED
+        or DISPLAY_BLANK
+        or EMOTION_PROMPT_VISIBLE
+        or EMOTION_RESULTS_VISIBLE
+        or QUIZ_STAGE is not None
+        or WIFI_QR_VISIBLE
+    ):
+        return
+
+    now = time.time()
+    MERZ_VISIBLE = True
+    MERZ_HITS = 0
+    MERZ_PROJECTILES = []
+    MERZ_SPLATS = []
+    MERZ_TAUNT_TEXT = None
+    MERZ_TAUNT_META = None
+    MERZ_TAUNT_NEXT_AT = now
+    MERZ_LAST_ACTIVITY_TS = now
+    MERZ_LAST_TICK = now
+    MERZ_X = DISPLAY_WIDTH / 2
+    MERZ_BASE_Y = DISPLAY_HEIGHT * 0.28
+    MERZ_WANDER_TARGET_X = None
+    MERZ_NEXT_WANDER_AT = now
+    MERZ_DODGE_UNTIL = 0.0
+    MERZ_HIT_FLINCH_UNTIL = 0.0
+    logger.info("Merz game activated")
+
+
+def dismiss_merz_game(reason):
+    global MERZ_VISIBLE, MERZ_ACTION_RECTS
+
+    if not MERZ_VISIBLE:
+        return
+    MERZ_VISIBLE = False
+    MERZ_ACTION_RECTS = {}
+    logger.info(f"Merz game dismissed ({reason})")
+
+
+def _merz_sprite_size():
+    return _get_merz_sprite_img().get_size()
+
+
+def _merz_rect():
+    width, height = _merz_sprite_size()
+    return pygame.Rect(int(MERZ_X - width / 2), int(MERZ_BASE_Y), width, height)
+
+
+def _merz_projectile_pos(proj, now):
+    t = min(1.0, (now - proj["started_at"]) / proj["duration"])
+    sx, sy = proj["start"]
+    tx, ty = proj["target"]
+    arc_height = 40 + 0.25 * abs(tx - sx)
+    x = sx + (tx - sx) * t
+    y = sy + (ty - sy) * t - arc_height * math.sin(math.pi * t)
+    return x, y, t
+
+
+def update_merz_game(now, bounds_left, bounds_right):
+    global MERZ_X, MERZ_WANDER_TARGET_X, MERZ_NEXT_WANDER_AT, MERZ_LAST_TICK
+    global MERZ_HITS, MERZ_PROJECTILES, MERZ_SPLATS, MERZ_HIT_FLINCH_UNTIL
+    global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT
+
+    dt = max(0.0, min(0.2, now - MERZ_LAST_TICK))  # clamp so a stall can't teleport him
+    MERZ_LAST_TICK = now
+
+    # Idle wander: pick a new random x target once the current one's
+    # reached, moving faster for a while after a throw lands nearby (the
+    # "dodge" reaction, see handle_merz_click()).
+    if MERZ_WANDER_TARGET_X is None or abs(MERZ_X - MERZ_WANDER_TARGET_X) < 2:
+        if now >= MERZ_NEXT_WANDER_AT:
+            MERZ_WANDER_TARGET_X = random.uniform(bounds_left, bounds_right)
+            MERZ_NEXT_WANDER_AT = now + random.uniform(1.0, 2.5)
+    if MERZ_WANDER_TARGET_X is not None:
+        speed = MERZ_WANDER_SPEED * (2.4 if now < MERZ_DODGE_UNTIL else 1.0)
+        step = speed * dt
+        if MERZ_X < MERZ_WANDER_TARGET_X:
+            MERZ_X = min(MERZ_WANDER_TARGET_X, MERZ_X + step)
+        else:
+            MERZ_X = max(MERZ_WANDER_TARGET_X, MERZ_X - step)
+
+    merz_rect = _merz_rect().inflate(6, 6)  # slightly forgiving hitbox
+    still_flying = []
+    for proj in MERZ_PROJECTILES:
+        x, y, t = _merz_projectile_pos(proj, now)
+        if merz_rect.collidepoint((x, y)):
+            MERZ_HITS += 1
+            MERZ_SPLATS.append({"pos": (x, y), "started_at": now, "kind": "hit"})
+            MERZ_HIT_FLINCH_UNTIL = now + 0.4
+            continue  # resolved - drop the projectile
+        if t >= 1.0:
+            MERZ_SPLATS.append({"pos": proj["target"], "started_at": now, "kind": "miss"})
+            continue  # resolved - drop the projectile
+        still_flying.append(proj)
+    MERZ_PROJECTILES = still_flying
+    MERZ_SPLATS = [s for s in MERZ_SPLATS if now - s["started_at"] < 0.6]
+
+    if now >= MERZ_TAUNT_NEXT_AT:
+        if MERZ_TAUNT_TEXT is not None:
+            MERZ_TAUNT_TEXT = None
+            MERZ_TAUNT_META = None
+            MERZ_TAUNT_NEXT_AT = now + random.uniform(2.0, 4.0)
+        else:
+            taunt = random.choice(MERZ_TAUNTS)
+            MERZ_TAUNT_TEXT = taunt["text"]
+            MERZ_TAUNT_META = (
+                f"{taunt['year']} · {taunt['source']}" if "year" in taunt else None
+            )
+            MERZ_TAUNT_NEXT_AT = now + MERZ_TAUNT_DISPLAY_SECONDS
+
+
+def _draw_merz_sprite(expression):
+    """No facial-expression variants (there's only ever one source photo,
+    unlike the old hand-drawn grid which could swap a mouth row) - "hit"
+    instead gets a small impact-star overlay near the frame."""
+    img = _get_merz_sprite_img()
+    rect = _merz_rect()
+    tft_surf.blit(img, rect)  # transparent-background cutout, no card border
+
+    if expression == "hit":
+        for dx, dy in ((-8, -6), (10, -2), (2, -12)):
+            star_center = (rect.left + dx, rect.top + dy)
+            star_points = []
+            for i in range(8):
+                angle = math.pi / 4 * i
+                r = 6 if i % 2 == 0 else 2.5
+                star_points.append(
+                    (star_center[0] + r * math.cos(angle), star_center[1] + r * math.sin(angle))
+                )
+            pygame.draw.polygon(tft_surf, YELLOW, star_points)
+            pygame.draw.polygon(tft_surf, ORANGE, star_points, width=1)
+
+
+def _draw_merz_projectile(x, y, kind):
+    cx, cy = int(x), int(y)
+    if kind == "egg":
+        # A plain ellipse reads as a blob at small sizes - eggs are
+        # tapered (narrower top, rounder bottom), so build the outline
+        # from two overlapping circles of different radii instead.
+        shell = (250, 245, 225)
+        outline = (150, 130, 90)
+        top_r, bottom_r = 6, 9
+        top_c, bottom_c = (cx, cy - 5), (cx, cy + 4)
+        pygame.draw.circle(tft_surf, shell, top_c, top_r)
+        pygame.draw.circle(tft_surf, shell, bottom_c, bottom_r)
+        pygame.draw.polygon(
+            tft_surf,
+            shell,
+            [
+                (top_c[0] - top_r, top_c[1]),
+                (bottom_c[0] - bottom_r, bottom_c[1]),
+                (bottom_c[0] + bottom_r, bottom_c[1]),
+                (top_c[0] + top_r, top_c[1]),
+            ],
+        )
+        pygame.draw.circle(tft_surf, outline, top_c, top_r, width=1)
+        pygame.draw.circle(tft_surf, outline, bottom_c, bottom_r, width=1)
+        pygame.draw.circle(tft_surf, WHITE, (cx - 3, cy - 6), 2)  # shine
+    else:
+        skin = (222, 178, 150)
+        pygame.draw.circle(tft_surf, skin, (cx - 6, cy), 8)
+        pygame.draw.circle(tft_surf, skin, (cx + 6, cy), 8)
+        pygame.draw.circle(tft_surf, DARK_GRAY, (cx - 6, cy), 8, width=1)
+        pygame.draw.circle(tft_surf, DARK_GRAY, (cx + 6, cy), 8, width=1)
+
+
+def _draw_merz_speech_bubble():
+    if not MERZ_TAUNT_TEXT:
+        return
+    mouth_x = int(MERZ_X)
+    bubble_font = FONT_TINY
+    meta_font = FONT_SUPER_TINY
+    max_width = int(DISPLAY_WIDTH * 0.62)
+    lines = _quiz_wrap_text(bubble_font, MERZ_TAUNT_TEXT, max_width)
+    line_height = bubble_font.get_height()
+    text_width = max(bubble_font.size(line)[0] for line in lines)
+
+    # Real quotes carry a "year · source" citation, rendered smaller below
+    # the quote itself (see MERZ_TAUNTS/MERZ_TAUNT_META) - plain reaction
+    # lines have no metadata and skip this entirely.
+    meta_height = 0
+    if MERZ_TAUNT_META:
+        meta_height = meta_font.get_height() + 4
+        text_width = max(text_width, meta_font.size(MERZ_TAUNT_META)[0])
+
+    padding = 8
+    bubble_width = text_width + 2 * padding
+    bubble_height = len(lines) * line_height + meta_height + 2 * padding
+
+    # Anchored above the sprite's own top edge, not the mouth (which sits
+    # inside the photo) - anchoring the box at the mouth put most of the
+    # bubble on top of the image instead of above it. The tail points at
+    # the top of his head rather than the actual mouth, so it doesn't
+    # spear down across the picture itself.
+    sprite_top = _merz_rect().top
+    bubble_left = min(max(mouth_x - bubble_width // 2, 6), DISPLAY_WIDTH - bubble_width - 6)
+    bubble_bottom = sprite_top - 14
+    bubble_top = max(bubble_bottom - bubble_height, 6)  # never run off the top of the screen
+    bubble_rect = pygame.Rect(bubble_left, bubble_top, bubble_width, bubble_height)
+
+    pygame.draw.rect(tft_surf, WHITE, bubble_rect, border_radius=8)
+    pygame.draw.rect(tft_surf, BLACK, bubble_rect, width=2, border_radius=8)
+    tail_tip = (mouth_x, sprite_top + 6)
+    tail_base_x = min(max(mouth_x, bubble_rect.left + 10), bubble_rect.right - 10)
+    pygame.draw.polygon(
+        tft_surf,
+        WHITE,
+        [(tail_base_x - 6, bubble_rect.bottom), (tail_base_x + 6, bubble_rect.bottom), tail_tip],
+    )
+    pygame.draw.polygon(
+        tft_surf,
+        BLACK,
+        [(tail_base_x - 6, bubble_rect.bottom), tail_tip, (tail_base_x + 6, bubble_rect.bottom)],
+        width=1,
+    )
+
+    for i, line in enumerate(lines):
+        line_surf = bubble_font.render(line, True, BLACK)
+        tft_surf.blit(
+            line_surf,
+            line_surf.get_rect(
+                midtop=(bubble_rect.centerx, bubble_rect.top + padding + i * line_height)
+            ),
+        )
+
+    if MERZ_TAUNT_META:
+        meta_surf = meta_font.render(MERZ_TAUNT_META, True, DARK_GRAY)
+        tft_surf.blit(
+            meta_surf,
+            meta_surf.get_rect(
+                midtop=(bubble_rect.centerx, bubble_rect.top + padding + len(lines) * line_height + 4)
+            ),
+        )
+
+
+def draw_merz_overlay():
+    global MERZ_ACTION_RECTS
+
+    if not MERZ_VISIBLE:
+        return
+
+    now = time.time()
+    ground_y = int(DISPLAY_HEIGHT * 0.82)
+    bounds_left = 40
+    bounds_right = DISPLAY_WIDTH - 40
+    update_merz_game(now, bounds_left, bounds_right)
+
+    tft_surf.fill((150, 200, 235))  # sky
+    pygame.draw.rect(tft_surf, (90, 150, 90), (0, ground_y, DISPLAY_WIDTH, DISPLAY_HEIGHT - ground_y))
+
+    # Cheap Reichstag-ish silhouette so the backdrop reads as "government",
+    # not just a random lawn - a handful of flat rects, no asset needed.
+    building_color = (120, 120, 130)
+    building_top = ground_y - 90
+    pygame.draw.rect(tft_surf, building_color, (DISPLAY_WIDTH * 0.15, building_top, DISPLAY_WIDTH * 0.7, 90))
+    for i in range(7):
+        col_x = DISPLAY_WIDTH * 0.18 + i * (DISPLAY_WIDTH * 0.66 / 6)
+        pygame.draw.rect(tft_surf, (100, 100, 110), (col_x, building_top + 10, 8, 70))
+
+    expression = "neutral"
+    if now < MERZ_HIT_FLINCH_UNTIL:
+        expression = "hit"
+    elif now < MERZ_DODGE_UNTIL:
+        expression = "dodge"
+    _draw_merz_sprite(expression)
+    _draw_merz_speech_bubble()
+
+    for proj in MERZ_PROJECTILES:
+        x, y, _ = _merz_projectile_pos(proj, now)
+        _draw_merz_projectile(x, y, proj["kind"])
+
+    for splat in MERZ_SPLATS:
+        age = now - splat["started_at"]
+        fade = max(0.0, 1.0 - age / 0.6)
+        radius = int(4 + 14 * (age / 0.6))
+        color = YELLOW if splat["kind"] == "hit" else DARK_GRAY
+        splat_surf = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(splat_surf, (*color, int(255 * fade)), (radius, radius), radius, width=2)
+        tft_surf.blit(splat_surf, (splat["pos"][0] - radius, splat["pos"][1] - radius))
+
+    close_size = 26
+    close_rect = pygame.Rect(DISPLAY_WIDTH - close_size - 10, 10, close_size, close_size)
+    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
+    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
+    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
+    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
+
+    hits_text = FONT_SMALL_BOLD.render(f"Treffer: {MERZ_HITS}", True, WHITE)
+    hits_bg = hits_text.get_rect(topleft=(10, 10)).inflate(10, 6)
+    pygame.draw.rect(tft_surf, (30, 30, 30), hits_bg, border_radius=6)
+    tft_surf.blit(hits_text, hits_text.get_rect(center=hits_bg.center))
+
+    # Two plain-text (not emoji - see draw_merz_button()'s comment on why)
+    # selectable pills side by side, the active one filled in - picking
+    # which of the two you're currently throwing, not a throw trigger
+    # itself (that used to be one button labelled "WIRF: ...", which read
+    # like it was the thing you tap to throw). Built bottom-up (button row
+    # first, hint text positioned off its actual top) so the hint can't
+    # end up overlapping the buttons regardless of font metrics.
+    egg_text = FONT_SMALL_BOLD.render("EIER", True, BLACK)
+    testicle_text = FONT_SMALL_BOLD.render("KLÖTEN", True, BLACK)
+    egg_rect = egg_text.get_rect().inflate(26, 16)
+    testicle_rect = testicle_text.get_rect().inflate(26, 16)
+    button_gap = 10
+    total_width = egg_rect.width + button_gap + testicle_rect.width
+    row_y = DISPLAY_HEIGHT - 28
+    egg_rect.center = (DISPLAY_WIDTH // 2 - total_width // 2 + egg_rect.width // 2, row_y)
+    testicle_rect.center = (egg_rect.right + button_gap + testicle_rect.width // 2, row_y)
+    buttons_top = min(egg_rect.top, testicle_rect.top)
+
+    for rect, text_surf, kind in (
+        (egg_rect, egg_text, "egg"),
+        (testicle_rect, testicle_text, "testicle"),
+    ):
+        fill = SWEET_PURPLE if MERZ_PROJECTILE_KIND == kind else WHITE
+        pygame.draw.rect(tft_surf, fill, rect, border_radius=10)
+        pygame.draw.rect(tft_surf, BLACK, rect, width=2, border_radius=10)
+        tft_surf.blit(text_surf, text_surf.get_rect(center=rect.center))
+
+    # Lightweight hint, not a button - tapping anywhere on screen throws,
+    # this just explains that once, it doesn't do anything itself.
+    hint_text = FONT_SUPER_TINY.render("Tippe irgendwo, um zu werfen!", True, (60, 60, 60))
+    tft_surf.blit(
+        hint_text, hint_text.get_rect(midbottom=(DISPLAY_WIDTH // 2, buttons_top - 12))
+    )
+
+    MERZ_ACTION_RECTS = {"close": close_rect, "select_egg": egg_rect, "select_testicle": testicle_rect}
+
+
+def handle_merz_button_click(mx, my):
+    if DISPLAY_BLANK:
+        return False
+    if MERZ_BUTTON_RECT and MERZ_BUTTON_RECT.collidepoint((mx, my)):
+        activate_merz_game()
+        return True
+    return False
+
+
+def handle_merz_click(mx, my):
+    global MERZ_PROJECTILE_KIND, MERZ_PROJECTILES, MERZ_LAST_ACTIVITY_TS
+    global MERZ_WANDER_TARGET_X, MERZ_NEXT_WANDER_AT, MERZ_DODGE_UNTIL
+
+    if not MERZ_VISIBLE:
+        return False
+
+    MERZ_LAST_ACTIVITY_TS = time.time()
+
+    close_rect = MERZ_ACTION_RECTS.get("close")
+    if close_rect and close_rect.collidepoint((mx, my)):
+        dismiss_merz_game("close-button")
+        return True
+
+    egg_rect = MERZ_ACTION_RECTS.get("select_egg")
+    if egg_rect and egg_rect.collidepoint((mx, my)):
+        MERZ_PROJECTILE_KIND = "egg"
+        return True
+
+    testicle_rect = MERZ_ACTION_RECTS.get("select_testicle")
+    if testicle_rect and testicle_rect.collidepoint((mx, my)):
+        MERZ_PROJECTILE_KIND = "testicle"
+        return True
+
+    now = time.time()
+    start = (DISPLAY_WIDTH / 2, DISPLAY_HEIGHT - 10)
+    MERZ_PROJECTILES.append(
+        {
+            "start": start,
+            "target": (mx, my),
+            "started_at": now,
+            "duration": random.uniform(0.6, 0.8),
+            "kind": MERZ_PROJECTILE_KIND,
+        }
+    )
+
+    # If the throw looks like it'll land near him, he tries to juke out of
+    # the way - reroute his wander target away from the incoming spot and
+    # speed him up for a bit (see the MERZ_DODGE_UNTIL check in
+    # update_merz_game()). Not guaranteed: sometimes he just eats it.
+    if abs(mx - MERZ_X) < 70 and random.random() < 0.7:
+        direction = -1 if mx >= MERZ_X else 1
+        jump = random.uniform(70, 140)
+        bounds_left, bounds_right = 40, DISPLAY_WIDTH - 40
+        MERZ_WANDER_TARGET_X = min(max(MERZ_X + direction * jump, bounds_left), bounds_right)
+        MERZ_NEXT_WANDER_AT = now
+        MERZ_DODGE_UNTIL = now + 0.5
+
     return True
 
 
@@ -3556,7 +4098,13 @@ def activate_quiz():
     QUIZ_STAGE check added to activate_pending_emotion_prompt())."""
     global QUIZ_STAGE, QUIZ_NAME_TEXT, QUIZ_NAME_RECTS, QUIZ_NAME_ACTION_RECTS, QUIZ_LAST_ACTIVITY_TS
 
-    if not QUIZ_ENABLED or DISPLAY_BLANK or EMOTION_PROMPT_VISIBLE or EMOTION_RESULTS_VISIBLE:
+    if (
+        not QUIZ_ENABLED
+        or DISPLAY_BLANK
+        or EMOTION_PROMPT_VISIBLE
+        or EMOTION_RESULTS_VISIBLE
+        or MERZ_VISIBLE
+    ):
         return
 
     QUIZ_STAGE = "name"
@@ -3666,7 +4214,7 @@ def draw_quiz_button():
     panel and footer positions were tuned earlier."""
     global QUIZ_BUTTON_RECT
 
-    if not QUIZ_ENABLED or QUIZ_STAGE is not None:
+    if not QUIZ_ENABLED or QUIZ_STAGE is not None or MERZ_VISIBLE:
         QUIZ_BUTTON_RECT = None
         return
 
@@ -4430,6 +4978,10 @@ def loop():
             EMOTION_RESULTS_VISIBLE = False
         if WIFI_QR_VISIBLE and time.time() - WIFI_QR_OPENED_AT > WIFI_QR_AUTO_CLOSE_SECONDS:
             WIFI_QR_VISIBLE = False
+        if MERZ_VISIBLE and (
+            DISPLAY_BLANK or time.time() - MERZ_LAST_ACTIVITY_TS > MERZ_IDLE_TIMEOUT_SECONDS
+        ):
+            dismiss_merz_game("display-blank" if DISPLAY_BLANK else "idle-timeout")
         if DISPLAY_BLANK and EMOTION_PROMPT_VISIBLE:
             dismiss_emotion_prompt("display-blank")
         elif EMOTION_PROMPT_VISIBLE:
@@ -4501,6 +5053,9 @@ def loop():
             draw_wifi_button()
             if WIFI_QR_VISIBLE:
                 draw_wifi_qr_overlay()
+
+            draw_merz_button()
+            draw_merz_overlay()
 
             # update the display with all surfaces merged into the main one
             pygame.display.update()
@@ -4607,6 +5162,12 @@ def loop():
                     continue
 
                 if handle_wifi_button_click(mx, my):
+                    continue
+
+                if handle_merz_click(mx, my):
+                    continue
+
+                if handle_merz_button_click(mx, my):
                     continue
 
                 if DISPLAY_BLANK:

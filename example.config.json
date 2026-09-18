@@ -95,6 +95,10 @@
     "SSID": "your-wifi-ssid",
     "PASSWORD": "your-wifi-password"
   },
+  "MERZ": {
+    "ENABLED": false,
+    "IDLE_TIMEOUT_SECONDS": 60
+  },
   "ENV": "Pi",
   "LOG_TO_FILES": false,
   "LOG_UPTIME": true
