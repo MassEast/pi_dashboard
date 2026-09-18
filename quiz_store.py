@@ -54,10 +54,11 @@ def _recover_if_corrupt(file_path):
 
 
 def submit_quiz_result(log_dir, name, mausig, atzig, fotzig, store_file=STORE_FILE):
-    """Stores one participant's raw per-axis vote counts as a new entry -
-    retakes under the same name add another dot (with its own id) rather
-    than replacing the previous one, so the results triangle can show each
-    person's full spread across repeat takes."""
+    """Stores one participant's raw per-axis vote counts - retaking under
+    the same name updates that person's existing entry (vote counts
+    averaged, weighted by how many times they've taken it) in place rather
+    than adding another dot, so the results triangle shows one point per
+    person."""
     os.makedirs(log_dir, exist_ok=True)
     file_path = _store_path(log_dir, store_file)
     normalized_name = " ".join(name.strip().split())
@@ -70,15 +71,29 @@ def submit_quiz_result(log_dir, name, mausig, atzig, fotzig, store_file=STORE_FI
                 _recover_if_corrupt(file_path)
             payload = _default_payload()
 
-        result = {
-            "id": uuid.uuid4().hex,
-            "name": normalized_name,
-            "mausig": mausig,
-            "atzig": atzig,
-            "fotzig": fotzig,
-            "ts_iso": _now_iso(),
-        }
-        payload["results"].append(result)
+        existing = next(
+            (r for r in payload["results"] if r.get("name") == normalized_name), None
+        )
+        if existing is not None:
+            retakes = existing.get("retakes", 1)
+            existing["mausig"] = round((existing["mausig"] * retakes + mausig) / (retakes + 1), 2)
+            existing["atzig"] = round((existing["atzig"] * retakes + atzig) / (retakes + 1), 2)
+            existing["fotzig"] = round((existing["fotzig"] * retakes + fotzig) / (retakes + 1), 2)
+            existing["retakes"] = retakes + 1
+            existing["ts_iso"] = _now_iso()
+            result = existing
+        else:
+            result = {
+                "id": uuid.uuid4().hex,
+                "name": normalized_name,
+                "mausig": mausig,
+                "atzig": atzig,
+                "fotzig": fotzig,
+                "retakes": 1,
+                "ts_iso": _now_iso(),
+            }
+            payload["results"].append(result)
+
         _safe_write_payload(file_path, payload)
 
     return result

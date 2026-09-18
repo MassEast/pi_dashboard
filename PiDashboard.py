@@ -920,7 +920,11 @@ QUIZ_ALL_RESULTS = []
 # the triangle from turning into label soup - see draw_quiz_results_stage()
 # and the "results" branch of handle_quiz_click()/the MOUSEBUTTONUP handler.
 QUIZ_RESULTS_DOT_HITBOXES = []
-QUIZ_RESULTS_HELD_NAME = None
+# Keyed by the dot's rounded screen position, not name - identical scores
+# from different people land on the exact same pixel and would otherwise
+# render as one indistinguishable dot; grouping by position lets the hold
+# label list every name sharing that point instead of hiding all but one.
+QUIZ_RESULTS_HELD_KEY = None
 QUIZ_RESULTS_ACTION_RECTS = {}
 
 WIFI_BUTTON_RECT = None
@@ -3608,8 +3612,8 @@ def handle_quiz_scan_release():
 
 
 def handle_quiz_results_release():
-    global QUIZ_RESULTS_HELD_NAME
-    QUIZ_RESULTS_HELD_NAME = None
+    global QUIZ_RESULTS_HELD_KEY
+    QUIZ_RESULTS_HELD_KEY = None
 
 
 def handle_quiz_answer(axis):
@@ -3637,7 +3641,7 @@ def handle_quiz_answer(axis):
 def dismiss_quiz(reason):
     global QUIZ_STAGE, QUIZ_NAME_TEXT, QUIZ_NAME_RECTS, QUIZ_NAME_ACTION_RECTS
     global QUIZ_QUESTIONS, QUIZ_QUESTION_INDEX, QUIZ_ANSWER_RECTS, QUIZ_OWN_RESULT
-    global QUIZ_RESULTS_HELD_NAME, QUIZ_RESULTS_ACTION_RECTS
+    global QUIZ_RESULTS_HELD_KEY, QUIZ_RESULTS_ACTION_RECTS
 
     if QUIZ_STAGE is None:
         return
@@ -3650,7 +3654,7 @@ def dismiss_quiz(reason):
     QUIZ_QUESTION_INDEX = 0
     QUIZ_ANSWER_RECTS = []
     QUIZ_OWN_RESULT = None
-    QUIZ_RESULTS_HELD_NAME = None
+    QUIZ_RESULTS_HELD_KEY = None
     QUIZ_RESULTS_ACTION_RECTS = {}
     logger.info(f"Quiz dismissed ({reason})")
 
@@ -4125,21 +4129,34 @@ def draw_quiz_results_stage(card):
     global QUIZ_RESULTS_DOT_HITBOXES
     QUIZ_RESULTS_DOT_HITBOXES = []
 
-    # Identified by id, not name - two entries can share a name (repeat
-    # takes), and only the one just submitted this session should be
-    # skipped here in favor of its own big-red-dot marker below; any older
-    # entries under the same name still need to show up as regular dots.
+    # One entry per name now (see submit_quiz_result - retakes are averaged
+    # in place, not appended), but different people can still land on the
+    # exact same point by scoring identically. Group by rounded position so
+    # coincident dots draw once with a count badge instead of silently
+    # hiding one another, and so holding the point lists every name there.
     own_id = QUIZ_OWN_RESULT.get("id") if QUIZ_OWN_RESULT else None
-    dot_hit_radius = 12
+    position_groups = {}
     for entry in QUIZ_ALL_RESULTS:
         if own_id is not None and entry.get("id") == own_id:
             continue  # own marker drawn separately, always visible
         x, y = ternary_point(entry.get("mausig", 0), entry.get("atzig", 0), entry.get("fotzig", 0))
+        key = (int(x), int(y))
+        group = position_groups.setdefault(key, {"pos": (x, y), "names": []})
+        group["names"].append(entry.get("name", "?"))
+
+    for key, group in position_groups.items():
+        x, y = group["pos"]
         pygame.draw.circle(tft_surf, SWEET_PURPLE, (int(x), int(y)), 4)
         pygame.draw.circle(tft_surf, VIOLET, (int(x), int(y)), 4, width=1)
-        QUIZ_RESULTS_DOT_HITBOXES.append({"name": entry.get("name", "?"), "pos": (x, y)})
-        if entry.get("name") == QUIZ_RESULTS_HELD_NAME:
-            name_surf = FONT_TINY.render(entry.get("name", "?"), True, BLACK)
+        if len(group["names"]) > 1:
+            badge_center = (int(x) + 8, int(y) - 8)
+            pygame.draw.circle(tft_surf, ORANGE, badge_center, 7)
+            pygame.draw.circle(tft_surf, VIOLET, badge_center, 7, width=1)
+            count_surf = FONT_SUPER_TINY.render(str(len(group["names"])), True, BLACK)
+            tft_surf.blit(count_surf, count_surf.get_rect(center=badge_center))
+        QUIZ_RESULTS_DOT_HITBOXES.append({"key": key, "names": group["names"], "pos": (x, y)})
+        if key == QUIZ_RESULTS_HELD_KEY:
+            name_surf = FONT_TINY.render(", ".join(group["names"]), True, BLACK)
             name_rect = name_surf.get_rect(midtop=(int(x), int(y) + 8))
             pygame.draw.rect(tft_surf, WHITE, name_rect.inflate(6, 4), border_radius=4)
             pygame.draw.rect(tft_surf, DARK_GRAY, name_rect.inflate(6, 4), width=1, border_radius=4)
@@ -4202,7 +4219,7 @@ def draw_quiz_overlay():
 
 
 def handle_quiz_click(mx, my):
-    global QUIZ_SCAN_HELD, QUIZ_LAST_ACTIVITY_TS, QUIZ_RESULTS_HELD_NAME
+    global QUIZ_SCAN_HELD, QUIZ_LAST_ACTIVITY_TS, QUIZ_RESULTS_HELD_KEY
 
     if QUIZ_STAGE is None:
         return False
@@ -4228,7 +4245,7 @@ def handle_quiz_click(mx, my):
         for hitbox in QUIZ_RESULTS_DOT_HITBOXES:
             hx, hy = hitbox["pos"]
             if ((mx - hx) ** 2 + (my - hy) ** 2) ** 0.5 <= 12:
-                QUIZ_RESULTS_HELD_NAME = hitbox["name"]
+                QUIZ_RESULTS_HELD_KEY = hitbox["key"]
                 return True
         return True
 
