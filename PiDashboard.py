@@ -3767,7 +3767,12 @@ def draw_quiz_name_stage(card):
         QUIZ_NAME_RECTS.append({"token": token, "rect": fn_rect})
 
     start_rect = pygame.Rect(card.left + inner_pad, action_y, action_width, action_height)
-    start_enabled = len(QUIZ_NAME_TEXT.strip()) > 0
+    # >1, not >0 - single-character names like "q" are too likely to collide
+    # with someone else's (or a future guest's) real name, and since retakes
+    # under an identical name now merge into one averaged entry (see
+    # quiz_store.submit_quiz_result), a collision would silently blend two
+    # different people's results together.
+    start_enabled = len(QUIZ_NAME_TEXT.strip()) > 1
     start_color = GREEN if start_enabled else (200, 200, 200)
     pygame.draw.rect(tft_surf, start_color, start_rect, border_radius=10)
     pygame.draw.rect(tft_surf, DARK_GRAY, start_rect, width=2, border_radius=10)
