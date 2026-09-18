@@ -314,11 +314,15 @@ class SimpleScheduler:
             except Exception as e:
                 logger.error(f"Weather cycle failed: {e}")
 
-            # Schedule next cycle
+            # Schedule next cycle. update_and_process() swallows connection errors
+            # internally (falls back to the cached JSON, flips WEATHER_AVAILABLE) rather
+            # than raising, so a failed fetch looks identical to a successful one here
+            # unless we check WEATHER_AVAILABLE - without this, a transient failure (e.g.
+            # DNS not ready yet at boot) would wait out the full WEATHER_UPDATE interval
+            # (30 min) before retrying instead of self-healing quickly like BVG does.
             if self.running:
-                self.weather_timer = threading.Timer(
-                    config["TIMER"]["WEATHER_UPDATE"], weather_cycle
-                )
+                retry_delay = 60 if not WEATHER_AVAILABLE else config["TIMER"]["WEATHER_UPDATE"]
+                self.weather_timer = threading.Timer(retry_delay, weather_cycle)
                 self.weather_timer.start()
 
         # Start the cycle
