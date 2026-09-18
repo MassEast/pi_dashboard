@@ -958,6 +958,11 @@ MERZ_Y = 0.0
 MERZ_WANDER_TARGET_X = None
 MERZ_WANDER_TARGET_Y = None
 MERZ_WANDER_SPEED = 55.0  # px/sec
+# Fractions of DISPLAY_HEIGHT, not px - shared between update_merz_game()'s
+# idle wander and handle_merz_click()'s dodge-reroute so both always agree
+# on how high/low he's allowed to go, regardless of screen aspect ratio.
+MERZ_BOUNDS_TOP_FRACTION = 0.24
+MERZ_BOUNDS_BOTTOM_FRACTION = 0.42
 MERZ_NEXT_WANDER_AT = 0.0
 MERZ_DODGE_UNTIL = 0.0
 MERZ_HIT_FLINCH_UNTIL = 0.0
@@ -978,7 +983,7 @@ MERZ_TAUNT_TEXT = None
 MERZ_TAUNT_META = None  # "year · source" line for real quotes, None for reaction lines
 MERZ_TAUNT_SHOWN_AT = 0.0
 MERZ_TAUNT_NEXT_AT = 0.0
-MERZ_TAUNT_DISPLAY_SECONDS = 4.5
+MERZ_TAUNT_DISPLAY_SECONDS = 8.0  # was 4.5 - too short to actually read/dodge-throw at leisure
 
 # Real, on-record statements kept verbatim (only trimmed with a leading/
 # trailing "..." where shortened for bubble length, never paraphrased or
@@ -3769,9 +3774,11 @@ def draw_merz_overlay():
     bounds_left = 40
     bounds_right = DISPLAY_WIDTH - 40
     # Kept well above the ground/building backdrop and below the top-corner
-    # UI (hit counter, close button) regardless of screen aspect ratio.
-    bounds_top = DISPLAY_HEIGHT * 0.16
-    bounds_bottom = DISPLAY_HEIGHT * 0.42
+    # UI (hit counter, close button) regardless of screen aspect ratio -
+    # bounds_top isn't right at the very top edge on purpose, so he can't
+    # wander up into/behind that UI.
+    bounds_top = DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION
+    bounds_bottom = DISPLAY_HEIGHT * MERZ_BOUNDS_BOTTOM_FRACTION
     update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom)
 
     tft_surf.fill((150, 200, 235))  # sky
@@ -3792,7 +3799,6 @@ def draw_merz_overlay():
     elif now < MERZ_DODGE_UNTIL:
         expression = "dodge"
     _draw_merz_sprite(expression)
-    _draw_merz_speech_bubble()
 
     for proj in MERZ_PROJECTILES:
         x, y, _ = _merz_projectile_pos(proj, now)
@@ -3853,6 +3859,11 @@ def draw_merz_overlay():
         hint_text, hint_text.get_rect(midbottom=(DISPLAY_WIDTH // 2, buttons_top - 12))
     )
 
+    # Drawn last/on top of everything, including the hit counter - he can
+    # wander close enough to the top corner that the counter would
+    # otherwise sit in front of (and obscure) the bubble.
+    _draw_merz_speech_bubble()
+
     MERZ_ACTION_RECTS = {"close": close_rect, "select_egg": egg_rect, "select_testicle": testicle_rect}
 
 
@@ -3911,7 +3922,8 @@ def handle_merz_click(mx, my):
         away_y = -1 if my >= MERZ_Y else 1
         jump = random.uniform(70, 140)
         bounds_left, bounds_right = 40, DISPLAY_WIDTH - 40
-        bounds_top, bounds_bottom = DISPLAY_HEIGHT * 0.16, DISPLAY_HEIGHT * 0.42
+        bounds_top = DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION
+        bounds_bottom = DISPLAY_HEIGHT * MERZ_BOUNDS_BOTTOM_FRACTION
         MERZ_WANDER_TARGET_X = min(max(MERZ_X + away_x * jump, bounds_left), bounds_right)
         MERZ_WANDER_TARGET_Y = min(max(MERZ_Y + away_y * jump * 0.5, bounds_top), bounds_bottom)
         MERZ_NEXT_WANDER_AT = now
