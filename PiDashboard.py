@@ -950,17 +950,28 @@ MERZ_PROJECTILE_KIND = "egg"  # or "testicle", flipped via the in-game toggle
 MERZ_HITS = 0
 # Position is in the overlay's own coordinate space (DISPLAY_WIDTH/HEIGHT,
 # it's drawn full-bleed over tft_surf, not scaled through the 240x400
-# dashboard surface like the rest of the UI). X wanders between bounds set
-# in draw_merz_overlay() once it knows the actual screen size; Y only bobs
-# a few px around a fixed baseline.
+# dashboard surface like the rest of the UI). Both axes wander between
+# bounds set in draw_merz_overlay() once it knows the actual screen size -
+# X and Y are both the sprite's CENTER, not its top-left.
 MERZ_X = 0.0
-MERZ_BASE_Y = 0.0
+MERZ_Y = 0.0
 MERZ_WANDER_TARGET_X = None
+MERZ_WANDER_TARGET_Y = None
 MERZ_WANDER_SPEED = 55.0  # px/sec
 MERZ_NEXT_WANDER_AT = 0.0
 MERZ_DODGE_UNTIL = 0.0
 MERZ_HIT_FLINCH_UNTIL = 0.0
 MERZ_LAST_TICK = 0.0
+# Landing a hit visibly shrinks him (harder target, escalating difficulty),
+# regrowing back to full size over a few unharmed seconds - clamped at
+# both ends so hits can't make him disappear and idle time can't make him
+# balloon past his starting size. MAX is also just his overall render
+# size - the native sprite (see icons/merz_sprite.png) felt too big.
+MERZ_SCALE = 1.0  # actual value set from MERZ_SCALE_MAX in activate_merz_game()
+MERZ_SCALE_MAX = 0.62
+MERZ_SCALE_MIN = 0.36
+MERZ_SCALE_SHRINK_STEP = 0.05  # per hit
+MERZ_SCALE_REGROW_PER_SEC = 0.04
 MERZ_PROJECTILES = []  # each: {start:(x,y), target:(x,y), started_at, duration, kind}
 MERZ_SPLATS = []  # each: {pos, started_at, kind: "hit"/"miss", text}
 MERZ_TAUNT_TEXT = None
@@ -997,6 +1008,23 @@ MERZ_TAUNT_DISPLAY_SECONDS = 4.5
 #    durchzuführen." - Pressekonferenz mit MP Dietmar Woidke, 14.10.2025,
 #    triggered nationwide protests -
 #    https://www.stuttgarter-zeitung.de/inhalt.friedrich-merz-stadtbild-aussage-wortlaut-mhsd.c674d7a6-52bd-4cbf-a68a-12f1700128fc.html
+# A second research pass added 3 more (a candidate 5th, the 2001 Wowereit
+# "coming out" remark, was found but is NOT included - the source itself
+# flagged the exact wording as not independently confirmed verbatim
+# against the original BUNTE interview, only reconstructed from two
+# secondary sources quoting it slightly differently from each other):
+#  - „...müssten sich einer gewachsenen, freiheitlichen deutschen
+#    Leitkultur anpassen.“ - Bundestagsrede, 16.10.2000, restated in a
+#    Welt guest essay 25.10.2000 -
+#    https://www.bpb.de/themen/parteien/sprache-und-politik/42726/das-missglueckte-wort/
+#  - „...solange es nicht Kinder betrifft – an der Stelle ist für mich
+#    allerdings eine absolute Grenze erreicht...“ - BILD Live ("Die
+#    richtigen Fragen"), September 2020, on being asked about a gay
+#    chancellor -
+#    https://www.handelsblatt.com/politik/deutschland/cdu-politiker-merz-sorgt-mit-aussage-ueber-homosexualitaet-fuer-kritik/26205700.html
+#  - „Der Bundestag ist ja nun kein Zirkuszelt.“ - ARD "maischberger",
+#    01.07.2025, defending the Bundestag not flying the rainbow flag for
+#    CSD - https://www.zdfheute.de/politik/merz-regenbogenfahne-bundestag-zirkuszelt-100.html
 MERZ_TAUNTS = [
     {
         "text": "„...die kleinen Paschas, da mal etwas zurechtweisen.“",
@@ -1017,6 +1045,21 @@ MERZ_TAUNTS = [
         "text": "„...wir haben natürlich immer im Stadtbild noch dieses Problem...“",
         "year": "2025",
         "source": "Pressekonferenz",
+    },
+    {
+        "text": "„...einer gewachsenen, freiheitlichen deutschen Leitkultur anpassen.“",
+        "year": "2000",
+        "source": "Bundestagsrede",
+    },
+    {
+        "text": "„...solange es nicht Kinder betrifft – an der Stelle ist für mich allerdings eine absolute Grenze erreicht...“",
+        "year": "2020",
+        "source": "BILD Live",
+    },
+    {
+        "text": "„Der Bundestag ist ja nun kein Zirkuszelt.“",
+        "year": "2025",
+        "source": "maischberger",
     },
     {"text": "IHR SEID ZU FAUL!!!"},
     {"text": "MEINE FRISUR!!"},
@@ -3455,8 +3498,8 @@ def draw_merz_button():
 def activate_merz_game():
     global MERZ_VISIBLE, MERZ_HITS, MERZ_PROJECTILES, MERZ_SPLATS
     global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT, MERZ_LAST_ACTIVITY_TS
-    global MERZ_X, MERZ_BASE_Y, MERZ_WANDER_TARGET_X, MERZ_NEXT_WANDER_AT
-    global MERZ_DODGE_UNTIL, MERZ_HIT_FLINCH_UNTIL, MERZ_LAST_TICK
+    global MERZ_X, MERZ_Y, MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y, MERZ_NEXT_WANDER_AT
+    global MERZ_DODGE_UNTIL, MERZ_HIT_FLINCH_UNTIL, MERZ_LAST_TICK, MERZ_SCALE
 
     if (
         not MERZ_ENABLED
@@ -3479,11 +3522,13 @@ def activate_merz_game():
     MERZ_LAST_ACTIVITY_TS = now
     MERZ_LAST_TICK = now
     MERZ_X = DISPLAY_WIDTH / 2
-    MERZ_BASE_Y = DISPLAY_HEIGHT * 0.28
+    MERZ_Y = DISPLAY_HEIGHT * 0.28
     MERZ_WANDER_TARGET_X = None
+    MERZ_WANDER_TARGET_Y = None
     MERZ_NEXT_WANDER_AT = now
     MERZ_DODGE_UNTIL = 0.0
     MERZ_HIT_FLINCH_UNTIL = 0.0
+    MERZ_SCALE = MERZ_SCALE_MAX
     logger.info("Merz game activated")
 
 
@@ -3498,12 +3543,13 @@ def dismiss_merz_game(reason):
 
 
 def _merz_sprite_size():
-    return _get_merz_sprite_img().get_size()
+    native_w, native_h = _get_merz_sprite_img().get_size()
+    return int(native_w * MERZ_SCALE), int(native_h * MERZ_SCALE)
 
 
 def _merz_rect():
     width, height = _merz_sprite_size()
-    return pygame.Rect(int(MERZ_X - width / 2), int(MERZ_BASE_Y), width, height)
+    return pygame.Rect(int(MERZ_X - width / 2), int(MERZ_Y - height / 2), width, height)
 
 
 def _merz_projectile_pos(proj, now):
@@ -3516,28 +3562,44 @@ def _merz_projectile_pos(proj, now):
     return x, y, t
 
 
-def update_merz_game(now, bounds_left, bounds_right):
-    global MERZ_X, MERZ_WANDER_TARGET_X, MERZ_NEXT_WANDER_AT, MERZ_LAST_TICK
+def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
+    global MERZ_X, MERZ_Y, MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y
+    global MERZ_NEXT_WANDER_AT, MERZ_LAST_TICK, MERZ_SCALE
     global MERZ_HITS, MERZ_PROJECTILES, MERZ_SPLATS, MERZ_HIT_FLINCH_UNTIL
     global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT
 
     dt = max(0.0, min(0.2, now - MERZ_LAST_TICK))  # clamp so a stall can't teleport him
     MERZ_LAST_TICK = now
 
-    # Idle wander: pick a new random x target once the current one's
-    # reached, moving faster for a while after a throw lands nearby (the
-    # "dodge" reaction, see handle_merz_click()).
-    if MERZ_WANDER_TARGET_X is None or abs(MERZ_X - MERZ_WANDER_TARGET_X) < 2:
-        if now >= MERZ_NEXT_WANDER_AT:
-            MERZ_WANDER_TARGET_X = random.uniform(bounds_left, bounds_right)
-            MERZ_NEXT_WANDER_AT = now + random.uniform(1.0, 2.5)
+    # Idle wander: pick a new random (x, y) target together once both are
+    # reached (a single shared timer, not two independent ones, so he
+    # picks a new spot to head toward as one motion rather than each axis
+    # retargeting at a different moment), moving faster for a while after
+    # a throw lands nearby (the "dodge" reaction, see handle_merz_click()).
+    x_arrived = MERZ_WANDER_TARGET_X is None or abs(MERZ_X - MERZ_WANDER_TARGET_X) < 2
+    y_arrived = MERZ_WANDER_TARGET_Y is None or abs(MERZ_Y - MERZ_WANDER_TARGET_Y) < 2
+    if x_arrived and y_arrived and now >= MERZ_NEXT_WANDER_AT:
+        MERZ_WANDER_TARGET_X = random.uniform(bounds_left, bounds_right)
+        MERZ_WANDER_TARGET_Y = random.uniform(bounds_top, bounds_bottom)
+        MERZ_NEXT_WANDER_AT = now + random.uniform(1.0, 2.5)
+
+    speed = MERZ_WANDER_SPEED * (2.4 if now < MERZ_DODGE_UNTIL else 1.0)
+    step = speed * dt
     if MERZ_WANDER_TARGET_X is not None:
-        speed = MERZ_WANDER_SPEED * (2.4 if now < MERZ_DODGE_UNTIL else 1.0)
-        step = speed * dt
         if MERZ_X < MERZ_WANDER_TARGET_X:
             MERZ_X = min(MERZ_WANDER_TARGET_X, MERZ_X + step)
         else:
             MERZ_X = max(MERZ_WANDER_TARGET_X, MERZ_X - step)
+    if MERZ_WANDER_TARGET_Y is not None:
+        if MERZ_Y < MERZ_WANDER_TARGET_Y:
+            MERZ_Y = min(MERZ_WANDER_TARGET_Y, MERZ_Y + step)
+        else:
+            MERZ_Y = max(MERZ_WANDER_TARGET_Y, MERZ_Y - step)
+
+    # Regrow toward full size while unharmed - a hit shrinks him instantly
+    # (below), this just slowly undoes that over a few seconds of peace.
+    if MERZ_SCALE < MERZ_SCALE_MAX:
+        MERZ_SCALE = min(MERZ_SCALE_MAX, MERZ_SCALE + MERZ_SCALE_REGROW_PER_SEC * dt)
 
     merz_rect = _merz_rect().inflate(6, 6)  # slightly forgiving hitbox
     still_flying = []
@@ -3545,6 +3607,7 @@ def update_merz_game(now, bounds_left, bounds_right):
         x, y, t = _merz_projectile_pos(proj, now)
         if merz_rect.collidepoint((x, y)):
             MERZ_HITS += 1
+            MERZ_SCALE = max(MERZ_SCALE_MIN, MERZ_SCALE - MERZ_SCALE_SHRINK_STEP)
             MERZ_SPLATS.append({"pos": (x, y), "started_at": now, "kind": "hit"})
             MERZ_HIT_FLINCH_UNTIL = now + 0.4
             continue  # resolved - drop the projectile
@@ -3573,8 +3636,10 @@ def _draw_merz_sprite(expression):
     """No facial-expression variants (there's only ever one source photo,
     unlike the old hand-drawn grid which could swap a mouth row) - "hit"
     instead gets a small impact-star overlay near the frame."""
-    img = _get_merz_sprite_img()
     rect = _merz_rect()
+    # blit() positions by rect but never scales to it - the image itself
+    # has to be resized to the current (hit-shrink/regrow) scale first.
+    img = pygame.transform.smoothscale(_get_merz_sprite_img(), rect.size)
     tft_surf.blit(img, rect)  # transparent-background cutout, no card border
 
     if expression == "hit":
@@ -3703,7 +3768,11 @@ def draw_merz_overlay():
     ground_y = int(DISPLAY_HEIGHT * 0.82)
     bounds_left = 40
     bounds_right = DISPLAY_WIDTH - 40
-    update_merz_game(now, bounds_left, bounds_right)
+    # Kept well above the ground/building backdrop and below the top-corner
+    # UI (hit counter, close button) regardless of screen aspect ratio.
+    bounds_top = DISPLAY_HEIGHT * 0.16
+    bounds_bottom = DISPLAY_HEIGHT * 0.42
+    update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom)
 
     tft_surf.fill((150, 200, 235))  # sky
     pygame.draw.rect(tft_surf, (90, 150, 90), (0, ground_y, DISPLAY_WIDTH, DISPLAY_HEIGHT - ground_y))
@@ -3798,7 +3867,7 @@ def handle_merz_button_click(mx, my):
 
 def handle_merz_click(mx, my):
     global MERZ_PROJECTILE_KIND, MERZ_PROJECTILES, MERZ_LAST_ACTIVITY_TS
-    global MERZ_WANDER_TARGET_X, MERZ_NEXT_WANDER_AT, MERZ_DODGE_UNTIL
+    global MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y, MERZ_NEXT_WANDER_AT, MERZ_DODGE_UNTIL
 
     if not MERZ_VISIBLE:
         return False
@@ -3833,14 +3902,18 @@ def handle_merz_click(mx, my):
     )
 
     # If the throw looks like it'll land near him, he tries to juke out of
-    # the way - reroute his wander target away from the incoming spot and
-    # speed him up for a bit (see the MERZ_DODGE_UNTIL check in
-    # update_merz_game()). Not guaranteed: sometimes he just eats it.
-    if abs(mx - MERZ_X) < 70 and random.random() < 0.7:
-        direction = -1 if mx >= MERZ_X else 1
+    # the way (in both directions now that he wanders vertically too) -
+    # reroute his wander target away from the incoming spot and speed him
+    # up for a bit (see the MERZ_DODGE_UNTIL check in update_merz_game()).
+    # Not guaranteed: sometimes he just eats it.
+    if math.hypot(mx - MERZ_X, my - MERZ_Y) < 80 and random.random() < 0.7:
+        away_x = -1 if mx >= MERZ_X else 1
+        away_y = -1 if my >= MERZ_Y else 1
         jump = random.uniform(70, 140)
         bounds_left, bounds_right = 40, DISPLAY_WIDTH - 40
-        MERZ_WANDER_TARGET_X = min(max(MERZ_X + direction * jump, bounds_left), bounds_right)
+        bounds_top, bounds_bottom = DISPLAY_HEIGHT * 0.16, DISPLAY_HEIGHT * 0.42
+        MERZ_WANDER_TARGET_X = min(max(MERZ_X + away_x * jump, bounds_left), bounds_right)
+        MERZ_WANDER_TARGET_Y = min(max(MERZ_Y + away_y * jump * 0.5, bounds_top), bounds_bottom)
         MERZ_NEXT_WANDER_AT = now
         MERZ_DODGE_UNTIL = now + 0.5
 
