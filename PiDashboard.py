@@ -948,6 +948,16 @@ MERZ_LAST_ACTIVITY_TS = 0.0
 MERZ_ACTION_RECTS = {}
 MERZ_PROJECTILE_KIND = "egg"  # or "testicle", flipped via the in-game toggle
 MERZ_HITS = 0
+MERZ_WIN_HITS = 100
+MERZ_EXPLODED = False  # True once MERZ_WIN_HITS is reached - see the win/replay flow
+MERZ_EXPLOSION_PARTICLES = []  # each: {x, y, vx, vy, kind, started_at}
+# A magazine per projectile kind rather than one shared pool, so running out
+# of eggs doesn't also block testicles - "10 per minute" per Ju: full
+# capacity 10, regenerating continuously such that an empty magazine takes
+# a full minute to refill (not a discrete reload timer/event).
+MERZ_AMMO_MAX = 10.0
+MERZ_AMMO_REGEN_PER_SEC = MERZ_AMMO_MAX / 60.0
+MERZ_AMMO = {"egg": MERZ_AMMO_MAX, "testicle": MERZ_AMMO_MAX}
 # Position is in the overlay's own coordinate space (DISPLAY_WIDTH/HEIGHT,
 # it's drawn full-bleed over tft_surf, not scaled through the 240x400
 # dashboard surface like the rest of the UI). Both axes wander between
@@ -999,6 +1009,14 @@ MERZ_TAUNT_META = None  # "year · source" line for real quotes, None for reacti
 MERZ_TAUNT_SHOWN_AT = 0.0
 MERZ_TAUNT_NEXT_AT = 0.0
 MERZ_TAUNT_DISPLAY_SECONDS = 8.0  # was 4.5 - too short to actually read/dodge-throw at leisure
+# Shuffle-bag, not a fresh random.choice() each time - pure random picks
+# from a small list feel repetitive/biased even though they aren't (Ju
+# noticed "Stadtbild" seemingly showing up a lot - it wasn't a bug, just
+# small-sample variance, but cycling through a shuffled order guarantees
+# no immediate repeats and evens out the short-term distribution, which
+# actually fixes the felt problem regardless of whether the old approach
+# was "truly" biased).
+MERZ_TAUNT_BAG = []
 
 # Real, on-record statements kept verbatim (only trimmed with a leading/
 # trailing "..." where shortened for bubble length, never paraphrased or
@@ -3520,7 +3538,8 @@ def activate_merz_game():
     global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT, MERZ_LAST_ACTIVITY_TS
     global MERZ_X, MERZ_Y, MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y, MERZ_NEXT_WANDER_AT
     global MERZ_DODGE_UNTIL, MERZ_HIT_FLINCH_UNTIL, MERZ_LAST_TICK, MERZ_SCALE
-    global MERZ_JETS, MERZ_NEXT_JET_AT
+    global MERZ_JETS, MERZ_NEXT_JET_AT, MERZ_TAUNT_BAG
+    global MERZ_EXPLODED, MERZ_EXPLOSION_PARTICLES, MERZ_AMMO
 
     if (
         not MERZ_ENABLED
@@ -3552,6 +3571,10 @@ def activate_merz_game():
     MERZ_SCALE = MERZ_SCALE_MAX
     MERZ_JETS = []
     MERZ_NEXT_JET_AT = now + random.uniform(4.0, 9.0)
+    MERZ_TAUNT_BAG = []
+    MERZ_EXPLODED = False
+    MERZ_EXPLOSION_PARTICLES = []
+    MERZ_AMMO = {"egg": MERZ_AMMO_MAX, "testicle": MERZ_AMMO_MAX}
     logger.info("Merz game activated")
 
 
@@ -3589,10 +3612,30 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
     global MERZ_X, MERZ_Y, MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y
     global MERZ_NEXT_WANDER_AT, MERZ_LAST_TICK, MERZ_SCALE
     global MERZ_HITS, MERZ_PROJECTILES, MERZ_SPLATS, MERZ_HIT_FLINCH_UNTIL
-    global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT
+    global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT, MERZ_TAUNT_BAG
+    global MERZ_JETS, MERZ_NEXT_JET_AT
+    global MERZ_AMMO, MERZ_EXPLODED, MERZ_EXPLOSION_PARTICLES
 
     dt = max(0.0, min(0.2, now - MERZ_LAST_TICK))  # clamp so a stall can't teleport him
     MERZ_LAST_TICK = now
+
+    for kind in MERZ_AMMO:
+        MERZ_AMMO[kind] = min(MERZ_AMMO_MAX, MERZ_AMMO[kind] + MERZ_AMMO_REGEN_PER_SEC * dt)
+
+    if MERZ_EXPLODED:
+        # Game's over - nothing left to update but the burst itself
+        # settling/fading. Everything else (wander, taunts, jets,
+        # projectiles) stays exactly as it was at the moment of victory.
+        gravity = 260.0
+        still_particles = []
+        for p in MERZ_EXPLOSION_PARTICLES:
+            p["vy"] += gravity * dt
+            p["x"] += p["vx"] * dt
+            p["y"] += p["vy"] * dt
+            if now - p["started_at"] < 2.2 and p["y"] < DISPLAY_HEIGHT + 40:
+                still_particles.append(p)
+        MERZ_EXPLOSION_PARTICLES = still_particles
+        return
 
     # Idle wander: pick a new random (x, y) target together once both are
     # reached (a single shared timer, not two independent ones, so he
@@ -3639,6 +3682,25 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
             continue  # resolved - drop the projectile
         still_flying.append(proj)
     MERZ_PROJECTILES = still_flying
+
+    if MERZ_HITS >= MERZ_WIN_HITS:
+        MERZ_EXPLODED = True
+        MERZ_PROJECTILES = []
+        MERZ_JETS = []
+        for _ in range(40):
+            angle = random.uniform(0, 2 * math.pi)
+            spd = random.uniform(60, 220)
+            MERZ_EXPLOSION_PARTICLES.append(
+                {
+                    "x": MERZ_X,
+                    "y": MERZ_Y,
+                    "vx": math.cos(angle) * spd,
+                    "vy": math.sin(angle) * spd - 60,  # slight upward bias
+                    "kind": random.choice(("egg", "testicle")),
+                    "started_at": now,
+                }
+            )
+        return
     MERZ_SPLATS = [s for s in MERZ_SPLATS if now - s["started_at"] < 0.6]
 
     if now >= MERZ_TAUNT_NEXT_AT:
@@ -3647,14 +3709,16 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
             MERZ_TAUNT_META = None
             MERZ_TAUNT_NEXT_AT = now + random.uniform(2.0, 4.0)
         else:
-            taunt = random.choice(MERZ_TAUNTS)
+            if not MERZ_TAUNT_BAG:
+                MERZ_TAUNT_BAG = list(MERZ_TAUNTS)
+                random.shuffle(MERZ_TAUNT_BAG)
+            taunt = MERZ_TAUNT_BAG.pop()
             MERZ_TAUNT_TEXT = taunt["text"]
             MERZ_TAUNT_META = (
                 f"{taunt['year']} · {taunt['source']}" if "year" in taunt else None
             )
             MERZ_TAUNT_NEXT_AT = now + MERZ_TAUNT_DISPLAY_SECONDS
 
-    global MERZ_JETS, MERZ_NEXT_JET_AT
     # At most one at a time - a background gag, not a swarm. Cruises in
     # mostly horizontally first, then noses up into a climb (like an
     # actual takeoff) until it's off-screen. Deliberately slow so both the
@@ -3723,6 +3787,9 @@ def _draw_merz_jet(jet):
     for wx, wy in rotate([(6, -2), (-2, -2), (-9, -2)]):
         pygame.draw.circle(tft_surf, outline, (int(wx), int(wy)), 1)
 
+    if not (0 <= x <= DISPLAY_WIDTH):
+        return  # still off-screen (spawn/despawn margin) - no bubble yet
+
     bubble_font = FONT_SUPER_TINY
     lines = _quiz_wrap_text(bubble_font, MERZ_JET_TEXT, 130)
     line_height = bubble_font.get_height()
@@ -3741,6 +3808,60 @@ def _draw_merz_jet(jet):
                 midtop=(bubble_rect.centerx, bubble_rect.top + padding + i * line_height)
             ),
         )
+
+
+def _draw_merz_flame(x, y):
+    """Small stacked-triangle flame icon, not an emoji glyph - same reason
+    the rest of the UI avoids unicode emoji through a text font (see
+    draw_merz_button()'s comment): the font has no emoji glyphs."""
+    outer = [(x, y - 14), (x - 7, y + 6), (x + 7, y + 6)]
+    mid = [(x, y - 8), (x - 4, y + 6), (x + 4, y + 6)]
+    inner = [(x, y - 3), (x - 2, y + 6), (x + 2, y + 6)]
+    pygame.draw.polygon(tft_surf, (200, 40, 10), outer)
+    pygame.draw.polygon(tft_surf, ORANGE, mid)
+    pygame.draw.polygon(tft_surf, YELLOW, inner)
+
+
+def _draw_merz_explosion():
+    """Win screen: the hit-burst particles (spawned once in
+    update_merz_game() when MERZ_HITS reaches MERZ_WIN_HITS) plus a
+    banner - drawn every frame while MERZ_EXPLODED is True, replacing the
+    normal sprite/throw UI entirely (see draw_merz_overlay())."""
+    for p in MERZ_EXPLOSION_PARTICLES:
+        _draw_merz_projectile(p["x"], p["y"], p["kind"])
+
+    title_font = FONT_BIG_BOLD
+    title_lines = _quiz_wrap_text(title_font, "MERZ HAT EIER GELECKT!", int(DISPLAY_WIDTH * 0.8))
+    line_height = title_font.get_height()
+    banner_width = max(title_font.size(line)[0] for line in title_lines) + 40
+    banner_height = len(title_lines) * line_height + 20
+    banner_rect = pygame.Rect(0, 0, banner_width, banner_height)
+    banner_rect.center = (DISPLAY_WIDTH // 2, int(DISPLAY_HEIGHT * 0.3))
+    pygame.draw.rect(tft_surf, (255, 244, 214), banner_rect, border_radius=14)
+    pygame.draw.rect(tft_surf, ORANGE, banner_rect, width=3, border_radius=14)
+    for i, line in enumerate(title_lines):
+        line_surf = title_font.render(line, True, (180, 40, 10))
+        tft_surf.blit(
+            line_surf,
+            line_surf.get_rect(midtop=(banner_rect.centerx, banner_rect.top + 10 + i * line_height)),
+        )
+    _draw_merz_flame(banner_rect.left - 16, banner_rect.centery)
+    _draw_merz_flame(banner_rect.right + 16, banner_rect.centery)
+
+    sub_text = FONT_SMALL_BOLD.render(f"{MERZ_WIN_HITS} TREFFER!", True, WHITE)
+    sub_bg = sub_text.get_rect(midtop=(DISPLAY_WIDTH // 2, banner_rect.bottom + 12)).inflate(16, 8)
+    pygame.draw.rect(tft_surf, (30, 30, 30), sub_bg, border_radius=8)
+    tft_surf.blit(sub_text, sub_text.get_rect(center=sub_bg.center))
+
+
+def _draw_merz_replay_button():
+    text_surf = FONT_SMALL_BOLD.render("NOCHMAL SPIELEN", True, BLACK)
+    rect = text_surf.get_rect().inflate(30, 20)
+    rect.center = (DISPLAY_WIDTH // 2, int(DISPLAY_HEIGHT * 0.48))
+    pygame.draw.rect(tft_surf, GREEN, rect, border_radius=12)
+    pygame.draw.rect(tft_surf, BLACK, rect, width=2, border_radius=12)
+    tft_surf.blit(text_surf, text_surf.get_rect(center=rect.center))
+    return rect
 
 
 def _draw_merz_sprite(expression):
@@ -3902,6 +4023,23 @@ def draw_merz_overlay():
     for jet in MERZ_JETS:  # behind him, background gag only
         _draw_merz_jet(jet)
 
+    close_size = 26
+    close_rect = pygame.Rect(DISPLAY_WIDTH - close_size - 10, 10, close_size, close_size)
+    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
+    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
+    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
+    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
+
+    hits_text = FONT_SMALL_BOLD.render(f"Treffer: {MERZ_HITS} / {MERZ_WIN_HITS}", True, WHITE)
+    hits_bg = hits_text.get_rect(topleft=(10, 10)).inflate(10, 6)
+    pygame.draw.rect(tft_surf, (30, 30, 30), hits_bg, border_radius=6)
+    tft_surf.blit(hits_text, hits_text.get_rect(center=hits_bg.center))
+
+    if MERZ_EXPLODED:
+        _draw_merz_explosion()
+        MERZ_ACTION_RECTS = {"close": close_rect, "replay": _draw_merz_replay_button()}
+        return
+
     expression = "neutral"
     if now < MERZ_HIT_FLINCH_UNTIL:
         expression = "hit"
@@ -3922,27 +4060,18 @@ def draw_merz_overlay():
         pygame.draw.circle(splat_surf, (*color, int(255 * fade)), (radius, radius), radius, width=2)
         tft_surf.blit(splat_surf, (splat["pos"][0] - radius, splat["pos"][1] - radius))
 
-    close_size = 26
-    close_rect = pygame.Rect(DISPLAY_WIDTH - close_size - 10, 10, close_size, close_size)
-    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
-    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
-    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
-    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
-
-    hits_text = FONT_SMALL_BOLD.render(f"Treffer: {MERZ_HITS}", True, WHITE)
-    hits_bg = hits_text.get_rect(topleft=(10, 10)).inflate(10, 6)
-    pygame.draw.rect(tft_surf, (30, 30, 30), hits_bg, border_radius=6)
-    tft_surf.blit(hits_text, hits_text.get_rect(center=hits_bg.center))
-
     # Two plain-text (not emoji - see draw_merz_button()'s comment on why)
     # selectable pills side by side, the active one filled in - picking
     # which of the two you're currently throwing, not a throw trigger
     # itself (that used to be one button labelled "WIRF: ...", which read
-    # like it was the thing you tap to throw). Built bottom-up (button row
-    # first, hint text positioned off its actual top) so the hint can't
-    # end up overlapping the buttons regardless of font metrics.
-    egg_text = FONT_SMALL_BOLD.render("EIER", True, BLACK)
-    testicle_text = FONT_SMALL_BOLD.render("KLÖTEN", True, BLACK)
+    # like it was the thing you tap to throw). Ammo count shown per pill
+    # (a magazine each, see MERZ_AMMO) - dimmed when that kind is empty,
+    # still tappable to switch to it but throwing it does nothing until it
+    # regenerates. Built bottom-up (button row first, hint text positioned
+    # off its actual top) so the hint can't end up overlapping the buttons
+    # regardless of font metrics.
+    egg_text = FONT_SMALL_BOLD.render(f"EIER ({int(MERZ_AMMO['egg'])})", True, BLACK)
+    testicle_text = FONT_SMALL_BOLD.render(f"KLÖTEN ({int(MERZ_AMMO['testicle'])})", True, BLACK)
     egg_rect = egg_text.get_rect().inflate(26, 16)
     testicle_rect = testicle_text.get_rect().inflate(26, 16)
     button_gap = 10
@@ -3956,7 +4085,13 @@ def draw_merz_overlay():
         (egg_rect, egg_text, "egg"),
         (testicle_rect, testicle_text, "testicle"),
     ):
-        fill = SWEET_PURPLE if MERZ_PROJECTILE_KIND == kind else WHITE
+        empty = MERZ_AMMO[kind] < 1.0
+        if empty:
+            fill = (210, 210, 210)
+        elif MERZ_PROJECTILE_KIND == kind:
+            fill = SWEET_PURPLE
+        else:
+            fill = WHITE
         pygame.draw.rect(tft_surf, fill, rect, border_radius=10)
         pygame.draw.rect(tft_surf, BLACK, rect, width=2, border_radius=10)
         tft_surf.blit(text_surf, text_surf.get_rect(center=rect.center))
@@ -3986,7 +4121,7 @@ def handle_merz_button_click(mx, my):
 
 
 def handle_merz_click(mx, my):
-    global MERZ_PROJECTILE_KIND, MERZ_PROJECTILES, MERZ_LAST_ACTIVITY_TS
+    global MERZ_PROJECTILE_KIND, MERZ_PROJECTILES, MERZ_LAST_ACTIVITY_TS, MERZ_AMMO
     global MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y, MERZ_NEXT_WANDER_AT, MERZ_DODGE_UNTIL
 
     if not MERZ_VISIBLE:
@@ -3999,6 +4134,14 @@ def handle_merz_click(mx, my):
         dismiss_merz_game("close-button")
         return True
 
+    if MERZ_EXPLODED:
+        # Won - only the replay button does anything now, everything else
+        # (throwing, egg/testicle toggle) is moot until he's reborn.
+        replay_rect = MERZ_ACTION_RECTS.get("replay")
+        if replay_rect and replay_rect.collidepoint((mx, my)):
+            activate_merz_game()
+        return True
+
     egg_rect = MERZ_ACTION_RECTS.get("select_egg")
     if egg_rect and egg_rect.collidepoint((mx, my)):
         MERZ_PROJECTILE_KIND = "egg"
@@ -4009,7 +4152,11 @@ def handle_merz_click(mx, my):
         MERZ_PROJECTILE_KIND = "testicle"
         return True
 
+    if MERZ_AMMO[MERZ_PROJECTILE_KIND] < 1.0:
+        return True  # empty magazine for this kind - tap swallowed, nothing thrown
+
     now = time.time()
+    MERZ_AMMO[MERZ_PROJECTILE_KIND] -= 1.0
     start = (DISPLAY_WIDTH / 2, DISPLAY_HEIGHT - 10)
     MERZ_PROJECTILES.append(
         {
