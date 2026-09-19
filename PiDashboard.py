@@ -979,6 +979,21 @@ MERZ_SCALE_SHRINK_STEP = 0.05  # per hit
 MERZ_SCALE_REGROW_PER_SEC = 0.04
 MERZ_PROJECTILES = []  # each: {start:(x,y), target:(x,y), started_at, duration, kind}
 MERZ_SPLATS = []  # each: {pos, started_at, kind: "hit"/"miss", text}
+# Background gag, non-interactive (not a throw target, just flavor) - a
+# private jet occasionally crosses behind him with a small speech bubble
+# of its own, referencing the well-documented contrast between Merz's
+# self-described "Mittelschicht"/normal-earner self-image and his actual
+# wealth/private jet use (e.g. the 2025 Sylt-wedding private jet story -
+# https://hamburg.t-online.de/region/hamburg/id_100027208/lindner-hochzeit-friedrich-merz-steuert-eigenen-privatjet-nach-sylt-und-erntet-shitstorm.html).
+# The jet's own line is an original joke, not presented as something he
+# said - same "no citation shown" convention as the non-quote MERZ_TAUNTS.
+MERZ_JETS = []  # each: {x, y, direction, speed, phase: "cruise"/"climb"}
+MERZ_NEXT_JET_AT = 0.0
+MERZ_JET_TEXT = "ICH BIN EIN NORMALVERDIENER-PRIVATJET!"
+# Shared between update_merz_game()'s actual movement and _draw_merz_jet()'s
+# rotation angle, which needs to match the real velocity to look right.
+MERZ_JET_CLIMB_VX_FACTOR = 0.7
+MERZ_JET_CLIMB_VY_FACTOR = 0.5
 MERZ_TAUNT_TEXT = None
 MERZ_TAUNT_META = None  # "year · source" line for real quotes, None for reaction lines
 MERZ_TAUNT_SHOWN_AT = 0.0
@@ -3505,6 +3520,7 @@ def activate_merz_game():
     global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT, MERZ_LAST_ACTIVITY_TS
     global MERZ_X, MERZ_Y, MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y, MERZ_NEXT_WANDER_AT
     global MERZ_DODGE_UNTIL, MERZ_HIT_FLINCH_UNTIL, MERZ_LAST_TICK, MERZ_SCALE
+    global MERZ_JETS, MERZ_NEXT_JET_AT
 
     if (
         not MERZ_ENABLED
@@ -3534,6 +3550,8 @@ def activate_merz_game():
     MERZ_DODGE_UNTIL = 0.0
     MERZ_HIT_FLINCH_UNTIL = 0.0
     MERZ_SCALE = MERZ_SCALE_MAX
+    MERZ_JETS = []
+    MERZ_NEXT_JET_AT = now + random.uniform(4.0, 9.0)
     logger.info("Merz game activated")
 
 
@@ -3635,6 +3653,94 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
                 f"{taunt['year']} · {taunt['source']}" if "year" in taunt else None
             )
             MERZ_TAUNT_NEXT_AT = now + MERZ_TAUNT_DISPLAY_SECONDS
+
+    global MERZ_JETS, MERZ_NEXT_JET_AT
+    # At most one at a time - a background gag, not a swarm. Cruises in
+    # mostly horizontally first, then noses up into a climb (like an
+    # actual takeoff) until it's off-screen. Deliberately slow so both the
+    # jet shape and its speech bubble stay readable during the crossing.
+    if not MERZ_JETS and now >= MERZ_NEXT_JET_AT:
+        direction = random.choice((-1, 1))
+        start_x = -50 if direction == 1 else DISPLAY_WIDTH + 50
+        MERZ_JETS.append(
+            {
+                "x": float(start_x),
+                "y": random.uniform(55, DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION - 25),
+                "direction": direction,
+                "speed": random.uniform(20, 26),
+                "phase": "cruise",
+                # Keeps cruising well past screen-center before climbing,
+                # so most of the crossing is flat/level and easy to read -
+                # the climb is just the exit, not most of the flight.
+                "climb_at_x": DISPLAY_WIDTH / 2 + direction * random.uniform(60, 140),
+            }
+        )
+        MERZ_NEXT_JET_AT = now + random.uniform(18, 32)
+
+    still_flying_jets = []
+    for jet in MERZ_JETS:
+        if jet["phase"] == "cruise":
+            jet["x"] += jet["direction"] * jet["speed"] * dt
+            if (jet["direction"] > 0 and jet["x"] >= jet["climb_at_x"]) or (
+                jet["direction"] < 0 and jet["x"] <= jet["climb_at_x"]
+            ):
+                jet["phase"] = "climb"
+        else:
+            jet["x"] += jet["direction"] * jet["speed"] * MERZ_JET_CLIMB_VX_FACTOR * dt
+            jet["y"] -= jet["speed"] * MERZ_JET_CLIMB_VY_FACTOR * dt
+        if jet["y"] > -60 and -80 <= jet["x"] <= DISPLAY_WIDTH + 80:
+            still_flying_jets.append(jet)
+    MERZ_JETS = still_flying_jets
+
+
+def _draw_merz_jet(jet):
+    """Small vector silhouette (not pixel-art like the Merz sprite itself
+    - a plane shape is simple enough to draw directly, no photo needed),
+    rotated to face its current direction of travel so it visibly noses
+    up during the climb phase instead of always looking level."""
+    x, y = jet["x"], jet["y"]
+    heading = math.atan2(
+        -jet["speed"] * MERZ_JET_CLIMB_VY_FACTOR if jet["phase"] == "climb" else 0,
+        jet["direction"]
+        * (jet["speed"] * MERZ_JET_CLIMB_VX_FACTOR if jet["phase"] == "climb" else jet["speed"]),
+    )
+    cos_h, sin_h = math.cos(heading), math.sin(heading)
+
+    def rotate(local_points):
+        return [
+            (x + lx * cos_h - ly * sin_h, y + lx * sin_h + ly * cos_h) for lx, ly in local_points
+        ]
+
+    body_color = (235, 235, 240)
+    outline = (110, 110, 120)
+    fuselage = rotate([(16, 0), (6, -5), (-16, -5), (-22, 0), (-16, 5), (6, 5)])
+    wing_top = rotate([(1, -4), (-9, -19), (-3, -4)])
+    wing_bottom = rotate([(1, 4), (-9, 19), (-3, 4)])
+    tail_fin = rotate([(-16, -5), (-21, -15), (-11, -5)])
+    for shape in (tail_fin, wing_bottom, fuselage, wing_top):
+        pygame.draw.polygon(tft_surf, body_color, shape)
+        pygame.draw.polygon(tft_surf, outline, shape, width=1)
+    for wx, wy in rotate([(6, -2), (-2, -2), (-9, -2)]):
+        pygame.draw.circle(tft_surf, outline, (int(wx), int(wy)), 1)
+
+    bubble_font = FONT_SUPER_TINY
+    lines = _quiz_wrap_text(bubble_font, MERZ_JET_TEXT, 130)
+    line_height = bubble_font.get_height()
+    padding = 4
+    bubble_width = max(bubble_font.size(line)[0] for line in lines) + 2 * padding
+    bubble_height = len(lines) * line_height + 2 * padding
+    bubble_left = min(max(int(x) - bubble_width // 2, 4), DISPLAY_WIDTH - bubble_width - 4)
+    bubble_rect = pygame.Rect(bubble_left, int(y) + 14, bubble_width, bubble_height)
+    pygame.draw.rect(tft_surf, WHITE, bubble_rect, border_radius=5)
+    pygame.draw.rect(tft_surf, (90, 90, 90), bubble_rect, width=1, border_radius=5)
+    for i, line in enumerate(lines):
+        line_surf = bubble_font.render(line, True, (60, 60, 60))
+        tft_surf.blit(
+            line_surf,
+            line_surf.get_rect(
+                midtop=(bubble_rect.centerx, bubble_rect.top + padding + i * line_height)
+            ),
+        )
 
 
 def _draw_merz_sprite(expression):
@@ -3792,6 +3898,9 @@ def draw_merz_overlay():
     for i in range(7):
         col_x = DISPLAY_WIDTH * 0.18 + i * (DISPLAY_WIDTH * 0.66 / 6)
         pygame.draw.rect(tft_surf, (100, 100, 110), (col_x, building_top + 10, 8, 70))
+
+    for jet in MERZ_JETS:  # behind him, background gag only
+        _draw_merz_jet(jet)
 
     expression = "neutral"
     if now < MERZ_HIT_FLINCH_UNTIL:
