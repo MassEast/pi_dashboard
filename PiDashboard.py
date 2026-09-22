@@ -952,11 +952,14 @@ MERZ_WIN_HITS = 100
 MERZ_EXPLODED = False  # True once MERZ_WIN_HITS is reached - see the win/replay flow
 MERZ_EXPLOSION_PARTICLES = []  # each: {x, y, vx, vy, kind, started_at}
 # A magazine per projectile kind rather than one shared pool, so running out
-# of eggs doesn't also block testicles - "10 per minute" per Ju: full
-# capacity 10, regenerating continuously such that an empty magazine takes
-# a full minute to refill (not a discrete reload timer/event).
+# of eggs doesn't also block testicles - full capacity 10, regenerating
+# continuously (not a discrete reload timer/event) such that an empty
+# magazine takes 15s to refill - was 60s ("10 per minute" per Ju) but that
+# felt like too long a wait, see MERZ_AMMO_HIT_REFUND below for the other
+# way to get ammo back faster than passive regen.
 MERZ_AMMO_MAX = 10.0
-MERZ_AMMO_REGEN_PER_SEC = MERZ_AMMO_MAX / 60.0
+MERZ_AMMO_REGEN_PER_SEC = MERZ_AMMO_MAX / 15.0
+MERZ_AMMO_HIT_REFUND = 1.0  # landing a hit refunds the shot that scored it
 MERZ_AMMO = {"egg": MERZ_AMMO_MAX, "testicle": MERZ_AMMO_MAX}
 # Position is in the overlay's own coordinate space (DISPLAY_WIDTH/HEIGHT,
 # it's drawn full-bleed over tft_surf, not scaled through the 240x400
@@ -3676,6 +3679,9 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
             MERZ_SCALE = max(MERZ_SCALE_MIN, MERZ_SCALE - MERZ_SCALE_SHRINK_STEP)
             MERZ_SPLATS.append({"pos": (x, y), "started_at": now, "kind": "hit"})
             MERZ_HIT_FLINCH_UNTIL = now + 0.4
+            MERZ_AMMO[proj["kind"]] = min(
+                MERZ_AMMO_MAX, MERZ_AMMO[proj["kind"]] + MERZ_AMMO_HIT_REFUND
+            )
             continue  # resolved - drop the projectile
         if t >= 1.0:
             MERZ_SPLATS.append({"pos": proj["target"], "started_at": now, "kind": "miss"})
@@ -4070,8 +4076,18 @@ def draw_merz_overlay():
     # regenerates. Built bottom-up (button row first, hint text positioned
     # off its actual top) so the hint can't end up overlapping the buttons
     # regardless of font metrics.
-    egg_text = FONT_SMALL_BOLD.render(f"EIER ({int(MERZ_AMMO['egg'])})", True, BLACK)
-    testicle_text = FONT_SMALL_BOLD.render(f"KLÖTEN ({int(MERZ_AMMO['testicle'])})", True, BLACK)
+    def _ammo_label(name, kind):
+        count = MERZ_AMMO[kind]
+        if count < 1.0:
+            # Empty - show seconds left until the next shot regenerates
+            # instead of a static "(0)" that gives no sense of when
+            # tapping will work again.
+            wait_s = math.ceil((1.0 - count) / MERZ_AMMO_REGEN_PER_SEC)
+            return f"{name} (0 · {wait_s}s)"
+        return f"{name} ({int(count)})"
+
+    egg_text = FONT_SMALL_BOLD.render(_ammo_label("EIER", "egg"), True, BLACK)
+    testicle_text = FONT_SMALL_BOLD.render(_ammo_label("KLÖTEN", "testicle"), True, BLACK)
     egg_rect = egg_text.get_rect().inflate(26, 16)
     testicle_rect = testicle_text.get_rect().inflate(26, 16)
     button_gap = 10
