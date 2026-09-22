@@ -953,12 +953,12 @@ MERZ_EXPLODED = False  # True once MERZ_WIN_HITS is reached - see the win/replay
 MERZ_EXPLOSION_PARTICLES = []  # each: {x, y, vx, vy, kind, started_at}
 # A magazine per projectile kind rather than one shared pool, so running out
 # of eggs doesn't also block testicles - full capacity 10, regenerating
-# continuously (not a discrete reload timer/event) such that an empty
-# magazine takes 15s to refill - was 60s ("10 per minute" per Ju) but that
-# felt like too long a wait, see MERZ_AMMO_HIT_REFUND below for the other
-# way to get ammo back faster than passive regen.
+# continuously (not a discrete reload timer/event) at one shot every 5s
+# (was 60s/10 = 6s/shot originally, then briefly 15s/10 = 1.5s/shot which
+# felt too twitchy - see MERZ_AMMO_HIT_REFUND below for the other way to
+# get ammo back faster than passive regen).
 MERZ_AMMO_MAX = 10.0
-MERZ_AMMO_REGEN_PER_SEC = MERZ_AMMO_MAX / 15.0
+MERZ_AMMO_REGEN_PER_SEC = 1.0 / 5.0
 MERZ_AMMO_HIT_REFUND = 1.0  # landing a hit refunds the shot that scored it
 MERZ_AMMO = {"egg": MERZ_AMMO_MAX, "testicle": MERZ_AMMO_MAX}
 # Position is in the overlay's own coordinate space (DISPLAY_WIDTH/HEIGHT,
