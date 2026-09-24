@@ -948,9 +948,17 @@ MERZ_LAST_ACTIVITY_TS = 0.0
 MERZ_ACTION_RECTS = {}
 MERZ_PROJECTILE_KIND = "egg"  # or "testicle", flipped via the in-game toggle
 MERZ_HITS = 0
-MERZ_WIN_HITS = 100
+MERZ_WIN_HITS = 69
 MERZ_EXPLODED = False  # True once MERZ_WIN_HITS is reached - see the win/replay flow
+MERZ_EXPLODED_AT = 0.0  # set the instant MERZ_EXPLODED flips True, see MERZ_WIN_TEXT_DELAY_SECONDS
+# The banner/replay-button text used to appear the same frame as the burst,
+# which meant it covered up the egg/testicle/flame particles flying out of
+# him before you'd even seen them go off - hold it back a couple seconds so
+# the burst itself is the first thing visible.
+MERZ_WIN_TEXT_DELAY_SECONDS = 2.0
 MERZ_EXPLOSION_PARTICLES = []  # each: {x, y, vx, vy, kind, started_at}
+MERZ_FLAME_PARTICLES = []  # each: {x, y, vx, vy, started_at} - see MERZ_FLAME_LIFETIME_SECONDS
+MERZ_FLAME_LIFETIME_SECONDS = 1.0
 # A magazine per projectile kind rather than one shared pool, so running out
 # of eggs doesn't also block testicles - full capacity 10, regenerating
 # continuously (not a discrete reload timer/event) at one shot every 5s
@@ -3542,7 +3550,7 @@ def activate_merz_game():
     global MERZ_X, MERZ_Y, MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y, MERZ_NEXT_WANDER_AT
     global MERZ_DODGE_UNTIL, MERZ_HIT_FLINCH_UNTIL, MERZ_LAST_TICK, MERZ_SCALE
     global MERZ_JETS, MERZ_NEXT_JET_AT, MERZ_TAUNT_BAG
-    global MERZ_EXPLODED, MERZ_EXPLOSION_PARTICLES, MERZ_AMMO
+    global MERZ_EXPLODED, MERZ_EXPLODED_AT, MERZ_EXPLOSION_PARTICLES, MERZ_FLAME_PARTICLES, MERZ_AMMO
 
     if (
         not MERZ_ENABLED
@@ -3576,7 +3584,9 @@ def activate_merz_game():
     MERZ_NEXT_JET_AT = now + random.uniform(4.0, 9.0)
     MERZ_TAUNT_BAG = []
     MERZ_EXPLODED = False
+    MERZ_EXPLODED_AT = 0.0
     MERZ_EXPLOSION_PARTICLES = []
+    MERZ_FLAME_PARTICLES = []
     MERZ_AMMO = {"egg": MERZ_AMMO_MAX, "testicle": MERZ_AMMO_MAX}
     logger.info("Merz game activated")
 
@@ -3617,7 +3627,7 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
     global MERZ_HITS, MERZ_PROJECTILES, MERZ_SPLATS, MERZ_HIT_FLINCH_UNTIL
     global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT, MERZ_TAUNT_BAG
     global MERZ_JETS, MERZ_NEXT_JET_AT
-    global MERZ_AMMO, MERZ_EXPLODED, MERZ_EXPLOSION_PARTICLES
+    global MERZ_AMMO, MERZ_EXPLODED, MERZ_EXPLODED_AT, MERZ_EXPLOSION_PARTICLES, MERZ_FLAME_PARTICLES
 
     dt = max(0.0, min(0.2, now - MERZ_LAST_TICK))  # clamp so a stall can't teleport him
     MERZ_LAST_TICK = now
@@ -3638,6 +3648,22 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
             if now - p["started_at"] < 2.2 and p["y"] < DISPLAY_HEIGHT + 40:
                 still_particles.append(p)
         MERZ_EXPLOSION_PARTICLES = still_particles
+
+        # Flames don't fall - no gravity, just drag (so the burst slows
+        # down rather than flying off forever) plus a little buoyancy (so
+        # they lick upward like real fire) - and fade out on a fixed
+        # lifetime rather than leaving the screen.
+        drag = 2.2
+        buoyancy = 70.0
+        still_flames = []
+        for p in MERZ_FLAME_PARTICLES:
+            p["vx"] *= max(0.0, 1.0 - drag * dt)
+            p["vy"] = p["vy"] * max(0.0, 1.0 - drag * dt) - buoyancy * dt
+            p["x"] += p["vx"] * dt
+            p["y"] += p["vy"] * dt
+            if now - p["started_at"] < MERZ_FLAME_LIFETIME_SECONDS:
+                still_flames.append(p)
+        MERZ_FLAME_PARTICLES = still_flames
         return
 
     # Idle wander: pick a new random (x, y) target together once both are
@@ -3691,6 +3717,7 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
 
     if MERZ_HITS >= MERZ_WIN_HITS:
         MERZ_EXPLODED = True
+        MERZ_EXPLODED_AT = now
         MERZ_PROJECTILES = []
         MERZ_JETS = []
         for _ in range(40):
@@ -3703,6 +3730,18 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
                     "vx": math.cos(angle) * spd,
                     "vy": math.sin(angle) * spd - 60,  # slight upward bias
                     "kind": random.choice(("egg", "testicle")),
+                    "started_at": now,
+                }
+            )
+        for _ in range(28):
+            angle = random.uniform(0, 2 * math.pi)
+            spd = random.uniform(40, 180)
+            MERZ_FLAME_PARTICLES.append(
+                {
+                    "x": MERZ_X,
+                    "y": MERZ_Y,
+                    "vx": math.cos(angle) * spd,
+                    "vy": math.sin(angle) * spd,
                     "started_at": now,
                 }
             )
@@ -3828,13 +3867,40 @@ def _draw_merz_flame(x, y):
     pygame.draw.polygon(tft_surf, YELLOW, inner)
 
 
-def _draw_merz_explosion():
-    """Win screen: the hit-burst particles (spawned once in
-    update_merz_game() when MERZ_HITS reaches MERZ_WIN_HITS) plus a
-    banner - drawn every frame while MERZ_EXPLODED is True, replacing the
-    normal sprite/throw UI entirely (see draw_merz_overlay())."""
+def _draw_merz_flame_particle(x, y, life_frac):
+    """One burst flame, drawn on its own per-pixel-alpha surface so it can
+    fade out (life_frac: 1.0 = just spawned, 0.0 = about to be removed) -
+    same stacked-triangle shape as _draw_merz_flame() but shrinking/fading
+    instead of a fixed-size solid icon."""
+    size = 6 + 8 * life_frac
+    alpha = max(0, min(255, int(255 * life_frac)))
+    surf_size = int(size * 2.4)
+    surf = pygame.Surface((surf_size, surf_size), pygame.SRCALPHA)
+    cx = cy = surf_size / 2
+    outer = [(cx, cy - size), (cx - size * 0.5, cy + size * 0.45), (cx + size * 0.5, cy + size * 0.45)]
+    mid = [(cx, cy - size * 0.6), (cx - size * 0.3, cy + size * 0.45), (cx + size * 0.3, cy + size * 0.45)]
+    inner = [(cx, cy - size * 0.25), (cx - size * 0.15, cy + size * 0.45), (cx + size * 0.15, cy + size * 0.45)]
+    pygame.draw.polygon(surf, (200, 40, 10, alpha), outer)
+    pygame.draw.polygon(surf, (*ORANGE, alpha), mid)
+    pygame.draw.polygon(surf, (*YELLOW, alpha), inner)
+    tft_surf.blit(surf, (x - surf_size / 2, y - surf_size / 2))
+
+
+def _draw_merz_explosion(now):
+    """Win screen: the hit-burst particles and outward-flying flames
+    (spawned once in update_merz_game() when MERZ_HITS reaches
+    MERZ_WIN_HITS) plus a banner - drawn every frame while MERZ_EXPLODED is
+    True, replacing the normal sprite/throw UI entirely (see
+    draw_merz_overlay()). The banner is held back MERZ_WIN_TEXT_DELAY_SECONDS
+    so it doesn't immediately cover up the burst it's celebrating."""
     for p in MERZ_EXPLOSION_PARTICLES:
         _draw_merz_projectile(p["x"], p["y"], p["kind"])
+    for p in MERZ_FLAME_PARTICLES:
+        life_frac = max(0.0, 1.0 - (now - p["started_at"]) / MERZ_FLAME_LIFETIME_SECONDS)
+        _draw_merz_flame_particle(p["x"], p["y"], life_frac)
+
+    if now - MERZ_EXPLODED_AT < MERZ_WIN_TEXT_DELAY_SECONDS:
+        return
 
     title_font = FONT_BIG_BOLD
     title_lines = _quiz_wrap_text(title_font, "MERZ HAT EIER GELECKT!", int(DISPLAY_WIDTH * 0.8))
@@ -4042,8 +4108,10 @@ def draw_merz_overlay():
     tft_surf.blit(hits_text, hits_text.get_rect(center=hits_bg.center))
 
     if MERZ_EXPLODED:
-        _draw_merz_explosion()
-        MERZ_ACTION_RECTS = {"close": close_rect, "replay": _draw_merz_replay_button()}
+        _draw_merz_explosion(now)
+        MERZ_ACTION_RECTS = {"close": close_rect}
+        if now - MERZ_EXPLODED_AT >= MERZ_WIN_TEXT_DELAY_SECONDS:
+            MERZ_ACTION_RECTS["replay"] = _draw_merz_replay_button()
         return
 
     expression = "neutral"
