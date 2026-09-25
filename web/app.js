@@ -91,7 +91,9 @@ function setActiveWindow(windowValue) {
 
 function getEmotionOrder(series) {
     const { order: emotionOrder } = catalogMaps();
-    const orderedKnown = emotionOrder.filter((emotion) => emotion in series);
+    const orderedKnown = emotionOrder.filter(
+        (emotion) => emotion in series && series[emotion].some((value) => value > 0),
+    );
     const custom = Object.keys(series)
         .filter((emotion) => !emotionOrder.includes(emotion))
         .sort((left, right) => {
