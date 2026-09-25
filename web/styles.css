@@ -154,20 +154,20 @@ body {
 
 .chart-legend {
     margin: 14px 0 0;
-    padding: 0;
+    padding: 4px 2px;
     list-style: none;
     display: flex;
     flex-wrap: wrap;
-    gap: 8px 14px;
-    max-height: 220px;
+    gap: 6px 12px;
+    max-height: 160px;
     overflow-y: auto;
 }
 
 .chart-legend-item {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    font-size: 0.88rem;
+    gap: 5px;
+    font-size: 0.76rem;
     font-weight: 500;
     cursor: pointer;
     user-select: none;
@@ -180,9 +180,9 @@ body {
 }
 
 .chart-legend-swatch {
-    width: 13px;
-    height: 13px;
-    border-radius: 4px;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
     flex: none;
 }
 
