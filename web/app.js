@@ -63,6 +63,7 @@ const totalCountNode = document.getElementById("totalCount");
 const updatedAtNode = document.getElementById("updatedAt");
 const uptimeCards = [...document.querySelectorAll(".uptime-window")];
 const outageListNode = document.getElementById("outageList");
+const legendListNode = document.getElementById("chartLegend");
 const windowButtons = [...document.querySelectorAll('.control-group[aria-label="Time window selector"] .window-btn')];
 const flatCurrentBtn = document.getElementById("flatCurrentBtn");
 const flatArchiveBtn = document.getElementById("flatArchiveBtn");
@@ -403,6 +404,46 @@ function scheduleLegendClick(key, onSingleClick, onDoubleClick) {
     }, LEGEND_DOUBLE_CLICK_MS);
 }
 
+function renderHtmlLegend(chart) {
+    if (!legendListNode || !chart) return;
+    legendListNode.innerHTML = "";
+
+    chart.data.datasets.forEach((dataset, index) => {
+        const item = document.createElement("li");
+        item.className = "chart-legend-item";
+        item.classList.toggle("is-hidden", !chart.isDatasetVisible(index));
+
+        const swatch = document.createElement("span");
+        swatch.className = "chart-legend-swatch";
+        swatch.style.backgroundColor = dataset.backgroundColor;
+
+        const label = document.createElement("span");
+        label.textContent = dataset.label;
+
+        item.appendChild(swatch);
+        item.appendChild(label);
+
+        item.addEventListener("click", () => {
+            const emotionKey = dataset.emotionKey;
+            const clickKey = currentWindow === "emotion" ? emotionKey : index;
+
+            scheduleLegendClick(
+                clickKey,
+                () => {
+                    toggleLegendItem(chart, index, emotionKey);
+                    if (currentWindow !== "emotion") renderHtmlLegend(chart);
+                },
+                () => {
+                    isolateOrRestoreLegendItem(chart, index, emotionKey);
+                    if (currentWindow !== "emotion") renderHtmlLegend(chart);
+                },
+            );
+        });
+
+        legendListNode.appendChild(item);
+    });
+}
+
 function toggleLegendItem(chart, datasetIndex, emotionKey) {
     if (currentWindow === "emotion") {
         if (!emotionKey || !currentPayload) return;
@@ -480,26 +521,7 @@ function upsertChart(labels, series) {
                 },
             },
             legend: {
-                position: "bottom",
-                onClick(legendEvent, legendItem, legend) {
-                    const chart = legend.chart;
-                    const datasetIndex = legendItem.datasetIndex;
-                    const emotionKey = chart.data.datasets[datasetIndex]?.emotionKey;
-                    const clickKey = currentWindow === "emotion" ? emotionKey : datasetIndex;
-
-                    scheduleLegendClick(
-                        clickKey,
-                        () => toggleLegendItem(chart, datasetIndex, emotionKey),
-                        () => isolateOrRestoreLegendItem(chart, datasetIndex, emotionKey),
-                    );
-                },
-                labels: {
-                    font: {
-                        size: 14,
-                        weight: "500",
-                    },
-                    padding: 16,
-                },
+                display: false,
             },
         },
         scales: {
@@ -553,6 +575,7 @@ function upsertChart(labels, series) {
             plugins,
         });
         chartIsHistogram = isHistogram;
+        renderHtmlLegend(emotionChart);
         return;
     }
 
@@ -560,6 +583,7 @@ function upsertChart(labels, series) {
     emotionChart.data.datasets = chartData.datasets;
     emotionChart.options = options;
     emotionChart.update();
+    renderHtmlLegend(emotionChart);
 }
 
 async function refresh() {

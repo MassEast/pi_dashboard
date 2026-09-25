@@ -152,6 +152,40 @@ body {
     height: 100% !important;
 }
 
+.chart-legend {
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    max-height: 220px;
+    overflow-y: auto;
+}
+
+.chart-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 0.88rem;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    opacity: 1;
+}
+
+.chart-legend-item.is-hidden {
+    opacity: 0.4;
+    text-decoration: line-through;
+}
+
+.chart-legend-swatch {
+    width: 13px;
+    height: 13px;
+    border-radius: 4px;
+    flex: none;
+}
+
 .meta {
     margin-top: 14px;
     display: flex;
