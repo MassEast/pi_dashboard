@@ -5517,15 +5517,31 @@ def loop():
                 with MOABEATS_STATUS_LOCK:
                     cleaning_chores = list(MOABEATS_STATUS.get("cleaning_chores", []))
 
+                # Sanity cap against a pathological API response, same pattern as
+                # draw_moabeats_panel()'s overdue_chores[:10] - this just bounds the
+                # render loop, actual fit on screen is handled by the dynamic step
+                # below so the list is never silently truncated at a normal size.
+                cleaning_chores = cleaning_chores[:15]
+
                 chore_y = headline_top + 3 * headline_step + 40
-                for chore in cleaning_chores[:6]:
+                chore_count = len(cleaning_chores)
+                if chore_count:
+                    available_height = DISPLAY_HEIGHT - chore_y - 20
+                    # Shrink spacing to fit everyone, but never below the font's own
+                    # line height (would start overlapping text) and never wider
+                    # than the original 40px (looks sparse with few chores).
+                    chore_step = min(40, max(CLEANING_CHORE_FONT.get_linesize(), available_height // chore_count))
+                else:
+                    chore_step = 40
+
+                for chore in cleaning_chores:
                     label = chore["name"]
                     if chore.get("assigned_to"):
                         label += f" ({chore['assigned_to']})"
                     chore_surf = CLEANING_CHORE_FONT.render(label, True, SWEET_PURPLE)
                     chore_rect = chore_surf.get_rect(center=(DISPLAY_WIDTH // 2, chore_y))
                     tft_surf.blit(chore_surf, chore_rect)
-                    chore_y += 40
+                    chore_y += chore_step
 
             pygame.display.update()
 
