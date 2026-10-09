@@ -935,6 +935,19 @@ QUIZ_RESULTS_DOT_HITBOXES = []
 # label list every name sharing that point instead of hiding all but one.
 QUIZ_RESULTS_HELD_KEY = None
 QUIZ_RESULTS_ACTION_RECTS = {}
+# Tap-to-zoom on the results triangle: tapping empty space (not a dot)
+# zooms in centered on that spot, the "-" button steps back out. The view
+# center is stored in *unzoomed* screen coordinates, so it stays valid as
+# the zoom level changes - see draw_quiz_results_stage().
+QUIZ_RESULTS_ZOOM = 1.0
+QUIZ_RESULTS_ZOOM_MAX = 8.0
+QUIZ_RESULTS_VIEW_CENTER = None
+QUIZ_RESULTS_VIEW = None  # {"plot_center", "center", "zoom", "plot_rect"} from the last draw
+# Press on empty plot space: dragging pans the zoomed view, releasing
+# without having dragged zooms in at the press point (see
+# handle_quiz_results_motion()/handle_quiz_results_release()).
+QUIZ_RESULTS_DRAG = None  # {"start": (x, y), "center": view center at press, "moved": bool}
+QUIZ_RESULTS_DRAG_THRESHOLD_PX = 8
 
 WIFI_BUTTON_RECT = None
 WIFI_QR_VISIBLE = False
@@ -969,6 +982,25 @@ MERZ_AMMO_MAX = 10.0
 MERZ_AMMO_REGEN_PER_SEC = 1.0 / 5.0
 MERZ_AMMO_HIT_REFUND = 1.0  # landing a hit refunds the shot that scored it
 MERZ_AMMO = {"egg": MERZ_AMMO_MAX, "testicle": MERZ_AMMO_MAX}
+# Easter egg: tapping the ammo pills EIER, KLÖTEN x3, EIER, KLÖTEN x2
+# ("1312") in quick succession unlocks a hidden "BURN" pill in the middle -
+# a flamethrower with no ammo limit, firing for as long as the finger is
+# held down (see handle_merz_click()/handle_merz_release()). Only lasts for
+# the current game - every new game, including "NOCHMAL SPIELEN", resets it.
+MERZ_BURN_COMBO = ["egg", "testicle", "testicle", "testicle", "egg", "testicle", "testicle"]
+MERZ_BURN_COMBO_MAX_GAP_SECONDS = 1.2  # max pause between two combo taps
+MERZ_BURN_COMBO_TAPS = []  # recent pill taps: (kind, ts)
+MERZ_BURN_UNLOCKED = False
+MERZ_BURN_HELD = False
+MERZ_BURN_PARTICLES = []  # each: {x, y, vx, vy, started_at, lifetime}
+MERZ_BURN_SPAWN_PER_SEC = 55.0
+MERZ_BURN_SPAWN_CARRY = 0.0  # fractional spawn count carried between frames
+MERZ_BURN_SPEED = 430.0  # px/sec
+# Flames are a continuous stream, so counting every particle that touches
+# him would rack up dozens of hits a second - instead a hit registers at
+# most once per this interval while the stream is on him.
+MERZ_BURN_HIT_INTERVAL_SECONDS = 0.2
+MERZ_BURN_LAST_HIT_AT = 0.0
 # Position is in the overlay's own coordinate space (DISPLAY_WIDTH/HEIGHT,
 # it's drawn full-bleed over tft_surf, not scaled through the 240x400
 # dashboard surface like the rest of the UI). Both axes wander between
@@ -3551,6 +3583,8 @@ def activate_merz_game():
     global MERZ_DODGE_UNTIL, MERZ_HIT_FLINCH_UNTIL, MERZ_LAST_TICK, MERZ_SCALE
     global MERZ_JETS, MERZ_NEXT_JET_AT, MERZ_TAUNT_BAG
     global MERZ_EXPLODED, MERZ_EXPLODED_AT, MERZ_EXPLOSION_PARTICLES, MERZ_FLAME_PARTICLES, MERZ_AMMO
+    global MERZ_BURN_HELD, MERZ_BURN_PARTICLES, MERZ_BURN_COMBO_TAPS, MERZ_BURN_UNLOCKED
+    global MERZ_PROJECTILE_KIND
 
     if (
         not MERZ_ENABLED
@@ -3588,16 +3622,23 @@ def activate_merz_game():
     MERZ_EXPLOSION_PARTICLES = []
     MERZ_FLAME_PARTICLES = []
     MERZ_AMMO = {"egg": MERZ_AMMO_MAX, "testicle": MERZ_AMMO_MAX}
+    MERZ_BURN_HELD = False
+    MERZ_BURN_PARTICLES = []
+    MERZ_BURN_COMBO_TAPS = []
+    MERZ_BURN_UNLOCKED = False  # every new game (incl. replay) needs the combo again
+    if MERZ_PROJECTILE_KIND == "burn":
+        MERZ_PROJECTILE_KIND = "egg"
     logger.info("Merz game activated")
 
 
 def dismiss_merz_game(reason):
-    global MERZ_VISIBLE, MERZ_ACTION_RECTS
+    global MERZ_VISIBLE, MERZ_ACTION_RECTS, MERZ_BURN_HELD
 
     if not MERZ_VISIBLE:
         return
     MERZ_VISIBLE = False
     MERZ_ACTION_RECTS = {}
+    MERZ_BURN_HELD = False
     logger.info(f"Merz game dismissed ({reason})")
 
 
@@ -3628,6 +3669,8 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
     global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT, MERZ_TAUNT_BAG
     global MERZ_JETS, MERZ_NEXT_JET_AT
     global MERZ_AMMO, MERZ_EXPLODED, MERZ_EXPLODED_AT, MERZ_EXPLOSION_PARTICLES, MERZ_FLAME_PARTICLES
+    global MERZ_BURN_PARTICLES, MERZ_BURN_SPAWN_CARRY, MERZ_BURN_LAST_HIT_AT, MERZ_BURN_HELD
+    global MERZ_LAST_ACTIVITY_TS
 
     dt = max(0.0, min(0.2, now - MERZ_LAST_TICK))  # clamp so a stall can't teleport him
     MERZ_LAST_TICK = now
@@ -3715,11 +3758,59 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
         still_flying.append(proj)
     MERZ_PROJECTILES = still_flying
 
+    # Flamethrower stream (BURN easter egg): spawn from the same nozzle
+    # point throws start from, aimed at wherever the finger currently is
+    # (pygame's mouse position follows touch drags), with a little spread.
+    if MERZ_BURN_HELD:
+        MERZ_LAST_ACTIVITY_TS = now  # holding fire counts as activity
+        tx, ty = pygame.mouse.get_pos()
+        sx, sy = DISPLAY_WIDTH / 2, DISPLAY_HEIGHT - 10
+        dist = max(40.0, math.hypot(tx - sx, ty - sy))
+        base_angle = math.atan2(ty - sy, tx - sx)
+        MERZ_BURN_SPAWN_CARRY += MERZ_BURN_SPAWN_PER_SEC * dt
+        while MERZ_BURN_SPAWN_CARRY >= 1.0:
+            MERZ_BURN_SPAWN_CARRY -= 1.0
+            angle = base_angle + random.uniform(-0.09, 0.09)
+            speed = MERZ_BURN_SPEED * random.uniform(0.85, 1.15)
+            MERZ_BURN_PARTICLES.append(
+                {
+                    "x": sx,
+                    "y": sy,
+                    "vx": math.cos(angle) * speed,
+                    "vy": math.sin(angle) * speed,
+                    "started_at": now,
+                    # Burns out a bit past the finger, not forever.
+                    "lifetime": dist / MERZ_BURN_SPEED * random.uniform(1.0, 1.3),
+                }
+            )
+    else:
+        MERZ_BURN_SPAWN_CARRY = 0.0
+
+    burn_hit_pos = None
+    still_burning = []
+    for p in MERZ_BURN_PARTICLES:
+        p["x"] += p["vx"] * dt
+        p["y"] += p["vy"] * dt
+        if merz_rect.collidepoint((p["x"], p["y"])):
+            burn_hit_pos = (p["x"], p["y"])
+            continue  # absorbed - flames don't pass through him
+        if now - p["started_at"] < p["lifetime"]:
+            still_burning.append(p)
+    MERZ_BURN_PARTICLES = still_burning
+    if burn_hit_pos is not None and now - MERZ_BURN_LAST_HIT_AT >= MERZ_BURN_HIT_INTERVAL_SECONDS:
+        MERZ_BURN_LAST_HIT_AT = now
+        MERZ_HITS += 1
+        MERZ_SCALE = max(MERZ_SCALE_MIN, MERZ_SCALE - MERZ_SCALE_SHRINK_STEP)
+        MERZ_SPLATS.append({"pos": burn_hit_pos, "started_at": now, "kind": "hit"})
+        MERZ_HIT_FLINCH_UNTIL = now + 0.4
+
     if MERZ_HITS >= MERZ_WIN_HITS:
         MERZ_EXPLODED = True
         MERZ_EXPLODED_AT = now
         MERZ_PROJECTILES = []
         MERZ_JETS = []
+        MERZ_BURN_PARTICLES = []
+        MERZ_BURN_HELD = False
         for _ in range(40):
             angle = random.uniform(0, 2 * math.pi)
             spd = random.uniform(60, 220)
@@ -3872,8 +3963,11 @@ def _draw_merz_flame_particle(x, y, life_frac):
     fade out (life_frac: 1.0 = just spawned, 0.0 = about to be removed) -
     same stacked-triangle shape as _draw_merz_flame() but shrinking/fading
     instead of a fixed-size solid icon."""
-    size = 6 + 8 * life_frac
-    alpha = max(0, min(255, int(255 * life_frac)))
+    _draw_merz_flame_shape(x, y, 6 + 8 * life_frac, int(255 * life_frac))
+
+
+def _draw_merz_flame_shape(x, y, size, alpha):
+    alpha = max(0, min(255, alpha))
     surf_size = int(size * 2.4)
     surf = pygame.Surface((surf_size, surf_size), pygame.SRCALPHA)
     cx = cy = surf_size / 2
@@ -4125,6 +4219,12 @@ def draw_merz_overlay():
         x, y, _ = _merz_projectile_pos(proj, now)
         _draw_merz_projectile(x, y, proj["kind"])
 
+    # Flamethrower stream: small and solid at the nozzle, growing and
+    # fading as it travels - the reverse of the win-burst flames.
+    for p in MERZ_BURN_PARTICLES:
+        age_frac = min(1.0, (now - p["started_at"]) / p["lifetime"])
+        _draw_merz_flame_shape(p["x"], p["y"], 5 + 13 * age_frac, int(255 * (1.0 - age_frac**3)))
+
     for splat in MERZ_SPLATS:
         age = now - splat["started_at"]
         fade = max(0.0, 1.0 - age / 0.6)
@@ -4164,11 +4264,30 @@ def draw_merz_overlay():
     egg_rect.center = (DISPLAY_WIDTH // 2 - total_width // 2 + egg_rect.width // 2, row_y)
     testicle_rect.center = (egg_rect.right + button_gap + testicle_rect.width // 2, row_y)
     buttons_top = min(egg_rect.top, testicle_rect.top)
+    pills = [(egg_rect, egg_text, "egg"), (testicle_rect, testicle_text, "testicle")]
+    # Hidden BURN pill (see MERZ_BURN_COMBO), centered just above the
+    # EIER/KLÖTEN row once unlocked - three pills side by side don't fit the
+    # 480px-wide portrait screen with the ammo counts in the labels.
+    if MERZ_BURN_UNLOCKED:
+        burn_selected = MERZ_PROJECTILE_KIND == "burn"
+        burn_text = FONT_SMALL_BOLD.render("BURN", True, WHITE if burn_selected else (180, 40, 10))
+        burn_rect = burn_text.get_rect().inflate(44, 16)
+        burn_rect.midbottom = (DISPLAY_WIDTH // 2, buttons_top - 8)
+        pills.append((burn_rect, burn_text, "burn"))
+        buttons_top = burn_rect.top
 
-    for rect, text_surf, kind in (
-        (egg_rect, egg_text, "egg"),
-        (testicle_rect, testicle_text, "testicle"),
-    ):
+    for rect, text_surf, kind in pills:
+        if kind == "burn":
+            if MERZ_PROJECTILE_KIND == "burn":
+                fill, border = (200, 40, 10), YELLOW
+            else:
+                fill, border = (255, 220, 180), (180, 40, 10)
+            pygame.draw.rect(tft_surf, fill, rect, border_radius=10)
+            pygame.draw.rect(tft_surf, border, rect, width=2, border_radius=10)
+            tft_surf.blit(text_surf, text_surf.get_rect(center=rect.center))
+            _draw_merz_flame(rect.left + 12, rect.centery + 2)
+            _draw_merz_flame(rect.right - 12, rect.centery + 2)
+            continue
         empty = MERZ_AMMO[kind] < 1.0
         if empty:
             fill = (210, 210, 210)
@@ -4182,7 +4301,8 @@ def draw_merz_overlay():
 
     # Lightweight hint, not a button - tapping anywhere on screen throws,
     # this just explains that once, it doesn't do anything itself.
-    hint_text = FONT_SUPER_TINY.render("Tippe irgendwo, um zu werfen!", True, (60, 60, 60))
+    hint = "Halten, um zu brennen!" if MERZ_PROJECTILE_KIND == "burn" else "Tippe irgendwo, um zu werfen!"
+    hint_text = FONT_SUPER_TINY.render(hint, True, (60, 60, 60))
     tft_surf.blit(
         hint_text, hint_text.get_rect(midbottom=(DISPLAY_WIDTH // 2, buttons_top - 12))
     )
@@ -4192,7 +4312,9 @@ def draw_merz_overlay():
     # otherwise sit in front of (and obscure) the bubble.
     _draw_merz_speech_bubble()
 
-    MERZ_ACTION_RECTS = {"close": close_rect, "select_egg": egg_rect, "select_testicle": testicle_rect}
+    MERZ_ACTION_RECTS = {"close": close_rect}
+    for rect, _, kind in pills:
+        MERZ_ACTION_RECTS[f"select_{kind}"] = rect
 
 
 def handle_merz_button_click(mx, my):
@@ -4204,9 +4326,31 @@ def handle_merz_button_click(mx, my):
     return False
 
 
+def _merz_register_pill_tap(kind, now):
+    """Feed one EIER/KLÖTEN pill tap into the BURN combo detector - unlocks
+    and selects BURN once the last len(MERZ_BURN_COMBO) taps match it with
+    no gap longer than MERZ_BURN_COMBO_MAX_GAP_SECONDS."""
+    global MERZ_BURN_COMBO_TAPS, MERZ_BURN_UNLOCKED, MERZ_PROJECTILE_KIND
+
+    if MERZ_BURN_COMBO_TAPS and now - MERZ_BURN_COMBO_TAPS[-1][1] > MERZ_BURN_COMBO_MAX_GAP_SECONDS:
+        MERZ_BURN_COMBO_TAPS = []
+    MERZ_BURN_COMBO_TAPS = (MERZ_BURN_COMBO_TAPS + [(kind, now)])[-len(MERZ_BURN_COMBO):]
+    if [k for k, _ in MERZ_BURN_COMBO_TAPS] == MERZ_BURN_COMBO:
+        MERZ_BURN_COMBO_TAPS = []
+        MERZ_BURN_UNLOCKED = True
+        MERZ_PROJECTILE_KIND = "burn"
+        logger.info("Merz game: BURN unlocked")
+
+
+def handle_merz_release():
+    global MERZ_BURN_HELD
+    MERZ_BURN_HELD = False
+
+
 def handle_merz_click(mx, my):
     global MERZ_PROJECTILE_KIND, MERZ_PROJECTILES, MERZ_LAST_ACTIVITY_TS, MERZ_AMMO
     global MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y, MERZ_NEXT_WANDER_AT, MERZ_DODGE_UNTIL
+    global MERZ_BURN_HELD
 
     if not MERZ_VISIBLE:
         return False
@@ -4226,14 +4370,17 @@ def handle_merz_click(mx, my):
             activate_merz_game()
         return True
 
-    egg_rect = MERZ_ACTION_RECTS.get("select_egg")
-    if egg_rect and egg_rect.collidepoint((mx, my)):
-        MERZ_PROJECTILE_KIND = "egg"
-        return True
+    for kind in ("egg", "testicle", "burn"):
+        rect = MERZ_ACTION_RECTS.get(f"select_{kind}")
+        if rect and rect.collidepoint((mx, my)):
+            MERZ_PROJECTILE_KIND = kind
+            if kind != "burn":
+                # May flip MERZ_PROJECTILE_KIND straight to "burn".
+                _merz_register_pill_tap(kind, time.time())
+            return True
 
-    testicle_rect = MERZ_ACTION_RECTS.get("select_testicle")
-    if testicle_rect and testicle_rect.collidepoint((mx, my)):
-        MERZ_PROJECTILE_KIND = "testicle"
+    if MERZ_PROJECTILE_KIND == "burn":
+        MERZ_BURN_HELD = True  # stream runs in update_merz_game() until release
         return True
 
     if MERZ_AMMO[MERZ_PROJECTILE_KIND] < 1.0:
@@ -4548,6 +4695,7 @@ def show_quiz_results_only():
 
     QUIZ_OWN_RESULT = None
     QUIZ_ALL_RESULTS = read_quiz_results(QUIZ_LOG_PATH)
+    _quiz_results_reset_zoom()
     QUIZ_STAGE = "results"
     QUIZ_LAST_ACTIVITY_TS = time.time()
 
@@ -4584,9 +4732,62 @@ def handle_quiz_scan_release():
     QUIZ_SCAN_HELD = False
 
 
+def _quiz_results_zoom_to(zoom, center):
+    global QUIZ_RESULTS_ZOOM, QUIZ_RESULTS_VIEW_CENTER, QUIZ_RESULTS_HELD_KEY
+    QUIZ_RESULTS_ZOOM = min(max(zoom, 1.0), QUIZ_RESULTS_ZOOM_MAX)
+    QUIZ_RESULTS_VIEW_CENTER = center
+    QUIZ_RESULTS_HELD_KEY = None  # dot keys are screen positions, stale after a zoom
+
+
+def _quiz_results_reset_zoom():
+    global QUIZ_RESULTS_ZOOM, QUIZ_RESULTS_VIEW_CENTER, QUIZ_RESULTS_VIEW, QUIZ_RESULTS_DRAG
+    QUIZ_RESULTS_ZOOM = 1.0
+    QUIZ_RESULTS_VIEW_CENTER = None
+    QUIZ_RESULTS_VIEW = None
+    QUIZ_RESULTS_DRAG = None
+
+
+def _quiz_results_dot_radius(count):
+    """Shared-position dots grow with the number of people on them (area
+    roughly proportional to count), capped so a big cluster can't swallow
+    its neighbours."""
+    return min(12, int(round(4 * math.sqrt(count))))
+
+
+def handle_quiz_results_motion(mx, my):
+    """Finger drag on empty plot space pans the zoomed view (no-op at 1x -
+    the whole triangle is already visible)."""
+    global QUIZ_RESULTS_VIEW_CENTER, QUIZ_LAST_ACTIVITY_TS
+
+    drag = QUIZ_RESULTS_DRAG
+    if drag is None:
+        return
+    dx, dy = mx - drag["start"][0], my - drag["start"][1]
+    if not drag["moved"] and math.hypot(dx, dy) < QUIZ_RESULTS_DRAG_THRESHOLD_PX:
+        return
+    drag["moved"] = True
+    QUIZ_LAST_ACTIVITY_TS = time.time()
+    if QUIZ_RESULTS_ZOOM > 1.0:
+        # Content follows the finger; draw_quiz_results_stage() clamps it.
+        QUIZ_RESULTS_VIEW_CENTER = (
+            drag["center"][0] - dx / QUIZ_RESULTS_ZOOM,
+            drag["center"][1] - dy / QUIZ_RESULTS_ZOOM,
+        )
+
+
 def handle_quiz_results_release():
-    global QUIZ_RESULTS_HELD_KEY
+    global QUIZ_RESULTS_HELD_KEY, QUIZ_RESULTS_DRAG
     QUIZ_RESULTS_HELD_KEY = None
+    drag, QUIZ_RESULTS_DRAG = QUIZ_RESULTS_DRAG, None
+    view = QUIZ_RESULTS_VIEW
+    if drag is None or drag["moved"] or view is None:
+        return
+    sx, sy = drag["start"]
+    tapped_base = (
+        view["center"][0] + (sx - view["plot_center"][0]) / view["zoom"],
+        view["center"][1] + (sy - view["plot_center"][1]) / view["zoom"],
+    )
+    _quiz_results_zoom_to(QUIZ_RESULTS_ZOOM * 2, tapped_base)
 
 
 def handle_quiz_answer(axis):
@@ -4608,6 +4809,7 @@ def handle_quiz_answer(axis):
     logger.info(f"Quiz result logged: {result}")
     QUIZ_OWN_RESULT = result
     QUIZ_ALL_RESULTS = read_quiz_results(QUIZ_LOG_PATH)
+    _quiz_results_reset_zoom()
     QUIZ_STAGE = "results"
 
 
@@ -4629,6 +4831,7 @@ def dismiss_quiz(reason):
     QUIZ_OWN_RESULT = None
     QUIZ_RESULTS_HELD_KEY = None
     QUIZ_RESULTS_ACTION_RECTS = {}
+    _quiz_results_reset_zoom()
     logger.info(f"Quiz dismissed ({reason})")
 
 
@@ -5011,7 +5214,9 @@ def draw_quiz_results_stage(card):
     QUIZ_RESULTS_ACTION_RECTS = {"close": close_rect}
 
     title_font = FONT_SMALL_BOLD
-    title_max_width = close_rect.left - card.left - 2 * inner_pad
+    # Centered, so it has to clear the close button on *both* sides - it
+    # used to only reserve the right-hand side and still ran into the X.
+    title_max_width = card.width - 2 * (close_size + 10 + inner_pad)
     title_lines = _quiz_wrap_text(title_font, "Dein Ergebnis im AFM Test", title_max_width)
     title_line_h = title_font.get_height()
     for i, line in enumerate(title_lines):
@@ -5023,7 +5228,9 @@ def draw_quiz_results_stage(card):
 
     hint_font = FONT_SUPER_TINY
     hint_lines = _quiz_wrap_text(
-        hint_font, "Punkt halten zeigt Namen - X zum Schließen", card.width - 2 * inner_pad
+        hint_font,
+        "Tippen zoomt, Ziehen verschiebt - Punkt halten zeigt Namen",
+        card.width - 2 * inner_pad,
     )
     hint_line_h = hint_font.get_height()
     hint_rect = pygame.Rect(
@@ -5060,9 +5267,51 @@ def draw_quiz_results_stage(card):
     top_y = area_top + (area_height - height) / 2
     base_y = top_y + height
 
-    top_vertex = (center_x, top_y)
-    bl_vertex = (center_x - side / 2, base_y)
-    br_vertex = (center_x + side / 2, base_y)
+    # Unzoomed ("base") geometry - everything below is computed in these
+    # coordinates first, then mapped through to_screen() for the current
+    # zoom. At zoom 1 with the default center, to_screen() is the identity,
+    # so the unzoomed layout is exactly what it was before zoom existed.
+    base_top = (center_x, top_y)
+    base_bl = (center_x - side / 2, base_y)
+    base_br = (center_x + side / 2, base_y)
+    plot_center = (center_x, (top_y + base_y) / 2)
+    plot_rect = pygame.Rect(
+        card.left + 2, title_rect.bottom + 2, card.width - 4, hint_rect.top - title_rect.bottom - 4
+    )
+
+    global QUIZ_RESULTS_VIEW_CENTER, QUIZ_RESULTS_VIEW
+    zoom = QUIZ_RESULTS_ZOOM
+    if zoom <= 1.0 or QUIZ_RESULTS_VIEW_CENTER is None:
+        QUIZ_RESULTS_VIEW_CENTER = plot_center
+    # Keep the view center inside the triangle's bounding box, so zooming
+    # in near an edge can't scroll the whole triangle out of view.
+    view_center = (
+        min(max(QUIZ_RESULTS_VIEW_CENTER[0], base_bl[0]), base_br[0]),
+        min(max(QUIZ_RESULTS_VIEW_CENTER[1], top_y), base_y),
+    )
+    QUIZ_RESULTS_VIEW_CENTER = view_center
+    QUIZ_RESULTS_VIEW = {
+        "plot_center": plot_center,
+        "center": view_center,
+        "zoom": zoom,
+        "plot_rect": plot_rect,
+    }
+
+    def to_screen(point):
+        return (
+            plot_center[0] + (point[0] - view_center[0]) * zoom,
+            plot_center[1] + (point[1] - view_center[1]) * zoom,
+        )
+
+    top_vertex = to_screen(base_top)
+    bl_vertex = to_screen(base_bl)
+    br_vertex = to_screen(base_br)
+
+    # Everything inside the plot (triangle, axis labels, dots) is clipped
+    # to the plot area so a zoomed-in view can't paint over the title,
+    # hint or card border. Held-name labels are drawn after the clip is
+    # lifted, see below.
+    tft_surf.set_clip(plot_rect)
 
     triangle_fill = (240, 228, 255)
     pygame.draw.polygon(tft_surf, triangle_fill, [top_vertex, bl_vertex, br_vertex])
@@ -5098,20 +5347,23 @@ def draw_quiz_results_stage(card):
     def ternary_point(mausig, atzig, fotzig):
         total = mausig + atzig + fotzig
         if total <= 0:
-            return (card.centerx, (top_vertex[1] + bl_vertex[1]) / 2)
+            return to_screen((center_x, (base_top[1] + base_bl[1]) / 2))
         fm, fa, ff = mausig / total, atzig / total, fotzig / total
-        x = bl_vertex[0] * fm + br_vertex[0] * ff + top_vertex[0] * fa
-        y = bl_vertex[1] * fm + br_vertex[1] * ff + top_vertex[1] * fa
-        return (x, y)
+        x = base_bl[0] * fm + base_br[0] * ff + base_top[0] * fa
+        y = base_bl[1] * fm + base_br[1] * ff + base_top[1] * fa
+        return to_screen((x, y))
 
     global QUIZ_RESULTS_DOT_HITBOXES
     QUIZ_RESULTS_DOT_HITBOXES = []
 
     # One entry per name now (see submit_quiz_result - retakes are averaged
     # in place, not appended), but different people can still land on the
-    # exact same point by scoring identically. Group by rounded position so
-    # coincident dots draw once with a count badge instead of silently
-    # hiding one another, and so holding the point lists every name there.
+    # exact same point by scoring identically. Group by rounded *screen*
+    # position so coincident dots draw once, bigger the more people share
+    # it, instead of silently hiding one another, and so holding the point
+    # lists every name there - grouping after the zoom transform means
+    # near-identical results that share a pixel at 1x split apart once
+    # zoomed in.
     own_id = QUIZ_OWN_RESULT.get("id") if QUIZ_OWN_RESULT else None
     position_groups = {}
     for entry in QUIZ_ALL_RESULTS:
@@ -5122,23 +5374,19 @@ def draw_quiz_results_stage(card):
         group = position_groups.setdefault(key, {"pos": (x, y), "names": []})
         group["names"].append(entry.get("name", "?"))
 
+    held_group = None
     for key, group in position_groups.items():
         x, y = group["pos"]
-        pygame.draw.circle(tft_surf, SWEET_PURPLE, (int(x), int(y)), 4)
-        pygame.draw.circle(tft_surf, VIOLET, (int(x), int(y)), 4, width=1)
-        if len(group["names"]) > 1:
-            badge_center = (int(x) + 8, int(y) - 8)
-            pygame.draw.circle(tft_surf, ORANGE, badge_center, 7)
-            pygame.draw.circle(tft_surf, VIOLET, badge_center, 7, width=1)
-            count_surf = FONT_SUPER_TINY.render(str(len(group["names"])), True, BLACK)
-            tft_surf.blit(count_surf, count_surf.get_rect(center=badge_center))
-        QUIZ_RESULTS_DOT_HITBOXES.append({"key": key, "names": group["names"], "pos": (x, y)})
+        if not plot_rect.collidepoint((x, y)):
+            continue  # zoomed out of view - not drawn, not holdable
+        radius = _quiz_results_dot_radius(len(group["names"]))
+        pygame.draw.circle(tft_surf, SWEET_PURPLE, (int(x), int(y)), radius)
+        pygame.draw.circle(tft_surf, VIOLET, (int(x), int(y)), radius, width=1)
+        QUIZ_RESULTS_DOT_HITBOXES.append(
+            {"key": key, "names": group["names"], "pos": (x, y), "radius": radius}
+        )
         if key == QUIZ_RESULTS_HELD_KEY:
-            name_surf = FONT_TINY.render(", ".join(group["names"]), True, BLACK)
-            name_rect = name_surf.get_rect(midtop=(int(x), int(y) + 8))
-            pygame.draw.rect(tft_surf, WHITE, name_rect.inflate(6, 4), border_radius=4)
-            pygame.draw.rect(tft_surf, DARK_GRAY, name_rect.inflate(6, 4), width=1, border_radius=4)
-            tft_surf.blit(name_surf, name_rect)
+            held_group = group
 
     # Own result: always visible, unmistakable - a big red dot, clearly
     # bigger than the other participants' small purple dots.
@@ -5156,6 +5404,51 @@ def draw_quiz_results_stage(card):
         pygame.draw.rect(tft_surf, WHITE, name_rect.inflate(6, 4), border_radius=4)
         pygame.draw.rect(tft_surf, RED, name_rect.inflate(6, 4), width=1, border_radius=4)
         tft_surf.blit(name_surf, name_rect)
+
+    tft_surf.set_clip(None)
+
+    # Held-dot name label goes on top of *everything* (other dots, count
+    # badges, the own-result marker) - it used to be drawn inside the dot
+    # loop, so every dot drawn after it in the loop landed on top of the
+    # label and made the name hard to read in crowded areas. Wrapped to the
+    # card width and kept inside the card.
+    if held_group is not None:
+        x, y = held_group["pos"]
+        label_lines = _quiz_wrap_text(FONT_TINY, ", ".join(held_group["names"]), card.width - 30)
+        line_h = FONT_TINY.get_height()
+        label_w = max(FONT_TINY.size(line)[0] for line in label_lines)
+        box = pygame.Rect(0, 0, label_w + 10, len(label_lines) * line_h + 6)
+        label_gap = _quiz_results_dot_radius(len(held_group["names"])) + 6
+        box.midtop = (int(x), int(y) + label_gap)
+        if box.bottom > hint_rect.top:  # no room below the dot - flip above it
+            box.midbottom = (int(x), int(y) - label_gap)
+        box.clamp_ip(card.inflate(-8, -8))
+        pygame.draw.rect(tft_surf, WHITE, box, border_radius=4)
+        pygame.draw.rect(tft_surf, VIOLET, box, width=2, border_radius=4)
+        for i, line in enumerate(label_lines):
+            line_surf = FONT_TINY.render(line, True, BLACK)
+            tft_surf.blit(line_surf, line_surf.get_rect(midtop=(box.centerx, box.top + 3 + i * line_h)))
+
+    # Zoom buttons, top-left of the plot area (empty space beside the
+    # ATZIG apex at 1x). "+" zooms around the current view center, "-"
+    # steps back out; tapping empty plot space also zooms in, centered on
+    # the tap (see handle_quiz_click()).
+    zoom_size = 26
+    zoom_in_rect = pygame.Rect(plot_rect.left + 6, plot_rect.top + 4, zoom_size, zoom_size)
+    zoom_out_rect = pygame.Rect(zoom_in_rect.left, zoom_in_rect.bottom + 6, zoom_size, zoom_size)
+    for rect, symbol, enabled in (
+        (zoom_in_rect, "+", zoom < QUIZ_RESULTS_ZOOM_MAX),
+        (zoom_out_rect, "-", zoom > 1.0),
+    ):
+        pygame.draw.rect(tft_surf, SWEET_PURPLE if enabled else (210, 210, 210), rect, border_radius=8)
+        pygame.draw.rect(tft_surf, VIOLET, rect, width=2, border_radius=8)
+        symbol_surf = FONT_SMALL_BOLD.render(symbol, True, BLACK)
+        tft_surf.blit(symbol_surf, symbol_surf.get_rect(center=rect.center))
+    if zoom > 1.0:
+        zoom_label = FONT_SUPER_TINY.render(f"{zoom:g}x", True, DARK_GRAY)
+        tft_surf.blit(zoom_label, zoom_label.get_rect(midtop=(zoom_out_rect.centerx, zoom_out_rect.bottom + 3)))
+    QUIZ_RESULTS_ACTION_RECTS["zoom_in"] = zoom_in_rect
+    QUIZ_RESULTS_ACTION_RECTS["zoom_out"] = zoom_out_rect
 
     for i, line in enumerate(hint_lines):
         line_surf = hint_font.render(line, True, DARK_GRAY)
@@ -5197,7 +5490,7 @@ def draw_quiz_overlay():
 
 
 def handle_quiz_click(mx, my):
-    global QUIZ_SCAN_HELD, QUIZ_LAST_ACTIVITY_TS, QUIZ_RESULTS_HELD_KEY
+    global QUIZ_SCAN_HELD, QUIZ_LAST_ACTIVITY_TS, QUIZ_RESULTS_HELD_KEY, QUIZ_RESULTS_DRAG
 
     if QUIZ_STAGE is None:
         return False
@@ -5220,11 +5513,26 @@ def handle_quiz_click(mx, my):
         # missing a dot by a few px used to close the whole screen, which
         # made holding a dot to see its name basically unusable. Closing is
         # only via the X button now, or the 30s idle timeout.
+        zoom_in_rect = QUIZ_RESULTS_ACTION_RECTS.get("zoom_in")
+        if zoom_in_rect and zoom_in_rect.collidepoint((mx, my)):
+            _quiz_results_zoom_to(QUIZ_RESULTS_ZOOM * 2, QUIZ_RESULTS_VIEW_CENTER)
+            return True
+        zoom_out_rect = QUIZ_RESULTS_ACTION_RECTS.get("zoom_out")
+        if zoom_out_rect and zoom_out_rect.collidepoint((mx, my)):
+            _quiz_results_zoom_to(QUIZ_RESULTS_ZOOM / 2, QUIZ_RESULTS_VIEW_CENTER)
+            return True
         for hitbox in QUIZ_RESULTS_DOT_HITBOXES:
             hx, hy = hitbox["pos"]
-            if ((mx - hx) ** 2 + (my - hy) ** 2) ** 0.5 <= 12:
+            if ((mx - hx) ** 2 + (my - hy) ** 2) ** 0.5 <= max(12, hitbox["radius"] + 4):
                 QUIZ_RESULTS_HELD_KEY = hitbox["key"]
                 return True
+        # Missed every dot: start a press on empty space - becomes a pan if
+        # the finger moves, a zoom-in at this point if it's lifted in place
+        # (missing a dot by a few px in a crowded cluster is exactly when
+        # zooming helps anyway).
+        view = QUIZ_RESULTS_VIEW
+        if view and view["plot_rect"].collidepoint((mx, my)):
+            QUIZ_RESULTS_DRAG = {"start": (mx, my), "center": view["center"], "moved": False}
         return True
 
     if QUIZ_STAGE == "name":
@@ -5632,6 +5940,13 @@ def loop():
                     handle_quiz_scan_release()
                 elif QUIZ_STAGE == "results":
                     handle_quiz_results_release()
+                if MERZ_VISIBLE:
+                    handle_merz_release()  # stops the BURN flamethrower stream
+
+            elif event.type == pygame.MOUSEMOTION:
+                # Only used to pan the zoomed AFM results triangle by drag.
+                if QUIZ_STAGE == "results":
+                    handle_quiz_results_motion(*event.pos)
 
             elif event.type == pygame.KEYDOWN:
 
