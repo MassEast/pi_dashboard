@@ -5888,13 +5888,23 @@ def loop():
                 # near the other three corners.
                 handle_secret_video_gesture_tap(secret_video_corner_for_click(mx, my))
 
-                # Emergency exit logic - always takes priority over any overlay
-                # (emotion popup, keyboard, confirmation), so it can never get
+                # Emergency exit logic - takes priority over the emotion
+                # overlays (popup, keyboard, confirmation), so it can never get
                 # swallowed by them. Check if click is in top-left corner.
                 # Box is deliberately generous (not 50x50): on the real DSI touchscreen,
                 # taps aimed at the physical corner land anywhere up to (85, 160) due to
                 # touch calibration imprecision (measured 2026-07-08).
-                if mx < EMERGENCY_EXIT_MAX_X and my < EMERGENCY_EXIT_MAX_Y:
+                # Except inside the AFM quiz and the MERZ game: both are
+                # tap-heavy, full-screen overlays with their own X button and
+                # idle timeout, so the escape hatch is never needed there -
+                # but repeatedly tapping a button near the corner (the quiz
+                # "+" zoom button, 2026-10-09) quit the app by accident.
+                if (
+                    QUIZ_STAGE is None
+                    and not MERZ_VISIBLE
+                    and mx < EMERGENCY_EXIT_MAX_X
+                    and my < EMERGENCY_EXIT_MAX_Y
+                ):
                     exit_clicks += 1
                     logger.info(f"Emergency exit click: {exit_clicks}/5")
                     if exit_clicks >= 5:

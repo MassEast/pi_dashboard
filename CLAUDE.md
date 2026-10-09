@@ -108,7 +108,9 @@ through the JSON files in `logs/`:
 - Two built-in safety mechanisms exist specifically because this runs headless/unattended on a
   touchscreen with no keyboard: an emergency-exit corner tap (top-left corner, 5 rapid taps
   anywhere within the hitbox — deliberately generous, not pixel-exact, because real touchscreen
-  taps land with real imprecision) that always takes priority over any overlay so it can never get
-  swallowed by a popup, and a no-internet auto-reboot in `safe_network_monitor()` that is rate
+  taps land with real imprecision) that takes priority over the emotion overlays so it can never get
+  swallowed by a popup — but is deliberately *off* while the AFM quiz or MERZ game is open (both
+  have their own X + idle timeout, and tapping their buttons near the corner quit the app by
+  accident), and a no-internet auto-reboot in `safe_network_monitor()` that is rate
   limited (`NETWORK_REBOOT_COOLDOWN_SECONDS`) so a real upstream outage doesn't turn into a
   reboot loop.
