@@ -588,6 +588,9 @@ QUIZ_SCAN_SECONDS = 8.0  # of actual held time, not wall-clock (see QUIZ_SCAN_HE
 # Resets on every tap (see handle_quiz_click) - too low and people get kicked
 # out mid-question while still reading/deciding, not actually idle.
 QUIZ_IDLE_TIMEOUT_SECONDS = QUIZ_CONFIG.get("IDLE_TIMEOUT_SECONDS", 90)
+# Frame rate while the AFM test is open (any stage) - smoother drag-panning
+# on the results triangle than the dashboard's own low DISPLAY.FPS.
+QUIZ_FPS = QUIZ_CONFIG.get("FPS", 20)
 # Each question has exactly 3 options, one per axis - order within a question
 # is intentionally varied so the axis can't be guessed from button position.
 QUIZ_QUESTION_BANK = [
@@ -5974,7 +5977,12 @@ def loop():
 
         # do it as often as FPS configured (30 FPS recommend for particle
         #  simulation, 15 runs fine too, 60 is overkill)
-        clock.tick(MERZ_FPS if MERZ_VISIBLE else FPS)
+        if MERZ_VISIBLE:
+            clock.tick(MERZ_FPS)
+        elif QUIZ_STAGE is not None:
+            clock.tick(QUIZ_FPS)
+        else:
+            clock.tick(FPS)
 
     quit_all()
 
