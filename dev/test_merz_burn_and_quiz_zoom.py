@@ -71,6 +71,9 @@ def test_merz_burn():
     assert burn.centerx == P.DISPLAY_WIDTH // 2 and burn.bottom < egg.top, "BURN pill not centered above"
     assert all(0 <= r.left and r.right <= P.DISPLAY_WIDTH for r in (egg, burn, testicle)), "pill off-screen"
     pygame.image.save(P.tft_surf, os.path.join(OUT_DIR, "merz_burn_unlocked.png"))
+    exit_zone = pygame.Rect(0, 0, P.EMERGENCY_EXIT_MAX_X, P.EMERGENCY_EXIT_MAX_Y)
+    for name, rect in P.MERZ_ACTION_RECTS.items():
+        assert not rect.colliderect(exit_zone), f"merz {name} button inside emergency-exit zone"
 
     # Hold fire at Merz for ~3s of simulated frames; he can't dodge this.
     hits_before = P.MERZ_HITS
@@ -177,6 +180,12 @@ def test_quiz_zoom():
     P.handle_quiz_click(*P.QUIZ_RESULTS_ACTION_RECTS["zoom_out"].center)
     P.handle_quiz_click(*P.QUIZ_RESULTS_ACTION_RECTS["zoom_out"].center)
     assert P.QUIZ_RESULTS_ZOOM == 1.0
+
+    # Regression: the "+" button used to sit inside the emergency-exit
+    # corner, so zooming in 5 times quit the app on the device.
+    exit_zone = pygame.Rect(0, 0, P.EMERGENCY_EXIT_MAX_X, P.EMERGENCY_EXIT_MAX_Y)
+    for name, rect in P.QUIZ_RESULTS_ACTION_RECTS.items():
+        assert not rect.colliderect(exit_zone), f"quiz {name} button inside emergency-exit zone"
     P.dismiss_quiz("test")
     assert P.QUIZ_RESULTS_ZOOM == 1.0 and P.QUIZ_RESULTS_VIEW_CENTER is None
 

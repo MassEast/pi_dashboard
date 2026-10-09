@@ -907,6 +907,11 @@ QUIZ_AXIS_COLOR = {"mausig": (110, 160, 255), "atzig": (255, 90, 90), "fotzig": 
 # QUIZ_STAGE: None (inactive) -> "name" -> "scan" -> "question" -> "results".
 QUIZ_STAGE = None
 QUIZ_LAST_ACTIVITY_TS = 0.0
+# Emergency-exit corner hitbox (5 taps quits the app, see loop()) - shared
+# constants so overlays can keep their buttons out of it: a button placed
+# in this zone turns "tap it a few times" into quitting the app.
+EMERGENCY_EXIT_MAX_X = 100
+EMERGENCY_EXIT_MAX_Y = 180
 QUIZ_BUTTON_RECT = None
 QUIZ_NAME_TEXT = ""
 QUIZ_NAME_RECTS = []
@@ -5430,11 +5435,13 @@ def draw_quiz_results_stage(card):
             line_surf = FONT_TINY.render(line, True, BLACK)
             tft_surf.blit(line_surf, line_surf.get_rect(midtop=(box.centerx, box.top + 3 + i * line_h)))
 
-    # Zoom buttons, top-left of the plot area (empty space beside the
-    # ATZIG apex at 1x). "+" zooms around the current view center, "-"
-    # steps back out. Big enough to hit reliably on the touchscreen.
+    # Zoom buttons, top-RIGHT of the plot area (empty space beside the
+    # ATZIG apex at 1x). Not top-left: that's inside the emergency-exit
+    # corner (EMERGENCY_EXIT_MAX_X/Y), and tapping "+" 5 times quit the app.
+    # "+" zooms around the current view center, "-" steps back out. Big
+    # enough to hit reliably on the touchscreen.
     zoom_size = 44
-    zoom_in_rect = pygame.Rect(plot_rect.left + 6, plot_rect.top + 4, zoom_size, zoom_size)
+    zoom_in_rect = pygame.Rect(plot_rect.right - 6 - zoom_size, plot_rect.top + 4, zoom_size, zoom_size)
     zoom_out_rect = pygame.Rect(zoom_in_rect.left, zoom_in_rect.bottom + 6, zoom_size, zoom_size)
     for rect, symbol, enabled in (
         (zoom_in_rect, "+", zoom < QUIZ_RESULTS_ZOOM_MAX),
@@ -5887,7 +5894,7 @@ def loop():
                 # Box is deliberately generous (not 50x50): on the real DSI touchscreen,
                 # taps aimed at the physical corner land anywhere up to (85, 160) due to
                 # touch calibration imprecision (measured 2026-07-08).
-                if mx < 100 and my < 180:
+                if mx < EMERGENCY_EXIT_MAX_X and my < EMERGENCY_EXIT_MAX_Y:
                     exit_clicks += 1
                     logger.info(f"Emergency exit click: {exit_clicks}/5")
                     if exit_clicks >= 5:
