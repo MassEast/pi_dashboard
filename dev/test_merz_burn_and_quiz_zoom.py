@@ -41,6 +41,14 @@ def test_merz_burn():
     P.draw_merz_overlay()
     assert "select_burn" not in P.MERZ_ACTION_RECTS
 
+    # Regression: the dashboard's emolog footer hit zone (never cleared,
+    # bottom-left) overlaps the EIER pill and used to swallow taps there.
+    P.EMOLOG_FOOTER_RECT = P.MERZ_ACTION_RECTS["select_egg"].copy()
+    assert not P.handle_emolog_footer_click(*P.MERZ_ACTION_RECTS["select_egg"].center)
+    P.QUIZ_STAGE = "results"
+    assert not P.handle_emolog_footer_click(*P.MERZ_ACTION_RECTS["select_egg"].center)
+    P.QUIZ_STAGE = None
+
     # Too slow: one gap over the limit must not unlock.
     combo = P.MERZ_BURN_COMBO
     for i, kind in enumerate(combo):
@@ -126,7 +134,9 @@ def test_quiz_zoom():
         key=lambda p: (p[0] - cx) ** 2 + (p[1] - cy) ** 2,
     )
     P.handle_quiz_click(*empty)
-    assert P.QUIZ_RESULTS_ZOOM == 1.0, "zoom must wait for release (could become a drag)"
+    P.handle_quiz_results_release()
+    assert P.QUIZ_RESULTS_ZOOM == 1.0, "plain tap on empty space must not zoom"
+    P.handle_quiz_click(*P.QUIZ_RESULTS_ACTION_RECTS["zoom_in"].center)
     P.handle_quiz_results_release()
     assert P.QUIZ_RESULTS_ZOOM == 2.0, P.QUIZ_RESULTS_ZOOM
     P.draw_quiz_overlay()

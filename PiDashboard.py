@@ -935,17 +935,15 @@ QUIZ_RESULTS_DOT_HITBOXES = []
 # label list every name sharing that point instead of hiding all but one.
 QUIZ_RESULTS_HELD_KEY = None
 QUIZ_RESULTS_ACTION_RECTS = {}
-# Tap-to-zoom on the results triangle: tapping empty space (not a dot)
-# zooms in centered on that spot, the "-" button steps back out. The view
-# center is stored in *unzoomed* screen coordinates, so it stays valid as
-# the zoom level changes - see draw_quiz_results_stage().
+# Zoom on the results triangle via the +/- buttons, pan by dragging. The
+# view center is stored in *unzoomed* screen coordinates, so it stays valid
+# as the zoom level changes - see draw_quiz_results_stage().
 QUIZ_RESULTS_ZOOM = 1.0
 QUIZ_RESULTS_ZOOM_MAX = 8.0
 QUIZ_RESULTS_VIEW_CENTER = None
 QUIZ_RESULTS_VIEW = None  # {"plot_center", "center", "zoom", "plot_rect"} from the last draw
-# Press on empty plot space: dragging pans the zoomed view, releasing
-# without having dragged zooms in at the press point (see
-# handle_quiz_results_motion()/handle_quiz_results_release()).
+# Press on empty plot space: dragging pans the zoomed view (see
+# handle_quiz_results_motion()); a plain tap does nothing.
 QUIZ_RESULTS_DRAG = None  # {"start": (x, y), "center": view center at press, "moved": bool}
 QUIZ_RESULTS_DRAG_THRESHOLD_PX = 8
 
@@ -3259,7 +3257,12 @@ def handle_emolog_footer_click(mx, my):
     and the EMOTION_RESULTS_VISIBLE auto-close check in loop()."""
     global EMOTION_RESULTS_VISIBLE, EMOLOG_QR_OPENED_AT
 
-    if EMOTION_PROMPT_VISIBLE or EMOTION_RESULTS_VISIBLE:
+    # MERZ/quiz cover the footer, but this rect is only ever set when the
+    # dashboard is drawn, never cleared - without this guard it kept
+    # stealing taps at the bottom-left of those overlays (the MERZ EIER
+    # pill sits right on it: every other tap there opened the hidden QR,
+    # the next one closed it again, so the BURN combo could never land).
+    if EMOTION_PROMPT_VISIBLE or EMOTION_RESULTS_VISIBLE or MERZ_VISIBLE or QUIZ_STAGE is not None:
         return False
     if not EMOLOG_FOOTER_RECT or not EMOLOG_FOOTER_RECT.collidepoint((mx, my)):
         return False
@@ -4778,16 +4781,7 @@ def handle_quiz_results_motion(mx, my):
 def handle_quiz_results_release():
     global QUIZ_RESULTS_HELD_KEY, QUIZ_RESULTS_DRAG
     QUIZ_RESULTS_HELD_KEY = None
-    drag, QUIZ_RESULTS_DRAG = QUIZ_RESULTS_DRAG, None
-    view = QUIZ_RESULTS_VIEW
-    if drag is None or drag["moved"] or view is None:
-        return
-    sx, sy = drag["start"]
-    tapped_base = (
-        view["center"][0] + (sx - view["plot_center"][0]) / view["zoom"],
-        view["center"][1] + (sy - view["plot_center"][1]) / view["zoom"],
-    )
-    _quiz_results_zoom_to(QUIZ_RESULTS_ZOOM * 2, tapped_base)
+    QUIZ_RESULTS_DRAG = None
 
 
 def handle_quiz_answer(axis):
@@ -5229,7 +5223,7 @@ def draw_quiz_results_stage(card):
     hint_font = FONT_SUPER_TINY
     hint_lines = _quiz_wrap_text(
         hint_font,
-        "Tippen zoomt, Ziehen verschiebt - Punkt halten zeigt Namen",
+        "+/- zoomt, Ziehen verschiebt - Punkt halten zeigt Namen",
         card.width - 2 * inner_pad,
     )
     hint_line_h = hint_font.get_height()
@@ -5431,9 +5425,8 @@ def draw_quiz_results_stage(card):
 
     # Zoom buttons, top-left of the plot area (empty space beside the
     # ATZIG apex at 1x). "+" zooms around the current view center, "-"
-    # steps back out; tapping empty plot space also zooms in, centered on
-    # the tap (see handle_quiz_click()).
-    zoom_size = 26
+    # steps back out. Big enough to hit reliably on the touchscreen.
+    zoom_size = 44
     zoom_in_rect = pygame.Rect(plot_rect.left + 6, plot_rect.top + 4, zoom_size, zoom_size)
     zoom_out_rect = pygame.Rect(zoom_in_rect.left, zoom_in_rect.bottom + 6, zoom_size, zoom_size)
     for rect, symbol, enabled in (
@@ -5442,7 +5435,7 @@ def draw_quiz_results_stage(card):
     ):
         pygame.draw.rect(tft_surf, SWEET_PURPLE if enabled else (210, 210, 210), rect, border_radius=8)
         pygame.draw.rect(tft_surf, VIOLET, rect, width=2, border_radius=8)
-        symbol_surf = FONT_SMALL_BOLD.render(symbol, True, BLACK)
+        symbol_surf = FONT_BIG_BOLD.render(symbol, True, BLACK)
         tft_surf.blit(symbol_surf, symbol_surf.get_rect(center=rect.center))
     if zoom > 1.0:
         zoom_label = FONT_SUPER_TINY.render(f"{zoom:g}x", True, DARK_GRAY)
@@ -5526,10 +5519,9 @@ def handle_quiz_click(mx, my):
             if ((mx - hx) ** 2 + (my - hy) ** 2) ** 0.5 <= max(12, hitbox["radius"] + 4):
                 QUIZ_RESULTS_HELD_KEY = hitbox["key"]
                 return True
-        # Missed every dot: start a press on empty space - becomes a pan if
-        # the finger moves, a zoom-in at this point if it's lifted in place
-        # (missing a dot by a few px in a crowded cluster is exactly when
-        # zooming helps anyway).
+        # Missed every dot: start a press on empty space - pans the view if
+        # the finger moves, does nothing if it's lifted in place (zooming is
+        # only via the +/- buttons).
         view = QUIZ_RESULTS_VIEW
         if view and view["plot_rect"].collidepoint((mx, my)):
             QUIZ_RESULTS_DRAG = {"start": (mx, my), "center": view["center"], "moved": False}
