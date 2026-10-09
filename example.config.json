@@ -97,7 +97,8 @@
   },
   "MERZ": {
     "ENABLED": false,
-    "IDLE_TIMEOUT_SECONDS": 60
+    "IDLE_TIMEOUT_SECONDS": 60,
+    "FPS": 30
   },
   "ENV": "Pi",
   "LOG_TO_FILES": false,

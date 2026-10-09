@@ -578,6 +578,10 @@ WIFI_PASSWORD = WIFI_CONFIG.get("PASSWORD", "")
 MERZ_CONFIG = config.get("MERZ", {})
 MERZ_ENABLED = MERZ_CONFIG.get("ENABLED", False)
 MERZ_IDLE_TIMEOUT_SECONDS = MERZ_CONFIG.get("IDLE_TIMEOUT_SECONDS", 60)
+# Frame rate while the game is open - the dashboard's own DISPLAY.FPS is
+# kept low (10 on the Pi) to save CPU, which makes taps/throws feel laggy
+# in the game. All MERZ motion is dt-based, so only smoothness changes.
+MERZ_FPS = MERZ_CONFIG.get("FPS", 30)
 QUIZ_LENGTH = 13
 QUIZ_NAME_MAX_CHARS = 16
 QUIZ_SCAN_SECONDS = 8.0  # of actual held time, not wall-clock (see QUIZ_SCAN_HELD)
@@ -5970,7 +5974,7 @@ def loop():
 
         # do it as often as FPS configured (30 FPS recommend for particle
         #  simulation, 15 runs fine too, 60 is overkill)
-        clock.tick(FPS)
+        clock.tick(MERZ_FPS if MERZ_VISIBLE else FPS)
 
     quit_all()
 
