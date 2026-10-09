@@ -5858,7 +5858,12 @@ def loop():
                 quit_all()
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                mx, my = pygame.mouse.get_pos()
+                # The event's own position, not pygame.mouse.get_pos() (the
+                # *current* cursor): at 10 FPS several fast taps can queue up
+                # within one frame, and get_pos() would attribute all of them
+                # to the last tap's position (e.g. EIER, KLÖTEN tapped quickly
+                # both landing on KLÖTEN).
+                mx, my = event.pos
                 logger.info(f"Screen pressed at: ({mx}, {my})")
                 global LAST_TOUCH_TIME
                 LAST_TOUCH_TIME = time.time()
