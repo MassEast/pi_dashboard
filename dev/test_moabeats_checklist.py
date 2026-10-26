@@ -131,8 +131,10 @@ def test_checklist_detail():
     P.draw_cleaning_day_screen()
     shot("2_detail_opened.png")
     assert len(P.CHORE_DETAIL_ROW_RECTS) == 3
+    # Rows may use the corner band: the emergency exit is off on this screen.
+    assert not P.emergency_exit_active()
+    assert not P.CHORE_DETAIL_BACK_RECT.colliderect(exit_zone)
     for rect in [r for r, _ in P.CHORE_DETAIL_ROW_RECTS] + [P.CHORE_DETAIL_BACK_RECT]:
-        assert not rect.colliderect(exit_zone), "detail control inside emergency-exit zone"
         assert rect.height >= 52, "touch target too small"
     assert P.CHORE_DETAIL_ERROR is None
 
@@ -337,6 +339,60 @@ def test_checklist_detail():
     print(f"CHECKLIST: {len(FAKE['patches'])} PATCHes, {FAKE['gets']} status GETs against the fake server", flush=True)
 
 
+# Same length/shape as the WG's real checklists (2026-10-26: up to 8 items,
+# ~190-char items, long chore names, a link) - made-up text, public repo.
+REAL_SHAPED_CHORES = [
+    {"id": 101, "name": "Bad 1", "full_name": "Badezimmer oben (mit Dusche)", "assigned_to": "A", "checklist": [
+        "Ablagen", "Toilette", "Waschbecken und Duschwanne schrubben/entkalken (rot&blau)",
+        "Abfluss reinigen (siehe https://www.example.com/watch?v=abcdefghijk)", "Handtuch tauschen",
+        "Staubsaugen", "benutzte Tücher/Schwämme (rot&blau) auswaschen", "Blumen gießen"]},
+    {"id": 102, "name": "Bad 2", "full_name": "Badezimmer unten (mit Wanne)", "assigned_to": "B", "checklist": [
+        "Ablagen", "Toilette", "Spiegelschrank", "Waschbecken und Wanne entkalken", "Handtuch tauschen",
+        "Staubsaugen", "benutzte Tücher/Schwämme (rot&blau) auswaschen", "Blumen gießen"]},
+    {"id": 103, "name": "Flur", "full_name": "Flurdienst", "assigned_to": "C", "checklist": [
+        "Alle gemeinsamen Räume staubsaugen & feucht wischen (nicht zu nass; Pfützen gleich wieder aufwischen!)",
+        "Garderobe aufräumen",
+        "Gesammelte Badvorleger & Küchentücher aus dem großen Bad bei 60° waschen, aufhängen und wenn wieder "
+        "trocken abnehmen (meistens 1-2 Waschgänge nötig)",
+        "Staubsauger leeren und sauber machen (Filter raus, unter lauwarmem Wasser ausspülen, gut ausdrücken, "
+        "trocknen lassen)",
+        "Auffangbehälter vom Staubsauger draußen ausklopfen"]},
+    {"id": 104, "name": "Küche", "full_name": "Küchendienst", "assigned_to": "D", "checklist": [
+        "Arbeitsplatte", "Schranktüren", "Kochfeld", "Esstisch", "Spülbecken", "Tücher & Schwämme auskochen/tauschen (blau&grün)",
+        "Staubsaugen", "Blumen gießen"]},
+]
+
+
+def test_real_checklists_fit():
+    """Every sub-item of real-sized checklists is on screen (no "+N weitere"),
+    nothing runs off the edge, links are hidden, and the emergency exit is
+    off while the detail screen uses the corner band for rows."""
+    P.config["MOABEATS"]["ENABLED"] = True
+    P.CLEANING_DAY = datetime.datetime.today().weekday()
+    P.DISPLAY_BLANK = True
+    P.MOABEATS_STATUS = {"cleaning_chores": [
+        dict(c, checklist=[{"item": i, "done": n % 2 == 0} for n, i in enumerate(c["checklist"])])
+        for c in REAL_SHAPED_CHORES
+    ]}
+    assert P.emergency_exit_active()
+    for chore in REAL_SHAPED_CHORES:
+        P.CHORE_DETAIL_ID, P.CHORE_DETAIL_SNAPSHOT = chore["id"], None
+        P.CHORE_DETAIL_REFRESHING, P.CHORE_DETAIL_ERROR = False, None
+        assert not P.emergency_exit_active(), "emergency exit must be off on the detail screen"
+        P.draw_cleaning_day_screen()
+        shot(f"real_{chore['id']}.png")
+        assert len(P.CHORE_DETAIL_ROW_RECTS) == len(chore["checklist"]), (
+            f"{chore['full_name']}: {len(P.CHORE_DETAIL_ROW_RECTS)}/{len(chore['checklist'])} rows shown"
+        )
+        assert all(r.height >= 52 for r, _ in P.CHORE_DETAIL_ROW_RECTS)
+        # Rows keep the original item text (PATCH needs it exactly).
+        assert [e["item"] for _, e in P.CHORE_DETAIL_ROW_RECTS] == chore["checklist"]
+    P.CHORE_DETAIL_ID = None
+    assert P._chore_item_display_text(REAL_SHAPED_CHORES[0]["checklist"][3]) == "Abfluss reinigen"
+    print(f"REAL: all {sum(len(c['checklist']) for c in REAL_SHAPED_CHORES)} sub-items of "
+          f"{len(REAL_SHAPED_CHORES)} real checklists on screen", flush=True)
+
+
 def test_pills_fogged_by_emotion_prompt():
     """Regression: the dashboard pills were drawn after the emotion prompt,
     so they sat bright on top of its fog (while the prompt swallowed taps)."""
@@ -371,5 +427,6 @@ def test_pills_fogged_by_emotion_prompt():
 
 if __name__ == "__main__":
     test_checklist_detail()
+    test_real_checklists_fit()
     test_pills_fogged_by_emotion_prompt()
     print(f"ALL PASSED - screenshots in {OUT_DIR}", flush=True)

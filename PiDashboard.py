@@ -2000,6 +2000,9 @@ CHORE_ITEM_FONT_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, 28)
 # Sub-item sizes tried largest-first until the whole checklist fits, see
 # _layout_chore_rows().
 CHORE_ITEM_FONTS = [pygame.font.Font(FONT_PATH + FONT_MEDIUM, size) for size in (28, 24, 21, 18, 16)]
+# Detail-screen title sizes, largest that fits the chore name on one line
+# (real names like "Baddienst 2 (mit Badewanne)" don't at 40 px).
+CHORE_TITLE_FONTS = [CLEANING_FONT] + [pygame.font.Font(FONT_PATH + FONT_BOLD, size) for size in (34, 30, 26)]
 
 
 WEATHERICON = "unknown"
@@ -4963,6 +4966,34 @@ def _draw_check_box(rect, done, pending):
         pygame.draw.rect(tft_surf, WHITE, rect, width=3, border_radius=6)
 
 
+CHORE_ITEM_PAREN_URL_RE = re.compile(r"\s*\((?:siehe\s+|see\s+)?https?://[^)\s]*\)", re.IGNORECASE)
+CHORE_ITEM_URL_RE = re.compile(r"https?://\S+")
+
+
+def _chore_item_display_text(item):
+    """Item text as shown on the kiosk: links stripped (useless on a
+    touchscreen, e.g. "Abfluss reinigen (siehe https://...)").
+    Display only - the PATCH must send the exact original item text."""
+    text = CHORE_ITEM_PAREN_URL_RE.sub("", item)
+    text = CHORE_ITEM_URL_RE.sub("", text)
+    return " ".join(text.split()) or item
+
+
+def _wrap_text_hard(font, text, max_width):
+    """Word wrap that also breaks single words wider than max_width (URLs in
+    real checklist items) by character instead of letting them overflow."""
+    lines = []
+    for line in _quiz_wrap_text(font, text, max_width):
+        while font.size(line)[0] > max_width:
+            cut = len(line) - 1
+            while cut > 1 and font.size(line[:cut])[0] > max_width:
+                cut -= 1
+            lines.append(line[:cut])
+            line = line[cut:]
+        lines.append(line)
+    return lines
+
+
 def _layout_chore_rows(checklist, text_width, available_height, gap):
     """Largest item font at which every sub-item fits fully wrapped (no
     ellipsis) with every row still a big touch target. Returns (font,
@@ -4973,7 +5004,7 @@ def _layout_chore_rows(checklist, text_width, available_height, gap):
     for font in CHORE_ITEM_FONTS:
         layout = []
         for entry in checklist:
-            lines = _quiz_wrap_text(font, entry["item"], text_width)
+            lines = _wrap_text_hard(font, _chore_item_display_text(entry["item"]), text_width)
             layout.append((lines, max(base_height, len(lines) * font.get_linesize() + 16)))
         if sum(height for _, height in layout) + gap * (len(layout) - 1) <= available_height:
             return font, layout
@@ -4984,8 +5015,8 @@ def _layout_chore_rows(checklist, text_width, available_height, gap):
 def draw_chore_detail():
     """Checklist detail screen: header (chore name + assignee + progress),
     one big tappable row per sub-item, error/status line, "Zurück" button.
-    Everything tappable stays below EMERGENCY_EXIT_MAX_Y (the header lives in
-    that band) so the emergency-exit corner keeps working here unchanged."""
+    Rows start right under the header, inside the emergency-exit band - the
+    exit is off on this screen (emergency_exit_active())."""
     global CHORE_DETAIL_SNAPSHOT, CHORE_DETAIL_ROW_RECTS, CHORE_DETAIL_BACK_RECT
 
     margin = 20
@@ -4997,10 +5028,13 @@ def draw_chore_detail():
 
     y = 16
     title = header.get("full_name") or header.get("name") or "?"
-    for line in _quiz_wrap_text(CLEANING_FONT, title, DISPLAY_WIDTH - 2 * margin)[:2]:
-        surf = CLEANING_FONT.render(line, True, WHITE)
+    title_font = next(
+        (f for f in CHORE_TITLE_FONTS if f.size(title)[0] <= DISPLAY_WIDTH - 2 * margin), CHORE_TITLE_FONTS[-1]
+    )
+    for line in _wrap_text_hard(title_font, title, DISPLAY_WIDTH - 2 * margin):
+        surf = title_font.render(line, True, WHITE)
         tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
-        y += CLEANING_FONT.get_linesize()
+        y += title_font.get_linesize()
     subtitle = header.get("assigned_to") or "niemand zugeteilt"
     if checklist:
         subtitle += f"  ·  {_chore_progress_text(checklist)} erledigt"
@@ -5014,13 +5048,13 @@ def draw_chore_detail():
         tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
         y += hint_font.get_linesize()
 
-    back_height = 80
+    back_height = 70
     CHORE_DETAIL_BACK_RECT = pygame.Rect(margin, DISPLAY_HEIGHT - margin - back_height, DISPLAY_WIDTH - 2 * margin, back_height)
     # Two-line status area: the bundled font is monospace, a German error
     # message doesn't fit one line at 480px.
     status_line = CHORE_ITEM_FONT_SMALL.get_linesize()
     status_top = CHORE_DETAIL_BACK_RECT.top - 8 - 2 * status_line
-    rows_top = EMERGENCY_EXIT_MAX_Y + 10
+    rows_top = y + 12
     rows_bottom = status_top - 8
 
     CHORE_DETAIL_ROW_RECTS = []
@@ -5030,7 +5064,7 @@ def draw_chore_detail():
         hint = CHORE_ITEM_FONT_SMALL.render("(in der App erledigt?)", True, DARK_GRAY)
         tft_surf.blit(hint, hint.get_rect(center=(DISPLAY_WIDTH // 2, (rows_top + rows_bottom) // 2 + 36)))
     else:
-        gap = 8
+        gap = 6
         box_size = 36
         text_left_offset = 14 + box_size + 16
         text_width = DISPLAY_WIDTH - 2 * margin - text_left_offset - 12
@@ -6100,6 +6134,16 @@ def handle_quiz_click(mx, my):
     return True
 
 
+def emergency_exit_active():
+    """The 5-tap top-left emergency exit is off inside the AFM quiz, the MERZ
+    game and the chore checklist detail screen: all tap-heavy, full-screen,
+    with their own close button and idle timeout, so the escape hatch is
+    never needed there - but repeatedly tapping a control near the corner
+    (the quiz "+" zoom button, 2026-10-09) quit the app by accident. The
+    detail screen needs that band for rows: real checklists have 8 items."""
+    return QUIZ_STAGE is None and not MERZ_VISIBLE and CHORE_DETAIL_ID is None
+
+
 def draw_dashboard_overlays():
     """Pills and popups on top of the awake dashboard, see the ordering note."""
     # All small dashboard pills first, every overlay after them -
@@ -6379,14 +6423,10 @@ def loop():
                 # Box is deliberately generous (not 50x50): on the real DSI touchscreen,
                 # taps aimed at the physical corner land anywhere up to (85, 160) due to
                 # touch calibration imprecision (measured 2026-07-08).
-                # Except inside the AFM quiz and the MERZ game: both are
-                # tap-heavy, full-screen overlays with their own X button and
-                # idle timeout, so the escape hatch is never needed there -
-                # but repeatedly tapping a button near the corner (the quiz
-                # "+" zoom button, 2026-10-09) quit the app by accident.
+                # Except inside the AFM quiz, the MERZ game and the chore
+                # checklist detail screen - see emergency_exit_active().
                 if (
-                    QUIZ_STAGE is None
-                    and not MERZ_VISIBLE
+                    emergency_exit_active()
                     and mx < EMERGENCY_EXIT_MAX_X
                     and my < EMERGENCY_EXIT_MAX_Y
                 ):
