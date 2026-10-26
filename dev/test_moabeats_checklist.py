@@ -106,8 +106,12 @@ def test_checklist_detail():
     assert P.handle_cleaning_chore_list_click(*muell_rect.center)
     assert P.CHORE_DETAIL_ID is None and P.DISPLAY_BLANK
     assert P._chore_progress_text(FAKE["status"]["cleaning_chores"][0]["checklist"]) == "1/3"
-    for rect, _, _ in P.CLEANING_CHORE_ROW_RECTS:
+    cards = [r for r, _, _ in P.CLEANING_CHORE_ROW_RECTS]
+    for i, rect in enumerate(cards):
         assert not rect.colliderect(exit_zone)
+        assert rect.height >= 44 and rect.left >= 0 and rect.right <= P.DISPLAY_WIDTH
+        assert all(not rect.colliderect(other) for other in cards[i + 1:]), "chore cards overlap"
+    assert cards[-1].bottom < P.CHORE_LIST_CLOSE_RECT.top
 
     # Screensaver "Schließen" wakes the dashboard (and closes nothing else).
     # wake_display() kicks off a BVG refresh thread that needs the real app's

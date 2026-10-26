@@ -1997,6 +1997,9 @@ CLEANING_CHORE_FONT = pygame.font.Font(FONT_PATH + FONT_MEDIUM, 32)
 CHORE_ITEM_FONT = pygame.font.Font(FONT_PATH + FONT_MEDIUM, 28)
 CHORE_ITEM_FONT_SMALL = pygame.font.Font(FONT_PATH + FONT_MEDIUM, 22)
 CHORE_ITEM_FONT_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, 28)
+# Chore names on the list cards, largest that fits next to the progress.
+CHORE_PROGRESS_FONT_SMALL = pygame.font.Font(FONT_PATH + FONT_BOLD, 20)
+CHORE_NAME_FONTS = [pygame.font.Font(FONT_PATH + FONT_BOLD, size) for size in (30, 26, 22, 18)]
 # Sub-item sizes tried largest-first until the whole checklist fits, see
 # _layout_chore_rows().
 CHORE_ITEM_FONTS = [pygame.font.Font(FONT_PATH + FONT_MEDIUM, size) for size in (28, 24, 21, 18, 16)]
@@ -4867,16 +4870,15 @@ def draw_chore_screen():
     # the whole list rather than marking single chores as overdue.
     scope = CHORE_ITEM_FONT_SMALL.render("Heute fällig oder überfällig", True, SWEET_PURPLE)
     tft_surf.blit(scope, scope.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
-    y += CHORE_ITEM_FONT_SMALL.get_linesize() + 2
-    hint = CHORE_ITEM_FONTS[3].render("Tippen zum Abhaken der Unterpunkte", True, DARK_GRAY)
-    tft_surf.blit(hint, hint.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
-    y += CHORE_ITEM_FONTS[3].get_linesize()
+    y += CHORE_ITEM_FONT_SMALL.get_linesize()
     assert y <= EMERGENCY_EXIT_MAX_Y + 10, f"chore screen header too tall: {y}"
 
     close_height = 80
     CHORE_LIST_CLOSE_RECT = pygame.Rect(margin, DISPLAY_HEIGHT - margin - close_height, DISPLAY_WIDTH - 2 * margin, close_height)
     status_top = CHORE_LIST_CLOSE_RECT.top - 8 - CHORE_ITEM_FONT_SMALL.get_linesize()
-    list_top = EMERGENCY_EXIT_MAX_Y + 45  # first row's center, clear of the header lines
+    # Cards start below the emergency-exit band (the exit stays active on
+    # this screen, see emergency_exit_active()) and clear of the header.
+    list_top = max(y, EMERGENCY_EXIT_MAX_Y) + 14
 
     if not config.get("MOABEATS", {}).get("ENABLED", False):
         has_chores = False
@@ -4909,44 +4911,96 @@ def draw_chore_screen():
     tft_surf.blit(label, label.get_rect(center=CHORE_LIST_CLOSE_RECT.center))
 
 
-def _draw_chore_list(chore_y, bottom):
-    """Chore rows from y=chore_y (first row's center) down to bottom; fills
-    CLEANING_CHORE_ROW_RECTS. No done/not-done marker: cleaning_chores from
-    the API is already filtered to not-yet-completed chores only. Chores with
-    a checklist show their progress and open the detail screen on tap."""
+def _draw_chevron(center, size, color):
+    x, y = center
+    pygame.draw.lines(
+        tft_surf, color, False, [(x - size // 2, y - size), (x + size // 2, y), (x - size // 2, y + size)], 4
+    )
+
+
+def _draw_chore_list(top, bottom):
+    """Chore rows from top to bottom; fills CLEANING_CHORE_ROW_RECTS. No
+    done/not-done marker: cleaning_chores from the API is already filtered
+    to not-yet-completed chores only. Chores with a checklist are drawn as
+    button cards (name + assignee left, progress + bar + chevron right) and
+    open the detail screen on tap; chores without one are drawn flat (no
+    card, no chevron, dimmer) since tapping them does nothing."""
     with MOABEATS_STATUS_LOCK:
         cleaning_chores = list(MOABEATS_STATUS.get("cleaning_chores", []))
 
     # Sanity cap against a pathological API response, same pattern as
-    # draw_moabeats_panel()'s overdue_chores[:10] - this just bounds the
-    # render loop, actual fit on screen is handled by the dynamic step
-    # below so the list is never silently truncated at a normal size.
+    # draw_moabeats_panel()'s overdue_chores[:10] - bounds the render loop.
     cleaning_chores = cleaning_chores[:15]
+    if not cleaning_chores:
+        return
 
-    chore_count = len(cleaning_chores)
-    if chore_count:
-        available_height = bottom - chore_y
-        # Shrink spacing to fit everyone, but never below the font's own
-        # line height (would start overlapping text) and never wider
-        # than the original 40px (looks sparse with few chores).
-        chore_step = min(40, max(CLEANING_CHORE_FONT.get_linesize(), available_height // chore_count))
-    else:
-        chore_step = 40
+    margin = 20
+    more_height = CHORE_ITEM_FONT_SMALL.get_linesize()
+    # Height adapts to the chore count (76 px for a few, down to 44 px);
+    # low cards also get a tighter gap so more fit before "+N weitere".
+    gap = 10
+    card_height = (bottom - top + gap) // len(cleaning_chores) - gap
+    if card_height < 64:
+        gap = 6
+        card_height = (bottom - top + gap) // len(cleaning_chores) - gap
+    card_height = max(44, min(76, card_height))
+    compact = card_height < 64  # smaller progress text + thinner bar
+    two_line = card_height >= 70  # assignee on its own line under the name
+    right_width = 120  # progress text + bar + chevron
+    text_left = margin + 18
+    text_width = DISPLAY_WIDTH - margin - right_width - text_left
 
-    for chore in cleaning_chores:
-        label = chore["name"]
-        if chore.get("assigned_to"):
-            label += f" ({chore['assigned_to']})"
+    y = top
+    for index, chore in enumerate(cleaning_chores):
+        is_last = index == len(cleaning_chores) - 1
+        if y + card_height > bottom - (0 if is_last else more_height):
+            more = CHORE_ITEM_FONT_SMALL.render(f"+{len(cleaning_chores) - index} weitere in der App", True, DARK_GRAY)
+            tft_surf.blit(more, more.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
+            break
         checklist = chore.get("checklist", [])
+        card = pygame.Rect(margin, y, DISPLAY_WIDTH - 2 * margin, card_height)
         if checklist:
-            label += f" {_chore_progress_text(checklist)}"
-        chore_surf = CLEANING_CHORE_FONT.render(label, True, SWEET_PURPLE)
-        chore_rect = chore_surf.get_rect(center=(DISPLAY_WIDTH // 2, chore_y))
-        tft_surf.blit(chore_surf, chore_rect)
-        # Full-width hit row: real taps land imprecisely, the text is narrow.
-        row_rect = pygame.Rect(0, chore_y - chore_step // 2, DISPLAY_WIDTH, chore_step)
-        CLEANING_CHORE_ROW_RECTS.append((row_rect, chore["id"], bool(checklist)))
-        chore_y += chore_step
+            pygame.draw.rect(tft_surf, (40, 34, 56), card, border_radius=12)
+            pygame.draw.rect(tft_surf, SWEET_PURPLE, card, width=2, border_radius=12)
+            name_color, assignee_color = WHITE, SWEET_PURPLE
+        else:
+            name_color, assignee_color = DARK_GRAY, DARK_GRAY
+
+        name = chore["name"]
+        assignee = chore.get("assigned_to") or ""
+        name_font = next((f for f in CHORE_NAME_FONTS if f.size(name)[0] <= text_width), CHORE_NAME_FONTS[-1])
+        if two_line and assignee:
+            name_surf = name_font.render(name, True, name_color)
+            assignee_surf = CHORE_ITEM_FONT_SMALL.render(assignee, True, assignee_color)
+            block = name_surf.get_height() + assignee_surf.get_height()
+            text_top = card.centery - block // 2
+            tft_surf.blit(name_surf, (text_left, text_top))
+            tft_surf.blit(assignee_surf, (text_left, text_top + name_surf.get_height()))
+        else:
+            label = f"{name} ({assignee})" if assignee else name
+            name_font = next((f for f in CHORE_NAME_FONTS if f.size(label)[0] <= text_width), CHORE_NAME_FONTS[-1])
+            name_surf = name_font.render(label, True, name_color)
+            tft_surf.blit(name_surf, name_surf.get_rect(midleft=(text_left, card.centery)))
+
+        if checklist:
+            done = sum(1 for entry in checklist if entry["done"])
+            complete = done == len(checklist)
+            chevron_x = card.right - 22
+            _draw_chevron((chevron_x, card.centery), 9, WHITE)
+            progress_font = CHORE_PROGRESS_FONT_SMALL if compact else CHORE_ITEM_FONT_BOLD
+            bar_height = 5 if compact else 8
+            progress = progress_font.render(_chore_progress_text(checklist), True, GREEN if complete else WHITE)
+            # Text + bar as one block, vertically centered in the card.
+            block_top = card.centery - (progress.get_height() + 2 + bar_height) // 2
+            bar = pygame.Rect(chevron_x - 22 - 72, block_top + progress.get_height() + 2, 72, bar_height)
+            tft_surf.blit(progress, progress.get_rect(midtop=(bar.centerx, block_top)))
+            pygame.draw.rect(tft_surf, (70, 70, 70), bar, border_radius=4)
+            if done:
+                filled = bar.copy()
+                filled.width = max(8, bar.width * done // len(checklist))
+                pygame.draw.rect(tft_surf, GREEN if complete else SWEET_PURPLE, filled, border_radius=4)
+        CLEANING_CHORE_ROW_RECTS.append((card, chore["id"], bool(checklist)))
+        y += card_height + gap
 
 
 def _draw_check_box(rect, done, pending):
