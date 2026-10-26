@@ -362,14 +362,26 @@ default) and ignore this section entirely.
 - Adds a small "WIFI" button next to the clock. Tapping it shows a QR code (standard `WIFI:` payload - a phone camera app offers to join the network directly from it) plus the SSID as text, auto-closes after 20s or on tap.
 - Disabled by default.
 
-#### MERZ (dadaist easter-egg minigame)
+#### GAMES (PLAY menu party games)
 ```json
-"MERZ": {
+"GAMES": {
   "ENABLED": false,
-  "IDLE_TIMEOUT_SECONDS": 60
+  "IDLE_TIMEOUT_SECONDS": 60,
+  "FPS": 30
 }
 ```
-- A small "MERZ" button under the WIFI button opens a full-screen tap-to-throw minigame: a
+- A small "PLAY" button under the WIFI button opens a "Spiele" menu with MERZ (below) and two
+  tap-only games from `party_games.py`: **STAPEL-TURM** (tap to drop
+  a sliding Plattenbau floor on the tower, overhang gets cut off) and **FLAPPY BVG** (tap to hop a
+  BVG bus through gaps between Baustellen barriers).
+- One flag/timeout/FPS for all three games (MERZ had its own `MERZ` section before; it's no
+  longer read). "Rekord heute" per party game, in memory only (resets at midnight and on
+  restart). The menu/game closes after `IDLE_TIMEOUT_SECONDS` without a tap or when the display
+  blanks.
+- Disabled by default.
+
+#### MERZ (dadaist easter-egg minigame, part of GAMES)
+- Opened from the PLAY menu (see GAMES above): a full-screen tap-to-throw minigame: a
   pixel-art portrait of the German chancellor wanders around a flat backdrop (tap "EIER" or
   "KLÖTEN" to pick which you're currently throwing) while you tap anywhere to lob one at him. He
   periodically has a chance to juke sideways when a throw lands close to him, so landing a hit

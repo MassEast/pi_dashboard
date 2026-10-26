@@ -52,6 +52,7 @@ from emotion_store import append_emotion_event, read_emotion_events
 from quiz_store import read_quiz_results, submit_quiz_result
 from uptime_store import append_uptime_event, last_channel_is_up
 from utils import get_stop_data
+import party_games
 
 # Allow the system to manage blanking
 os.environ["SDL_VIDEO_ALLOW_SCREENSAVER"] = "1"
@@ -589,18 +590,21 @@ WIFI_ENABLED = WIFI_CONFIG.get("ENABLED", False)
 WIFI_SSID = WIFI_CONFIG.get("SSID", "")
 WIFI_PASSWORD = WIFI_CONFIG.get("PASSWORD", "")
 
-# "Merz Leck Eier" - dadaist easter-egg minigame, MERZ button next to WIFI.
-# Tap-to-throw eggs/testicles at a pixel-caricature of the chancellor, who
-# wanders/dodges. Taunt lines mix his own on-record quotes (sourced, see
-# MERZ_TAUNTS below) with plain silly reaction lines - no scoreboard/
-# persistence, just a live hit counter for the current session.
-MERZ_CONFIG = config.get("MERZ", {})
-MERZ_ENABLED = MERZ_CONFIG.get("ENABLED", False)
-MERZ_IDLE_TIMEOUT_SECONDS = MERZ_CONFIG.get("IDLE_TIMEOUT_SECONDS", 60)
-# Frame rate while the game is open - the dashboard's own DISPLAY.FPS is
+# PLAY pill (under WIFI) opens a games menu: MERZ plus the tap-only party
+# games in party_games.py. One config section for all of them.
+#
+# "Merz Leck Eier" - dadaist easter-egg minigame. Tap-to-throw
+# eggs/testicles at a pixel-caricature of the chancellor, who wanders/dodges.
+# Taunt lines mix his own on-record quotes (sourced, see MERZ_TAUNTS below)
+# with plain silly reaction lines - no scoreboard/persistence, just a live
+# hit counter for the current session.
+GAMES_CONFIG = config.get("GAMES", {})
+GAMES_ENABLED = GAMES_CONFIG.get("ENABLED", False)
+GAMES_IDLE_TIMEOUT_SECONDS = GAMES_CONFIG.get("IDLE_TIMEOUT_SECONDS", 60)
+# Frame rate while a game is open - the dashboard's own DISPLAY.FPS is
 # kept low (10 on the Pi) to save CPU, which makes taps/throws feel laggy
-# in the game. All MERZ motion is dt-based, so only smoothness changes.
-MERZ_FPS = MERZ_CONFIG.get("FPS", 30)
+# in the games. All game motion is dt-based, so only smoothness changes.
+GAMES_FPS = GAMES_CONFIG.get("FPS", 30)
 QUIZ_LENGTH = 13
 QUIZ_NAME_MAX_CHARS = 16
 QUIZ_SCAN_SECONDS = 8.0  # of actual held time, not wall-clock (see QUIZ_SCAN_HELD)
@@ -983,8 +987,15 @@ WIFI_QR_VISIBLE = False
 WIFI_QR_OPENED_AT = 0.0
 WIFI_QR_AUTO_CLOSE_SECONDS = 20
 
+# --- PLAY menu / party games state ---
+PLAY_BUTTON_RECT = None
+GAMES_MENU_OPEN = False
+GAMES_MENU_RECTS = []  # (rect, key) - key "merz" or a party_games class NAME
+GAMES_MENU_CLOSE_RECT = None
+ACTIVE_GAME = None  # a running party_games game object
+GAMES_LAST_ACTIVITY_TS = 0.0
+
 # --- MERZ minigame state ---
-MERZ_BUTTON_RECT = None
 MERZ_VISIBLE = False
 MERZ_LAST_ACTIVITY_TS = 0.0
 MERZ_ACTION_RECTS = {}
@@ -3655,7 +3666,7 @@ def draw_wifi_button():
     handler there would swallow taps meant for that gesture."""
     global WIFI_BUTTON_RECT
 
-    if not WIFI_ENABLED or QUIZ_STAGE is not None or MERZ_VISIBLE:
+    if not WIFI_ENABLED or QUIZ_STAGE is not None or MERZ_VISIBLE or games_open():
         WIFI_BUTTON_RECT = None
         return
 
@@ -3736,14 +3747,21 @@ def handle_wifi_qr_click(mx, my):
     return True
 
 
-def draw_merz_button():
-    """Small "MERZ" pill directly under the WIFI button - computes the same
-    clock-row geometry independently so it still shows up even if WIFI is
-    disabled."""
-    global MERZ_BUTTON_RECT
+def draw_play_button():
+    """Small "PLAY" pill directly under the WIFI button (where the MERZ pill
+    used to be), opens the games menu - computes the same clock-row geometry
+    independently so it still shows up even if WIFI is disabled. Labels are
+    plain text, never emoji: the font has no emoji glyphs."""
+    global PLAY_BUTTON_RECT
 
-    if not MERZ_ENABLED or QUIZ_STAGE is not None or WIFI_QR_VISIBLE or MERZ_VISIBLE:
-        MERZ_BUTTON_RECT = None
+    if (
+        not GAMES_ENABLED
+        or QUIZ_STAGE is not None
+        or WIFI_QR_VISIBLE
+        or MERZ_VISIBLE
+        or games_open()
+    ):
+        PLAY_BUTTON_RECT = None
         return
 
     dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
@@ -3756,16 +3774,159 @@ def draw_merz_button():
     row_y = clock_top + clock_height // 2 - button_height // 2
     if WIFI_ENABLED:
         row_y += button_height + int(4 * ZOOM)
-    MERZ_BUTTON_RECT = pygame.Rect(
+    PLAY_BUTTON_RECT = pygame.Rect(
         dashboard_rect.centerx + clock_width // 2 + gap,
         row_y,
         button_width,
         button_height,
     )
-    pygame.draw.rect(tft_surf, RED, MERZ_BUTTON_RECT, border_radius=5)
-    pygame.draw.rect(tft_surf, DARK_GRAY, MERZ_BUTTON_RECT, width=1, border_radius=5)
-    label = FONT_SUPER_TINY.render("MERZ", True, WHITE)
-    tft_surf.blit(label, label.get_rect(center=MERZ_BUTTON_RECT.center))
+    pygame.draw.rect(tft_surf, RED, PLAY_BUTTON_RECT, border_radius=5)
+    pygame.draw.rect(tft_surf, DARK_GRAY, PLAY_BUTTON_RECT, width=1, border_radius=5)
+    label = FONT_SUPER_TINY.render("PLAY", True, WHITE)
+    tft_surf.blit(label, label.get_rect(center=PLAY_BUTTON_RECT.center))
+
+
+def games_open():
+    """The PLAY menu or one of the party_games games (not MERZ, that has
+    its own MERZ_VISIBLE) is on screen."""
+    return GAMES_MENU_OPEN or ACTIVE_GAME is not None
+
+
+def _games_menu_entries():
+    """(key, title, description) for every game, menu order."""
+    entries = [("merz", "MERZ LECK EIER", "Eier auf den Kanzler werfen")]
+    return entries + [(game.NAME, game.NAME, game.DESCRIPTION) for game in party_games.GAMES]
+
+
+def open_games_menu():
+    global GAMES_MENU_OPEN, ACTIVE_GAME, GAMES_LAST_ACTIVITY_TS
+    GAMES_MENU_OPEN = True
+    ACTIVE_GAME = None
+    GAMES_LAST_ACTIVITY_TS = time.time()
+    logger.info("Games menu opened")
+
+
+def close_games(reason):
+    global GAMES_MENU_OPEN, ACTIVE_GAME, GAMES_MENU_RECTS, GAMES_MENU_CLOSE_RECT
+    if not games_open():
+        return
+    if ACTIVE_GAME is not None:
+        logger.info(f"Game {ACTIVE_GAME.NAME} closed ({reason}), score {ACTIVE_GAME.score}")
+    else:
+        logger.info(f"Games menu closed ({reason})")
+    GAMES_MENU_OPEN = False
+    ACTIVE_GAME = None
+    GAMES_MENU_RECTS = []
+    GAMES_MENU_CLOSE_RECT = None
+
+
+def start_game(key):
+    global GAMES_MENU_OPEN, ACTIVE_GAME, GAMES_LAST_ACTIVITY_TS, GAMES_MENU_RECTS
+    GAMES_MENU_OPEN = False
+    GAMES_MENU_RECTS = []
+    if key == "merz":
+        activate_merz_game()
+        return
+    game_cls = next(g for g in party_games.GAMES if g.NAME == key)
+    ACTIVE_GAME = game_cls(
+        DISPLAY_WIDTH, DISPLAY_HEIGHT, FONT_PATH + FONT_MEDIUM, FONT_PATH + FONT_BOLD
+    )
+    ACTIVE_GAME.reset(time.time())
+    GAMES_LAST_ACTIVITY_TS = time.time()
+    logger.info(f"Game {key} started")
+
+
+def update_games_timeout():
+    """Called every frame: close the menu/game on display blank or idle."""
+    if not games_open():
+        return
+    if DISPLAY_BLANK:
+        close_games("display-blank")
+    elif time.time() - GAMES_LAST_ACTIVITY_TS > GAMES_IDLE_TIMEOUT_SECONDS:
+        close_games("idle-timeout")
+
+
+def draw_games_menu():
+    """Fullscreen "Spiele" menu: one purple button card per game (same card
+    look as the Putzdienste list), "Schließen" at the bottom."""
+    global GAMES_MENU_RECTS, GAMES_MENU_CLOSE_RECT
+
+    if not GAMES_MENU_OPEN:
+        return
+
+    tft_surf.fill(BLACK)
+    margin = 16
+    title = CLEANING_FONT.render("Spiele", True, WHITE)
+    # Below the emergency-exit band, like the Putzdienste header: the menu
+    # keeps the emergency exit active (only running games turn it off).
+    y = EMERGENCY_EXIT_MAX_Y + 10
+    tft_surf.blit(title, title.get_rect(midtop=(DISPLAY_WIDTH // 2, y - title.get_height() - 30)))
+
+    close_height = 80
+    GAMES_MENU_CLOSE_RECT = pygame.Rect(
+        margin, DISPLAY_HEIGHT - margin - close_height, DISPLAY_WIDTH - 2 * margin, close_height
+    )
+    pygame.draw.rect(tft_surf, BLUE, GAMES_MENU_CLOSE_RECT, border_radius=14)
+    label = CLEANING_FONT.render("Schließen", True, WHITE)
+    tft_surf.blit(label, label.get_rect(center=GAMES_MENU_CLOSE_RECT.center))
+
+    entries = _games_menu_entries()
+    name_font, small_font = CHORE_NAME_FONTS[0], CHORE_ITEM_FONT_SMALL
+    pad, line_gap, gap = 14, 4, 16
+    card_height = 2 * pad + name_font.get_linesize() + 2 * (line_gap + small_font.get_linesize())
+    rects = []
+    for key, name, description in entries:
+        rect = pygame.Rect(margin, y, DISPLAY_WIDTH - 2 * margin, card_height)
+        pygame.draw.rect(tft_surf, (40, 34, 56), rect, border_radius=12)
+        pygame.draw.rect(tft_surf, SWEET_PURPLE, rect, width=2, border_radius=12)
+        text_left = rect.left + 18
+        line_y = rect.top + pad
+        tft_surf.blit(name_font.render(name, True, WHITE), (text_left, line_y))
+        line_y += name_font.get_linesize() + line_gap
+        tft_surf.blit(small_font.render(description, True, SWEET_PURPLE), (text_left, line_y))
+        line_y += small_font.get_linesize() + line_gap
+        if key != "merz":
+            record = party_games.record_today(key)
+            tft_surf.blit(small_font.render(f"Rekord heute: {record}", True, (150, 150, 150)), (text_left, line_y))
+        _draw_chevron((rect.right - 26, rect.centery), 14, SWEET_PURPLE)
+        rects.append((rect, key))
+        y = rect.bottom + gap
+    GAMES_MENU_RECTS = rects
+
+
+def draw_active_game():
+    if ACTIVE_GAME is None:
+        return
+    ACTIVE_GAME.update(time.time())
+    ACTIVE_GAME.draw(tft_surf)
+
+
+def handle_games_menu_click(mx, my):
+    global GAMES_LAST_ACTIVITY_TS
+    if not GAMES_MENU_OPEN:
+        return False
+    GAMES_LAST_ACTIVITY_TS = time.time()
+    if GAMES_MENU_CLOSE_RECT and GAMES_MENU_CLOSE_RECT.collidepoint((mx, my)):
+        close_games("close-button")
+        return True
+    for rect, key in GAMES_MENU_RECTS:
+        if rect.collidepoint((mx, my)):
+            start_game(key)
+            return True
+    return True  # fullscreen: swallow every other tap
+
+
+def handle_game_click(mx, my):
+    global GAMES_LAST_ACTIVITY_TS
+    if ACTIVE_GAME is None:
+        return False
+    GAMES_LAST_ACTIVITY_TS = time.time()
+    action = ACTIVE_GAME.tap(mx, my)
+    if action == "close":
+        close_games("close-button")
+    elif action == "menu":
+        open_games_menu()
+    return True
 
 
 def activate_merz_game():
@@ -3779,7 +3940,7 @@ def activate_merz_game():
     global MERZ_PROJECTILE_KIND
 
     if (
-        not MERZ_ENABLED
+        not GAMES_ENABLED
         or DISPLAY_BLANK
         or EMOTION_PROMPT_VISIBLE
         or EMOTION_RESULTS_VISIBLE
@@ -4141,7 +4302,7 @@ def _draw_merz_jet(jet):
 def _draw_merz_flame(x, y):
     """Small stacked-triangle flame icon, not an emoji glyph - same reason
     the rest of the UI avoids unicode emoji through a text font (see
-    draw_merz_button()'s comment): the font has no emoji glyphs."""
+    draw_play_button()'s docstring): the font has no emoji glyphs."""
     outer = [(x, y - 14), (x - 7, y + 6), (x + 7, y + 6)]
     mid = [(x, y - 8), (x - 4, y + 6), (x + 4, y + 6)]
     inner = [(x, y - 3), (x - 2, y + 6), (x + 2, y + 6)]
@@ -4426,7 +4587,7 @@ def draw_merz_overlay():
         pygame.draw.circle(splat_surf, (*color, int(255 * fade)), (radius, radius), radius, width=2)
         tft_surf.blit(splat_surf, (splat["pos"][0] - radius, splat["pos"][1] - radius))
 
-    # Two plain-text (not emoji - see draw_merz_button()'s comment on why)
+    # Two plain-text (not emoji - see draw_play_button()'s docstring on why)
     # selectable pills side by side, the active one filled in - picking
     # which of the two you're currently throwing, not a throw trigger
     # itself (that used to be one button labelled "WIRF: ...", which read
@@ -4509,11 +4670,11 @@ def draw_merz_overlay():
         MERZ_ACTION_RECTS[f"select_{kind}"] = rect
 
 
-def handle_merz_button_click(mx, my):
+def handle_play_button_click(mx, my):
     if DISPLAY_BLANK or dashboard_overlay_open():
         return False
-    if MERZ_BUTTON_RECT and MERZ_BUTTON_RECT.collidepoint((mx, my)):
-        activate_merz_game()
+    if PLAY_BUTTON_RECT and PLAY_BUTTON_RECT.collidepoint((mx, my)):
+        open_games_menu()
         return True
     return False
 
@@ -5206,6 +5367,7 @@ def draw_chore_button():
         not config.get("MOABEATS", {}).get("ENABLED", False)
         or QUIZ_STAGE is not None
         or MERZ_VISIBLE
+        or games_open()
         or WIFI_QR_VISIBLE
         or CHORE_LIST_OPEN
     ):
@@ -5309,6 +5471,7 @@ def activate_quiz():
         or EMOTION_PROMPT_VISIBLE
         or EMOTION_RESULTS_VISIBLE
         or MERZ_VISIBLE
+        or games_open()
     ):
         return
 
@@ -5466,7 +5629,7 @@ def draw_quiz_button():
     panel and footer positions were tuned earlier."""
     global QUIZ_BUTTON_RECT
 
-    if not QUIZ_ENABLED or QUIZ_STAGE is not None or MERZ_VISIBLE:
+    if not QUIZ_ENABLED or QUIZ_STAGE is not None or MERZ_VISIBLE or games_open():
         QUIZ_BUTTON_RECT = None
         return
 
@@ -6208,6 +6371,7 @@ def dashboard_overlay_open():
         or QUIZ_STAGE is not None
         or WIFI_QR_VISIBLE
         or MERZ_VISIBLE
+        or games_open()
         or CHORE_LIST_OPEN
     )
 
@@ -6230,7 +6394,9 @@ def handle_tap(mx, my):
         or handle_wifi_qr_click(mx, my)
         or handle_wifi_button_click(mx, my)
         or handle_merz_click(mx, my)
-        or handle_merz_button_click(mx, my)
+        or handle_game_click(mx, my)
+        or handle_games_menu_click(mx, my)
+        or handle_play_button_click(mx, my)
     )
 
 
@@ -6240,8 +6406,15 @@ def emergency_exit_active():
     with their own close button and idle timeout, so the escape hatch is
     never needed there - but repeatedly tapping a control near the corner
     (the quiz "+" zoom button, 2026-10-09) quit the app by accident. The
-    detail screen needs that band for rows: real checklists have 8 items."""
-    return QUIZ_STAGE is None and not MERZ_VISIBLE and CHORE_DETAIL_ID is None
+    detail screen needs that band for rows: real checklists have 8 items.
+    Same for the party games (flappy is "tap anywhere"); the PLAY menu
+    itself keeps it."""
+    return (
+        QUIZ_STAGE is None
+        and not MERZ_VISIBLE
+        and ACTIVE_GAME is None
+        and CHORE_DETAIL_ID is None
+    )
 
 
 def draw_dashboard_overlays():
@@ -6254,7 +6427,7 @@ def draw_dashboard_overlays():
     # positioned off QUIZ_BUTTON_RECT.
     draw_quiz_button()
     draw_wifi_button()
-    draw_merz_button()
+    draw_play_button()
     draw_chore_button()
 
     draw_emotion_prompt_overlay()
@@ -6266,6 +6439,8 @@ def draw_dashboard_overlays():
     if WIFI_QR_VISIBLE:
         draw_wifi_qr_overlay()
     draw_merz_overlay()
+    draw_games_menu()
+    draw_active_game()
     draw_chore_overlay()
 
 
@@ -6414,10 +6589,11 @@ def loop():
         if WIFI_QR_VISIBLE and time.time() - WIFI_QR_OPENED_AT > WIFI_QR_AUTO_CLOSE_SECONDS:
             WIFI_QR_VISIBLE = False
         if MERZ_VISIBLE and (
-            DISPLAY_BLANK or time.time() - MERZ_LAST_ACTIVITY_TS > MERZ_IDLE_TIMEOUT_SECONDS
+            DISPLAY_BLANK or time.time() - MERZ_LAST_ACTIVITY_TS > GAMES_IDLE_TIMEOUT_SECONDS
         ):
             dismiss_merz_game("display-blank" if DISPLAY_BLANK else "idle-timeout")
         update_chore_screen_timeout()
+        update_games_timeout()
         if DISPLAY_BLANK and EMOTION_PROMPT_VISIBLE:
             dismiss_emotion_prompt("display-blank")
         elif EMOTION_PROMPT_VISIBLE:
@@ -6598,8 +6774,8 @@ def loop():
 
         # do it as often as FPS configured (30 FPS recommend for particle
         #  simulation, 15 runs fine too, 60 is overkill)
-        if MERZ_VISIBLE:
-            clock.tick(MERZ_FPS)
+        if MERZ_VISIBLE or games_open():
+            clock.tick(GAMES_FPS)
         elif QUIZ_STAGE is not None:
             clock.tick(QUIZ_FPS)
         else:

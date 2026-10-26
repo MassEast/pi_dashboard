@@ -14,7 +14,7 @@ by [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT).
 No test suite or linter/build step exists in this repo. `dev/test_pir_sensor.py` and
 `dev/llm_smoke_test.py` are manual smoke-test scripts, not an automated suite — run them directly
 with `python3` when touching PIR sensor or LLM-classification code.
-`dev/test_merz_burn_and_quiz_zoom.py` and `dev/test_moabeats_checklist.py` are headless
+`dev/test_merz_burn_and_quiz_zoom.py`, `dev/test_moabeats_checklist.py` and `dev/test_party_games.py` are headless
 (`SDL_VIDEODRIVER=dummy`) assert-based checks of the overlays — run them when touching that code.
 
 Setup:
@@ -114,11 +114,15 @@ through the JSON files in `logs/`:
   a chore stays in the app on purpose. `dev/test_moabeats_checklist.py` tests it headless against
   `dev/fake_moabeats_server.py`, which also runs standalone for a local look (point
   `MOABEATS.API_URL` at it; never test ticking against the real instance).
+- **PLAY menu** — the "PLAY" pill under WIFI opens a "Spiele" menu: MERZ plus the tap-only
+  party games in `party_games.py` (STAPEL-TURM, FLAPPY BVG), all behind one `GAMES` config section.
+  Each game is a self-contained object (`update(now)`, `draw(surf)`, `tap(x, y)`) that
+  `PiDashboard.py` only drives; scores are a memory-only "Rekord heute", never persisted.
 - Two built-in safety mechanisms exist specifically because this runs headless/unattended on a
   touchscreen with no keyboard: an emergency-exit corner tap (top-left corner, 5 rapid taps
   anywhere within the hitbox — deliberately generous, not pixel-exact, because real touchscreen
   taps land with real imprecision) that takes priority over the emotion overlays so it can never get
-  swallowed by a popup — but is deliberately *off* while the AFM quiz or MERZ game is open (both
+  swallowed by a popup — but is deliberately *off* while the AFM quiz, MERZ or a party game is open (all
   have their own X + idle timeout, and tapping their buttons near the corner quit the app by
   accident), and a no-internet auto-reboot in `safe_network_monitor()` that is rate
   limited (`NETWORK_REBOOT_COOLDOWN_SECONDS`) so a real upstream outage doesn't turn into a

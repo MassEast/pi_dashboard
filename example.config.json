@@ -96,7 +96,7 @@
     "SSID": "your-wifi-ssid",
     "PASSWORD": "your-wifi-password"
   },
-  "MERZ": {
+  "GAMES": {
     "ENABLED": false,
     "IDLE_TIMEOUT_SECONDS": 60,
     "FPS": 30

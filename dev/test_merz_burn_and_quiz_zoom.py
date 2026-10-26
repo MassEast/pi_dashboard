@@ -36,7 +36,7 @@ def tap_pill(kind):
 
 
 def test_merz_burn():
-    P.MERZ_ENABLED = True
+    P.GAMES_ENABLED = True
     P.activate_merz_game()
     P.draw_merz_overlay()
     assert "select_burn" not in P.MERZ_ACTION_RECTS

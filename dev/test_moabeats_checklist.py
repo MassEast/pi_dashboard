@@ -408,10 +408,10 @@ def test_pills_fogged_by_emotion_prompt():
     """Regression: the dashboard pills were drawn after the emotion prompt,
     so they sat bright on top of its fog (while the prompt swallowed taps)."""
     P.DISPLAY_BLANK = False
-    P.WIFI_ENABLED = P.MERZ_ENABLED = P.QUIZ_ENABLED = True
+    P.WIFI_ENABLED = P.GAMES_ENABLED = P.QUIZ_ENABLED = True
 
     def pill_pixels():
-        rects = [P.WIFI_BUTTON_RECT, P.MERZ_BUTTON_RECT, P.CHORE_BUTTON_RECT, P.QUIZ_BUTTON_RECT]
+        rects = [P.WIFI_BUTTON_RECT, P.PLAY_BUTTON_RECT, P.CHORE_BUTTON_RECT, P.QUIZ_BUTTON_RECT]
         assert all(rects), rects
         # Just inside the left edge: pill fill, not label text.
         return [sum(P.tft_surf.get_at((r.left + 3, r.centery))[:3]) for r in rects]
@@ -446,14 +446,14 @@ def test_no_tap_through_overlays():
     PUTZEN through the emotion prompt, AFM (quiz) and the emolog footer
     through the WiFi QR."""
     P.DISPLAY_BLANK = False
-    P.WIFI_ENABLED = P.MERZ_ENABLED = P.QUIZ_ENABLED = True
+    P.WIFI_ENABLED = P.GAMES_ENABLED = P.QUIZ_ENABLED = True
     P.config["MOABEATS"]["ENABLED"] = True
     P.tft_surf.fill(P.BLACK)
     P.draw_dashboard_overlays()  # pill rects as drawn with nothing open
     pills = {
         "AFM": P.QUIZ_BUTTON_RECT.copy(),
         "WIFI": P.WIFI_BUTTON_RECT.copy(),
-        "MERZ": P.MERZ_BUTTON_RECT.copy(),
+        "PLAY": P.PLAY_BUTTON_RECT.copy(),
         "PUTZEN": P.CHORE_BUTTON_RECT.copy(),
     }
     footer = pygame.Rect(P.FIT_SCREEN[0] + int(10 * P.ZOOM), P.FIT_SCREEN[1] + int(383 * P.ZOOM), 150, 16)
@@ -464,10 +464,12 @@ def test_no_tap_through_overlays():
         P.QUIZ_STAGE = None
         P.WIFI_QR_VISIBLE = P.MERZ_VISIBLE = P.CHORE_LIST_OPEN = False
         P.CHORE_DETAIL_ID = None
+        P.close_games("test-reset")
 
     def features():
         return {
             "quiz": P.QUIZ_STAGE is not None, "wifi": P.WIFI_QR_VISIBLE, "merz": P.MERZ_VISIBLE,
+            "games": P.GAMES_MENU_OPEN or P.ACTIVE_GAME is not None,
             "chores": P.CHORE_LIST_OPEN, "results": P.EMOTION_RESULTS_VISIBLE,
         }
 
@@ -475,6 +477,7 @@ def test_no_tap_through_overlays():
         "emotion prompt": lambda: setattr(P, "EMOTION_PROMPT_VISIBLE", True),
         "wifi qr": lambda: setattr(P, "WIFI_QR_VISIBLE", True),
         "chore overlay": lambda: setattr(P, "CHORE_LIST_OPEN", True),
+        "games menu": P.open_games_menu,
     }
     targets = dict(pills, footer=footer)
     checked = 0
@@ -486,6 +489,8 @@ def test_no_tap_through_overlays():
                 P.tft_surf.fill(P.BLACK)
                 P.draw_chore_overlay()
                 wait_idle()
+            if overlay_name == "games menu":
+                P.draw_games_menu()
             before = features()
             P.handle_tap(*rect.center)
             after = features()
