@@ -4959,12 +4959,9 @@ def _draw_chore_list(top, bottom):
             break
         checklist = chore.get("checklist", [])
         card = pygame.Rect(margin, y, DISPLAY_WIDTH - 2 * margin, card_height)
-        if checklist:
-            pygame.draw.rect(tft_surf, (40, 34, 56), card, border_radius=12)
-            pygame.draw.rect(tft_surf, SWEET_PURPLE, card, width=2, border_radius=12)
-            name_color, assignee_color = WHITE, SWEET_PURPLE
-        else:
-            name_color, assignee_color = DARK_GRAY, DARK_GRAY
+        pygame.draw.rect(tft_surf, (40, 34, 56), card, border_radius=12)
+        pygame.draw.rect(tft_surf, SWEET_PURPLE, card, width=2, border_radius=12)
+        name_color, assignee_color = WHITE, SWEET_PURPLE
 
         name = chore["name"]
         assignee = chore.get("assigned_to") or ""
@@ -4982,23 +4979,30 @@ def _draw_chore_list(top, bottom):
             name_surf = name_font.render(label, True, name_color)
             tft_surf.blit(name_surf, name_surf.get_rect(midleft=(text_left, card.centery)))
 
+        # Without a checklist the chore itself is the one "item": always 0/1
+        # here (cleaning_chores only holds uncompleted chores), and no
+        # chevron - tapping it does nothing, completing stays in the app.
         if checklist:
             done = sum(1 for entry in checklist if entry["done"])
-            complete = done == len(checklist)
-            chevron_x = card.right - 22
+            total = len(checklist)
+        else:
+            done, total = 0, 1
+        complete = done == total
+        chevron_x = card.right - 22
+        if checklist:
             _draw_chevron((chevron_x, card.centery), 9, WHITE)
-            progress_font = CHORE_PROGRESS_FONT_SMALL if compact else CHORE_ITEM_FONT_BOLD
-            bar_height = 5 if compact else 8
-            progress = progress_font.render(_chore_progress_text(checklist), True, GREEN if complete else WHITE)
-            # Text + bar as one block, vertically centered in the card.
-            block_top = card.centery - (progress.get_height() + 2 + bar_height) // 2
-            bar = pygame.Rect(chevron_x - 22 - 72, block_top + progress.get_height() + 2, 72, bar_height)
-            tft_surf.blit(progress, progress.get_rect(midtop=(bar.centerx, block_top)))
-            pygame.draw.rect(tft_surf, (70, 70, 70), bar, border_radius=4)
-            if done:
-                filled = bar.copy()
-                filled.width = max(8, bar.width * done // len(checklist))
-                pygame.draw.rect(tft_surf, GREEN if complete else SWEET_PURPLE, filled, border_radius=4)
+        progress_font = CHORE_PROGRESS_FONT_SMALL if compact else CHORE_ITEM_FONT_BOLD
+        bar_height = 5 if compact else 8
+        progress = progress_font.render(f"{done}/{total}", True, GREEN if complete else WHITE)
+        # Text + bar as one block, vertically centered in the card.
+        block_top = card.centery - (progress.get_height() + 2 + bar_height) // 2
+        bar = pygame.Rect(chevron_x - 22 - 72, block_top + progress.get_height() + 2, 72, bar_height)
+        tft_surf.blit(progress, progress.get_rect(midtop=(bar.centerx, block_top)))
+        pygame.draw.rect(tft_surf, (70, 70, 70), bar, border_radius=4)
+        if done:
+            filled = bar.copy()
+            filled.width = max(8, bar.width * done // total)
+            pygame.draw.rect(tft_surf, GREEN if complete else SWEET_PURPLE, filled, border_radius=4)
         CLEANING_CHORE_ROW_RECTS.append((card, chore["id"], bool(checklist)))
         y += card_height + gap
 
