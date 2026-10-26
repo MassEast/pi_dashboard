@@ -152,6 +152,25 @@ BVG_ROW_ICON_ANGLES = {"up": 0, "down": 180, "left": 90, "right": -90}
 # means this whole feature is skipped, no crash.
 MOABEATS_STATUS = {"overdue_chores": [], "cleaning_chores": [], "shopping": [], "visits": []}
 MOABEATS_STATUS_LOCK = threading.Lock()
+# Cleaning-day chore checklist detail screen (tap a chore row on the
+# cleaning-day fullscreen) - see open_chore_detail(). Only ticks/unticks
+# sub-items via PATCH; completing a chore stays in the MoaBeats app on purpose.
+CHORE_DETAIL_ID = None  # id of the open chore, None = list view
+CHORE_DETAIL_SNAPSHOT = None  # last seen chore dict, keeps the header if the chore vanishes
+CHORE_DETAIL_SESSION = 0  # bumped on every open, so stale worker results are dropped
+CHORE_DETAIL_LAST_ACTIVITY_TS = 0.0
+CHORE_DETAIL_IDLE_TIMEOUT_SECONDS = 60
+CHORE_DETAIL_PENDING_ITEM = None  # item text whose PATCH is in flight
+CHORE_DETAIL_REFRESHING = False
+CHORE_DETAIL_ERROR = None
+CHORE_DETAIL_ROW_RECTS = []  # [(rect, item_dict)] from the last draw
+CHORE_DETAIL_BACK_RECT = None
+CLEANING_CHORE_ROW_RECTS = []  # [(rect, chore_id, has_checklist)] list rows from the last draw
+# Same chore list as a fullscreen overlay on the awake dashboard, opened via
+# the "PUTZEN" pill (any day) - see open_chore_list().
+CHORE_LIST_OPEN = False
+CHORE_BUTTON_RECT = None
+CHORE_LIST_CLOSE_RECT = None
 
 emotion_cfg = config.get("EMOTION", {})
 EMOTION_ENABLED = emotion_cfg.get("ENABLED", True)
@@ -1974,6 +1993,13 @@ CLEANING_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, 40)
 # fullscreen - same fixed-px (not ZOOM-scaled) convention as CLEANING_FONT,
 # since both draw directly onto tft_surf at physical display resolution.
 CLEANING_CHORE_FONT = pygame.font.Font(FONT_PATH + FONT_MEDIUM, 32)
+# Chore checklist detail screen, same fixed-px convention.
+CHORE_ITEM_FONT = pygame.font.Font(FONT_PATH + FONT_MEDIUM, 28)
+CHORE_ITEM_FONT_SMALL = pygame.font.Font(FONT_PATH + FONT_MEDIUM, 22)
+CHORE_ITEM_FONT_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, 28)
+# Sub-item sizes tried largest-first until the whole checklist fits, see
+# _layout_chore_rows().
+CHORE_ITEM_FONTS = [pygame.font.Font(FONT_PATH + FONT_MEDIUM, size) for size in (28, 24, 21, 18, 16)]
 
 
 WEATHERICON = "unknown"
@@ -2765,11 +2791,12 @@ def _format_visit_date(iso_date):
 
 
 def _moabeats_fetch_status():
-    """Poll MoaBeats' /api/display/status and update MOABEATS_STATUS in place."""
+    """Poll MoaBeats' /api/display/status and update MOABEATS_STATUS in place.
+    Returns True on success (the chore detail screen shows a failure)."""
     global MOABEATS_STATUS
     cfg = config.get("MOABEATS", {})
     if not cfg.get("ENABLED", False):
-        return
+        return False
     try:
         resp = requests.get(
             cfg["API_URL"].rstrip("/") + "/api/display/status",
@@ -2779,10 +2806,151 @@ def _moabeats_fetch_status():
         if resp.status_code == 200:
             with MOABEATS_STATUS_LOCK:
                 MOABEATS_STATUS = resp.json()
-        else:
-            logger.error(f"MoaBeats status fetch returned HTTP {resp.status_code}")
+            return True
+        logger.error(f"MoaBeats status fetch returned HTTP {resp.status_code}")
     except Exception as e:
         logger.error(f"MoaBeats status fetch failed: {e}")
+    return False
+
+
+def _find_cleaning_chore(chore_id):
+    with MOABEATS_STATUS_LOCK:
+        for chore in MOABEATS_STATUS.get("cleaning_chores", []):
+            if chore.get("id") == chore_id:
+                return chore
+    return None
+
+
+def _chore_progress_text(checklist):
+    return f"{sum(1 for entry in checklist if entry['done'])}/{len(checklist)}"
+
+
+def _start_chore_refresh():
+    """New session + one background status refetch, so ticks made on phones
+    since the last poll show up."""
+    global CHORE_DETAIL_SESSION, CHORE_DETAIL_LAST_ACTIVITY_TS, CHORE_DETAIL_PENDING_ITEM
+    global CHORE_DETAIL_ERROR, CHORE_DETAIL_REFRESHING
+
+    CHORE_DETAIL_SESSION += 1
+    CHORE_DETAIL_LAST_ACTIVITY_TS = time.time()
+    CHORE_DETAIL_PENDING_ITEM = None
+    CHORE_DETAIL_ERROR = None
+    CHORE_DETAIL_REFRESHING = True
+    threading.Thread(target=_chore_detail_refresh_worker, args=(CHORE_DETAIL_SESSION,), daemon=True).start()
+
+
+def open_chore_detail(chore_id):
+    """Open the checklist detail screen (refetches the status once)."""
+    global CHORE_DETAIL_ID, CHORE_DETAIL_SNAPSHOT
+
+    CHORE_DETAIL_ID = chore_id
+    CHORE_DETAIL_SNAPSHOT = _find_cleaning_chore(chore_id)
+    logger.info(f"Chore detail opened: {chore_id}")
+    _start_chore_refresh()
+
+
+def open_chore_list():
+    """Open the chore list overlay from the "PUTZEN" pill (refetches the status once)."""
+    global CHORE_LIST_OPEN
+
+    CHORE_LIST_OPEN = True
+    logger.info("Chore list overlay opened")
+    _start_chore_refresh()
+
+
+def close_chore_list(reason):
+    global CHORE_LIST_OPEN, CHORE_LIST_CLOSE_RECT, CLEANING_CHORE_ROW_RECTS, CHORE_DETAIL_ERROR
+
+    if not CHORE_LIST_OPEN:
+        return
+    close_chore_detail(reason)
+    logger.info(f"Chore list overlay closed ({reason})")
+    CHORE_LIST_OPEN = False
+    CHORE_LIST_CLOSE_RECT = None
+    CLEANING_CHORE_ROW_RECTS = []
+    CHORE_DETAIL_ERROR = None  # don't carry a stale error onto the screensaver
+
+
+def close_chore_detail(reason):
+    global CHORE_DETAIL_ID, CHORE_DETAIL_ROW_RECTS, CHORE_DETAIL_BACK_RECT
+
+    if CHORE_DETAIL_ID is None:
+        return
+    logger.info(f"Chore detail closed ({reason})")
+    CHORE_DETAIL_ID = None
+    CHORE_DETAIL_ROW_RECTS = []
+    CHORE_DETAIL_BACK_RECT = None
+
+
+def update_chore_screen_timeout():
+    """Called every frame from loop(): close after CHORE_DETAIL_IDLE_TIMEOUT_SECONDS
+    without a tap, or once the screen it sits on isn't what's showing anymore
+    (the overlay on the awake dashboard, the detail on the cleaning screen)."""
+    if CHORE_LIST_OPEN:
+        if DISPLAY_BLANK:
+            close_chore_list("display-blank")
+        elif time.time() - CHORE_DETAIL_LAST_ACTIVITY_TS > CHORE_DETAIL_IDLE_TIMEOUT_SECONDS:
+            close_chore_list("idle-timeout")
+        return
+    if CHORE_DETAIL_ID is None:
+        return
+    if not DISPLAY_BLANK or datetime.datetime.today().weekday() != CLEANING_DAY:
+        close_chore_detail("cleaning-screen-gone")
+    elif time.time() - CHORE_DETAIL_LAST_ACTIVITY_TS > CHORE_DETAIL_IDLE_TIMEOUT_SECONDS:
+        close_chore_detail("idle-timeout")
+
+
+def _chore_detail_refresh_worker(session):
+    global CHORE_DETAIL_REFRESHING, CHORE_DETAIL_ERROR
+
+    ok = _moabeats_fetch_status()
+    if session != CHORE_DETAIL_SESSION:
+        return
+    if not ok:
+        CHORE_DETAIL_ERROR = "Aktualisieren fehlgeschlagen"
+    CHORE_DETAIL_REFRESHING = False
+
+
+def _chore_detail_toggle_worker(session, chore_id, item, done):
+    """PATCH one checklist item; on success the response's checklist replaces
+    the chore's checklist in MOABEATS_STATUS. On a 400 (item edited away in
+    the app, or chore already completed) the whole status is reloaded."""
+    global CHORE_DETAIL_PENDING_ITEM, CHORE_DETAIL_ERROR
+
+    cfg = config["MOABEATS"]
+    error = None
+    try:
+        resp = requests.patch(
+            cfg["API_URL"].rstrip("/") + f"/api/display/chores/{chore_id}/checklist",
+            headers={"Authorization": f"Bearer {cfg['DISPLAY_SECRET']}"},
+            json={"item": item, "done": done},
+            timeout=8,
+        )
+        if resp.status_code == 200:
+            checklist = resp.json()["checklist"]
+            with MOABEATS_STATUS_LOCK:
+                for chore in MOABEATS_STATUS.get("cleaning_chores", []):
+                    if chore.get("id") == chore_id:
+                        chore["checklist"] = checklist
+            logger.info(f"Chore {chore_id} checklist: {item!r} -> done={done}")
+        else:
+            logger.error(f"Chore {chore_id} checklist PATCH returned HTTP {resp.status_code}: {resp.text[:200]}")
+            # 400: item edited away in the app / chore already completed;
+            # 404: chore deleted in the app. Either way: reload, show fresh state.
+            if resp.status_code in (400, 404):
+                error = "Nicht gespeichert – Liste wurde geändert"
+                if not _moabeats_fetch_status():
+                    error = "Nicht gespeichert, Neuladen fehlgeschlagen"
+            else:
+                error = f"Nicht gespeichert (HTTP {resp.status_code})"
+    except requests.RequestException as e:
+        logger.error(f"Chore {chore_id} checklist PATCH failed: {e}")
+        error = "Nicht gespeichert – keine Verbindung"
+    finally:
+        if session == CHORE_DETAIL_SESSION:
+            CHORE_DETAIL_PENDING_ITEM = None
+    if session == CHORE_DETAIL_SESSION:
+        CHORE_DETAIL_ERROR = error
 
 
 def get_lan_ip():
@@ -3274,7 +3442,15 @@ def handle_emolog_footer_click(mx, my):
     # stealing taps at the bottom-left of those overlays (the MERZ EIER
     # pill sits right on it: every other tap there opened the hidden QR,
     # the next one closed it again, so the BURN combo could never land).
-    if EMOTION_PROMPT_VISIBLE or EMOTION_RESULTS_VISIBLE or MERZ_VISIBLE or QUIZ_STAGE is not None:
+    # Same while blank (incl. the cleaning-day screen): a tap there has to
+    # wake the display, not invisibly flip the QR on.
+    if (
+        DISPLAY_BLANK
+        or EMOTION_PROMPT_VISIBLE
+        or EMOTION_RESULTS_VISIBLE
+        or MERZ_VISIBLE
+        or QUIZ_STAGE is not None
+    ):
         return False
     if not EMOLOG_FOOTER_RECT or not EMOLOG_FOOTER_RECT.collidepoint((mx, my)):
         return False
@@ -4648,6 +4824,357 @@ def draw_moabeats_panel():
         _draw_moabeats_line(prefix, content, y_start + index * y_step, x_left, max_line_width)
 
 
+def draw_cleaning_day_screen():
+    """The always-on cleaning-day screensaver (shown instead of the blanked
+    display) - the same "Putzdienste" screen the PUTZEN pill opens."""
+    draw_chore_screen()
+
+
+def draw_chore_overlay():
+    """The "Putzdienste" screen on the awake dashboard, opened via PUTZEN."""
+    if CHORE_LIST_OPEN:
+        draw_chore_screen()
+
+
+def draw_chore_screen():
+    """One screen for both entry points: "Putzdienste" + chore list (or the
+    detail screen), "Schließen" at the bottom, and on cleaning day an extra
+    "IT'S CLEANING DAY, YAY!" on top. Headings live in the (non-tappable)
+    emergency-exit band, everything tappable sits below it."""
+    global CLEANING_CHORE_ROW_RECTS, CHORE_LIST_CLOSE_RECT
+
+    tft_surf.fill(BLACK)
+    CLEANING_CHORE_ROW_RECTS = []
+    if CHORE_DETAIL_ID is not None:
+        draw_chore_detail()
+        return
+
+    margin = 20
+    y = 24
+    if datetime.datetime.today().weekday() == CLEANING_DAY:
+        yay = CHORE_ITEM_FONT_BOLD.render("IT'S CLEANING DAY, YAY!", True, YELLOW)
+        tft_surf.blit(yay, yay.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
+        y += CHORE_ITEM_FONT_BOLD.get_linesize() + 10
+    title = CLEANING_FONT.render("Putzdienste", True, WHITE)
+    tft_surf.blit(title, title.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
+    y += CLEANING_FONT.get_linesize() + 6
+    # Exactly what the API's cleaning_chores holds (moabeatstastic
+    # backend/routes/display.py): Putzplan chores, not completed, due today
+    # or overdue. No per-chore due date in the payload, so this describes
+    # the whole list rather than marking single chores as overdue.
+    scope = CHORE_ITEM_FONT_SMALL.render("Heute fällig oder überfällig", True, SWEET_PURPLE)
+    tft_surf.blit(scope, scope.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
+    y += CHORE_ITEM_FONT_SMALL.get_linesize() + 2
+    hint = CHORE_ITEM_FONTS[3].render("Tippen zum Abhaken der Unterpunkte", True, DARK_GRAY)
+    tft_surf.blit(hint, hint.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
+    y += CHORE_ITEM_FONTS[3].get_linesize()
+    assert y <= EMERGENCY_EXIT_MAX_Y + 10, f"chore screen header too tall: {y}"
+
+    close_height = 80
+    CHORE_LIST_CLOSE_RECT = pygame.Rect(margin, DISPLAY_HEIGHT - margin - close_height, DISPLAY_WIDTH - 2 * margin, close_height)
+    status_top = CHORE_LIST_CLOSE_RECT.top - 8 - CHORE_ITEM_FONT_SMALL.get_linesize()
+    list_top = EMERGENCY_EXIT_MAX_Y + 45  # first row's center, clear of the header lines
+
+    if not config.get("MOABEATS", {}).get("ENABLED", False):
+        has_chores = False
+    else:
+        with MOABEATS_STATUS_LOCK:
+            has_chores = bool(MOABEATS_STATUS.get("cleaning_chores"))
+    if has_chores:
+        _draw_chore_list(list_top, status_top - 8)
+    elif not (CHORE_LIST_OPEN and CHORE_DETAIL_REFRESHING):
+        lines = _quiz_wrap_text(CHORE_ITEM_FONT, "Nichts fällig oder überfällig", DISPLAY_WIDTH - 2 * margin)
+        msg_y = (list_top + status_top) // 2 - len(lines) * CHORE_ITEM_FONT.get_linesize() // 2
+        for line in lines:
+            msg = CHORE_ITEM_FONT.render(line, True, SWEET_PURPLE)
+            tft_surf.blit(msg, msg.get_rect(midtop=(DISPLAY_WIDTH // 2, msg_y)))
+            msg_y += CHORE_ITEM_FONT.get_linesize()
+
+    # The list-level refetch only happens when opened via PUTZEN; the
+    # screensaver has no refresh/error state of its own.
+    status = None
+    if CHORE_LIST_OPEN and CHORE_DETAIL_ERROR:
+        status, status_color = CHORE_DETAIL_ERROR, RED
+    elif CHORE_LIST_OPEN and CHORE_DETAIL_REFRESHING:
+        status, status_color = "Aktualisiere…", DARK_GRAY
+    if status:
+        surf = CHORE_ITEM_FONT_SMALL.render(status, True, status_color)
+        tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, status_top)))
+
+    pygame.draw.rect(tft_surf, BLUE, CHORE_LIST_CLOSE_RECT, border_radius=14)
+    label = CLEANING_FONT.render("Schließen", True, WHITE)
+    tft_surf.blit(label, label.get_rect(center=CHORE_LIST_CLOSE_RECT.center))
+
+
+def _draw_chore_list(chore_y, bottom):
+    """Chore rows from y=chore_y (first row's center) down to bottom; fills
+    CLEANING_CHORE_ROW_RECTS. No done/not-done marker: cleaning_chores from
+    the API is already filtered to not-yet-completed chores only. Chores with
+    a checklist show their progress and open the detail screen on tap."""
+    with MOABEATS_STATUS_LOCK:
+        cleaning_chores = list(MOABEATS_STATUS.get("cleaning_chores", []))
+
+    # Sanity cap against a pathological API response, same pattern as
+    # draw_moabeats_panel()'s overdue_chores[:10] - this just bounds the
+    # render loop, actual fit on screen is handled by the dynamic step
+    # below so the list is never silently truncated at a normal size.
+    cleaning_chores = cleaning_chores[:15]
+
+    chore_count = len(cleaning_chores)
+    if chore_count:
+        available_height = bottom - chore_y
+        # Shrink spacing to fit everyone, but never below the font's own
+        # line height (would start overlapping text) and never wider
+        # than the original 40px (looks sparse with few chores).
+        chore_step = min(40, max(CLEANING_CHORE_FONT.get_linesize(), available_height // chore_count))
+    else:
+        chore_step = 40
+
+    for chore in cleaning_chores:
+        label = chore["name"]
+        if chore.get("assigned_to"):
+            label += f" ({chore['assigned_to']})"
+        checklist = chore.get("checklist", [])
+        if checklist:
+            label += f" {_chore_progress_text(checklist)}"
+        chore_surf = CLEANING_CHORE_FONT.render(label, True, SWEET_PURPLE)
+        chore_rect = chore_surf.get_rect(center=(DISPLAY_WIDTH // 2, chore_y))
+        tft_surf.blit(chore_surf, chore_rect)
+        # Full-width hit row: real taps land imprecisely, the text is narrow.
+        row_rect = pygame.Rect(0, chore_y - chore_step // 2, DISPLAY_WIDTH, chore_step)
+        CLEANING_CHORE_ROW_RECTS.append((row_rect, chore["id"], bool(checklist)))
+        chore_y += chore_step
+
+
+def _draw_check_box(rect, done, pending):
+    if pending:
+        pygame.draw.rect(tft_surf, YELLOW, rect, width=3, border_radius=6)
+        return
+    if done:
+        pygame.draw.rect(tft_surf, GREEN, rect, border_radius=6)
+        # Drawn tick - the bundled fonts aren't guaranteed to have a check glyph.
+        points = [
+            (rect.left + rect.width * 0.22, rect.top + rect.height * 0.52),
+            (rect.left + rect.width * 0.42, rect.top + rect.height * 0.72),
+            (rect.left + rect.width * 0.78, rect.top + rect.height * 0.30),
+        ]
+        pygame.draw.lines(tft_surf, BLACK, False, points, 5)
+    else:
+        pygame.draw.rect(tft_surf, WHITE, rect, width=3, border_radius=6)
+
+
+def _layout_chore_rows(checklist, text_width, available_height, gap):
+    """Largest item font at which every sub-item fits fully wrapped (no
+    ellipsis) with every row still a big touch target. Returns (font,
+    [(lines, row_height)]). If even the smallest size overflows, the caller
+    shows as many rows as fit plus "+N weitere"."""
+    min_row_height = 52
+    base_height = max(min_row_height, min(84, available_height // max(1, len(checklist)) - gap))
+    for font in CHORE_ITEM_FONTS:
+        layout = []
+        for entry in checklist:
+            lines = _quiz_wrap_text(font, entry["item"], text_width)
+            layout.append((lines, max(base_height, len(lines) * font.get_linesize() + 16)))
+        if sum(height for _, height in layout) + gap * (len(layout) - 1) <= available_height:
+            return font, layout
+    # Nothing fits: smallest font, minimum row height, caller truncates rows.
+    return font, [(lines, max(min_row_height, len(lines) * font.get_linesize() + 16)) for lines, _ in layout]
+
+
+def draw_chore_detail():
+    """Checklist detail screen: header (chore name + assignee + progress),
+    one big tappable row per sub-item, error/status line, "Zurück" button.
+    Everything tappable stays below EMERGENCY_EXIT_MAX_Y (the header lives in
+    that band) so the emergency-exit corner keeps working here unchanged."""
+    global CHORE_DETAIL_SNAPSHOT, CHORE_DETAIL_ROW_RECTS, CHORE_DETAIL_BACK_RECT
+
+    margin = 20
+    chore = _find_cleaning_chore(CHORE_DETAIL_ID)
+    if chore is not None:
+        CHORE_DETAIL_SNAPSHOT = chore
+    header = CHORE_DETAIL_SNAPSHOT or {}
+    checklist = chore.get("checklist", []) if chore is not None else []
+
+    y = 16
+    title = header.get("full_name") or header.get("name") or "?"
+    for line in _quiz_wrap_text(CLEANING_FONT, title, DISPLAY_WIDTH - 2 * margin)[:2]:
+        surf = CLEANING_FONT.render(line, True, WHITE)
+        tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
+        y += CLEANING_FONT.get_linesize()
+    subtitle = header.get("assigned_to") or "niemand zugeteilt"
+    if checklist:
+        subtitle += f"  ·  {_chore_progress_text(checklist)} erledigt"
+    surf = CHORE_ITEM_FONT.render(subtitle, True, SWEET_PURPLE)
+    tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, y + 4)))
+    y += 4 + CHORE_ITEM_FONT.get_linesize() + 4
+    # Completing/handing over is deliberately app-only (no button here).
+    hint_font = CHORE_ITEM_FONTS[3]
+    for line in _quiz_wrap_text(hint_font, "Dienst abhaken: in der MoaBeats-App", DISPLAY_WIDTH - 2 * margin):
+        surf = hint_font.render(line, True, DARK_GRAY)
+        tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
+        y += hint_font.get_linesize()
+
+    back_height = 80
+    CHORE_DETAIL_BACK_RECT = pygame.Rect(margin, DISPLAY_HEIGHT - margin - back_height, DISPLAY_WIDTH - 2 * margin, back_height)
+    # Two-line status area: the bundled font is monospace, a German error
+    # message doesn't fit one line at 480px.
+    status_line = CHORE_ITEM_FONT_SMALL.get_linesize()
+    status_top = CHORE_DETAIL_BACK_RECT.top - 8 - 2 * status_line
+    rows_top = EMERGENCY_EXIT_MAX_Y + 10
+    rows_bottom = status_top - 8
+
+    CHORE_DETAIL_ROW_RECTS = []
+    if chore is None:
+        msg = CHORE_ITEM_FONT.render("Nicht mehr offen", True, WHITE)
+        tft_surf.blit(msg, msg.get_rect(center=(DISPLAY_WIDTH // 2, (rows_top + rows_bottom) // 2)))
+        hint = CHORE_ITEM_FONT_SMALL.render("(in der App erledigt?)", True, DARK_GRAY)
+        tft_surf.blit(hint, hint.get_rect(center=(DISPLAY_WIDTH // 2, (rows_top + rows_bottom) // 2 + 36)))
+    else:
+        gap = 8
+        box_size = 36
+        text_left_offset = 14 + box_size + 16
+        text_width = DISPLAY_WIDTH - 2 * margin - text_left_offset - 12
+        font, layout = _layout_chore_rows(checklist, text_width, rows_bottom - rows_top, gap)
+        more_height = CHORE_ITEM_FONT_SMALL.get_linesize()
+        row_y = rows_top
+        shown = 0
+        for index, (entry, (lines, row_height)) in enumerate(zip(checklist, layout)):
+            is_last = index == len(checklist) - 1
+            if row_y + row_height > rows_bottom - (0 if is_last else more_height):
+                break
+            row_rect = pygame.Rect(margin, row_y, DISPLAY_WIDTH - 2 * margin, row_height)
+            pending = entry["item"] == CHORE_DETAIL_PENDING_ITEM
+            pygame.draw.rect(tft_surf, (30, 30, 30), row_rect, border_radius=10)
+            pygame.draw.rect(tft_surf, DARK_GRAY, row_rect, width=2, border_radius=10)
+            box = pygame.Rect(row_rect.left + 14, row_rect.centery - box_size // 2, box_size, box_size)
+            _draw_check_box(box, entry["done"], pending)
+
+            color = DARK_GRAY if entry["done"] and not pending else WHITE
+            text_top = row_rect.centery - len(lines) * font.get_linesize() // 2
+            for line_index, line in enumerate(lines):
+                surf = font.render(line, True, color)
+                tft_surf.blit(surf, (row_rect.left + text_left_offset, text_top + line_index * font.get_linesize()))
+            CHORE_DETAIL_ROW_RECTS.append((row_rect, entry))
+            row_y += row_height + gap
+            shown += 1
+        if shown < len(checklist):
+            # Only when even the smallest font can't fit everything.
+            more = CHORE_ITEM_FONT_SMALL.render(f"+{len(checklist) - shown} weitere in der App", True, DARK_GRAY)
+            tft_surf.blit(more, more.get_rect(midtop=(DISPLAY_WIDTH // 2, row_y)))
+
+    if CHORE_DETAIL_ERROR:
+        status, status_color = CHORE_DETAIL_ERROR, RED
+    elif CHORE_DETAIL_PENDING_ITEM is not None:
+        status, status_color = "Speichere…", YELLOW
+    elif CHORE_DETAIL_REFRESHING:
+        status, status_color = "Aktualisiere…", DARK_GRAY
+    else:
+        status = None
+    if status:
+        for line_index, line in enumerate(_quiz_wrap_text(CHORE_ITEM_FONT_SMALL, status, DISPLAY_WIDTH - 2 * margin)[:2]):
+            surf = CHORE_ITEM_FONT_SMALL.render(line, True, status_color)
+            tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, status_top + line_index * status_line)))
+
+    pygame.draw.rect(tft_surf, BLUE, CHORE_DETAIL_BACK_RECT, border_radius=14)
+    label = CLEANING_FONT.render("Zurück", True, WHITE)
+    tft_surf.blit(label, label.get_rect(center=CHORE_DETAIL_BACK_RECT.center))
+
+
+def handle_cleaning_chore_list_click(mx, my):
+    """Tap on a chore row on the cleaning-day fullscreen opens its detail
+    screen (chores with a checklist) or does nothing (without one) - either
+    way it doesn't wake the dashboard, people tap rows expecting the chore.
+    Taps anywhere else still fall through to the normal touch wake - except
+    on the "PUTZEN" overlay, which swallows every tap (dashboard behind it)."""
+    global CHORE_DETAIL_LAST_ACTIVITY_TS
+
+    if CHORE_DETAIL_ID is not None:
+        return False
+    on_cleaning_screen = DISPLAY_BLANK and datetime.datetime.today().weekday() == CLEANING_DAY
+    if not (CHORE_LIST_OPEN or on_cleaning_screen):
+        return False
+    if CHORE_LIST_CLOSE_RECT and CHORE_LIST_CLOSE_RECT.collidepoint((mx, my)):
+        if CHORE_LIST_OPEN:
+            close_chore_list("close")
+        else:
+            wake_display("touch", reason="chore_screen_close")
+        return True
+    if CHORE_LIST_OPEN:
+        CHORE_DETAIL_LAST_ACTIVITY_TS = time.time()
+    for rect, chore_id, has_checklist in CLEANING_CHORE_ROW_RECTS:
+        if rect.collidepoint((mx, my)):
+            if has_checklist:
+                open_chore_detail(chore_id)
+            return True
+    return CHORE_LIST_OPEN
+
+
+def draw_chore_button():
+    """Small "PUTZEN" pill, bottom-right, directly left of the "AFM" pill."""
+    global CHORE_BUTTON_RECT
+
+    if (
+        not config.get("MOABEATS", {}).get("ENABLED", False)
+        or QUIZ_STAGE is not None
+        or MERZ_VISIBLE
+        or WIFI_QR_VISIBLE
+        or CHORE_LIST_OPEN
+    ):
+        CHORE_BUTTON_RECT = None
+        return
+
+    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+    button_width, button_height = int(40 * ZOOM), int(12 * ZOOM)
+    right = QUIZ_BUTTON_RECT.left - int(4 * ZOOM) if QUIZ_BUTTON_RECT else dashboard_rect.right - int(2 * ZOOM)
+    CHORE_BUTTON_RECT = pygame.Rect(
+        right - button_width,
+        dashboard_rect.bottom - button_height - int(2 * ZOOM),
+        button_width,
+        button_height,
+    )
+    pygame.draw.rect(tft_surf, SWEET_PURPLE, CHORE_BUTTON_RECT, border_radius=5)
+    pygame.draw.rect(tft_surf, DARK_GRAY, CHORE_BUTTON_RECT, width=1, border_radius=5)
+    label = FONT_SUPER_TINY.render("PUTZEN", True, BLACK)
+    tft_surf.blit(label, label.get_rect(center=CHORE_BUTTON_RECT.center))
+
+
+def handle_chore_button_click(mx, my):
+    if DISPLAY_BLANK or CHORE_LIST_OPEN:
+        # Let this tap fall through to the normal wake-display handling
+        # instead of silently swallowing it via a stale pre-blank rect.
+        return False
+    if CHORE_BUTTON_RECT and CHORE_BUTTON_RECT.collidepoint((mx, my)):
+        open_chore_list()
+        return True
+    return False
+
+
+def handle_chore_detail_click(mx, my):
+    """Swallows every tap while the detail screen is open (a stray tap must
+    not wake the dashboard behind it). One PATCH in flight at a time."""
+    global CHORE_DETAIL_LAST_ACTIVITY_TS, CHORE_DETAIL_PENDING_ITEM, CHORE_DETAIL_ERROR
+
+    if CHORE_DETAIL_ID is None:
+        return False
+    CHORE_DETAIL_LAST_ACTIVITY_TS = time.time()
+    if CHORE_DETAIL_BACK_RECT and CHORE_DETAIL_BACK_RECT.collidepoint((mx, my)):
+        close_chore_detail("back")
+        return True
+    if CHORE_DETAIL_PENDING_ITEM is not None:
+        return True
+    for rect, entry in CHORE_DETAIL_ROW_RECTS:
+        if rect.collidepoint((mx, my)):
+            CHORE_DETAIL_PENDING_ITEM = entry["item"]
+            CHORE_DETAIL_ERROR = None
+            threading.Thread(
+                target=_chore_detail_toggle_worker,
+                args=(CHORE_DETAIL_SESSION, CHORE_DETAIL_ID, entry["item"], not entry["done"]),
+                daemon=True,
+            ).start()
+            return True
+    return True
+
+
 def _quiz_wrap_text(font, text, max_width):
     words = text.split(" ")
     lines = []
@@ -4842,7 +5369,7 @@ def dismiss_quiz(reason):
 
 
 def draw_quiz_button():
-    """Small "TEST" pill, bottom-right corner - first-pass placement (the
+    """Small "AFM" pill, bottom-right corner - first-pass placement (the
     footer/BVG-status area right above it is already tightly packed), likely
     needs a live nudge once seen on the real touchscreen, same as the WG
     panel and footer positions were tuned earlier."""
@@ -4853,7 +5380,7 @@ def draw_quiz_button():
         return
 
     dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-    button_width, button_height = int(48 * ZOOM), int(12 * ZOOM)
+    button_width, button_height = int(26 * ZOOM), int(12 * ZOOM)
     QUIZ_BUTTON_RECT = pygame.Rect(
         dashboard_rect.right - button_width - int(2 * ZOOM),
         dashboard_rect.bottom - button_height - int(2 * ZOOM),
@@ -4862,7 +5389,7 @@ def draw_quiz_button():
     )
     pygame.draw.rect(tft_surf, GREEN, QUIZ_BUTTON_RECT, border_radius=5)
     pygame.draw.rect(tft_surf, DARK_GRAY, QUIZ_BUTTON_RECT, width=1, border_radius=5)
-    label = FONT_SUPER_TINY.render("AFM TEST", True, BLACK)
+    label = FONT_SUPER_TINY.render("AFM", True, BLACK)
     tft_surf.blit(label, label.get_rect(center=QUIZ_BUTTON_RECT.center))
 
 
@@ -5573,6 +6100,31 @@ def handle_quiz_click(mx, my):
     return True
 
 
+def draw_dashboard_overlays():
+    """Pills and popups on top of the awake dashboard, see the ordering note."""
+    # All small dashboard pills first, every overlay after them -
+    # otherwise a pill drawn later sits bright on top of an earlier
+    # overlay's fog (e.g. WIFI/MERZ/PUTZEN/AFM over the emotion
+    # prompt), looking tappable while the overlay swallows the tap.
+    # draw_chore_button() goes after draw_quiz_button(): it's
+    # positioned off QUIZ_BUTTON_RECT.
+    draw_quiz_button()
+    draw_wifi_button()
+    draw_merz_button()
+    draw_chore_button()
+
+    draw_emotion_prompt_overlay()
+    draw_emotion_confirmation_overlay()
+    if EMOTION_RESULTS_VISIBLE:
+        draw_results_overlay()
+
+    draw_quiz_overlay()
+    if WIFI_QR_VISIBLE:
+        draw_wifi_qr_overlay()
+    draw_merz_overlay()
+    draw_chore_overlay()
+
+
 def draw_fps():
     DrawString(dynamic_surf, str(int(clock.get_fps())), FONT_SMALL_BOLD, RED, 20).left()
 
@@ -5721,6 +6273,7 @@ def loop():
             DISPLAY_BLANK or time.time() - MERZ_LAST_ACTIVITY_TS > MERZ_IDLE_TIMEOUT_SECONDS
         ):
             dismiss_merz_game("display-blank" if DISPLAY_BLANK else "idle-timeout")
+        update_chore_screen_timeout()
         if DISPLAY_BLANK and EMOTION_PROMPT_VISIBLE:
             dismiss_emotion_prompt("display-blank")
         elif EMOTION_PROMPT_VISIBLE:
@@ -5781,81 +6334,13 @@ def loop():
             # finally take the main surface and blit it to the tft surface
             tft_surf.blit(create_scaled_surf(display_surf, aa=AA), FIT_SCREEN)
 
-            draw_emotion_prompt_overlay()
-            draw_emotion_confirmation_overlay()
-            if EMOTION_RESULTS_VISIBLE:
-                draw_results_overlay()
-
-            draw_quiz_button()
-            draw_quiz_overlay()
-
-            draw_wifi_button()
-            if WIFI_QR_VISIBLE:
-                draw_wifi_qr_overlay()
-
-            draw_merz_button()
-            draw_merz_overlay()
+            draw_dashboard_overlays()
 
             # update the display with all surfaces merged into the main one
             pygame.display.update()
 
         elif datetime.datetime.today().weekday() == CLEANING_DAY:
-            tft_surf.fill(BLACK)
-
-            # Headline anchored near the top (was vertically centered at the old,
-            # bigger 80px font) so the chore list below has real room to breathe.
-            headline_top = 50
-            headline_step = 42
-
-            msg1 = CLEANING_FONT.render("IT'S", True, WHITE)
-            rect1 = msg1.get_rect(center=(DISPLAY_WIDTH // 2, headline_top))
-            tft_surf.blit(msg1, rect1)
-
-            msg2 = CLEANING_FONT.render("CLEANING", True, WHITE)
-            rect2 = msg2.get_rect(center=(DISPLAY_WIDTH // 2, headline_top + headline_step))
-            tft_surf.blit(msg2, rect2)
-
-            msg3 = CLEANING_FONT.render("DAY,", True, WHITE)
-            rect3 = msg3.get_rect(center=(DISPLAY_WIDTH // 2, headline_top + 2 * headline_step))
-            tft_surf.blit(msg3, rect3)
-
-            msg4 = CLEANING_FONT.render("YAY!", True, WHITE)
-            rect4 = msg4.get_rect(center=(DISPLAY_WIDTH // 2, headline_top + 3 * headline_step))
-            tft_surf.blit(msg4, rect4)
-
-            # Real per-chore assignment list from MoaBeats, if configured - who's on
-            # what today. No done/not-done marker: cleaning_chores from the API is
-            # already filtered to not-yet-completed chores only, so there's nothing
-            # to distinguish.
-            if config.get("MOABEATS", {}).get("ENABLED", False):
-                with MOABEATS_STATUS_LOCK:
-                    cleaning_chores = list(MOABEATS_STATUS.get("cleaning_chores", []))
-
-                # Sanity cap against a pathological API response, same pattern as
-                # draw_moabeats_panel()'s overdue_chores[:10] - this just bounds the
-                # render loop, actual fit on screen is handled by the dynamic step
-                # below so the list is never silently truncated at a normal size.
-                cleaning_chores = cleaning_chores[:15]
-
-                chore_y = headline_top + 3 * headline_step + 40
-                chore_count = len(cleaning_chores)
-                if chore_count:
-                    available_height = DISPLAY_HEIGHT - chore_y - 20
-                    # Shrink spacing to fit everyone, but never below the font's own
-                    # line height (would start overlapping text) and never wider
-                    # than the original 40px (looks sparse with few chores).
-                    chore_step = min(40, max(CLEANING_CHORE_FONT.get_linesize(), available_height // chore_count))
-                else:
-                    chore_step = 40
-
-                for chore in cleaning_chores:
-                    label = chore["name"]
-                    if chore.get("assigned_to"):
-                        label += f" ({chore['assigned_to']})"
-                    chore_surf = CLEANING_CHORE_FONT.render(label, True, SWEET_PURPLE)
-                    chore_rect = chore_surf.get_rect(center=(DISPLAY_WIDTH // 2, chore_y))
-                    tft_surf.blit(chore_surf, chore_rect)
-                    chore_y += chore_step
+            draw_cleaning_day_screen()
 
             pygame.display.update()
 
@@ -5915,6 +6400,19 @@ def loop():
                 else:
                     exit_clicks = 0  # Reset if they click elsewhere
                 # ----------------------------
+
+                # Cleaning-day fullscreen (display "blank"): chore rows open
+                # the checklist detail screen instead of waking the dashboard.
+                # First, so stale rects of the hidden dashboard (e.g. the
+                # emolog footer) can't steal these taps.
+                if handle_chore_detail_click(mx, my):
+                    continue
+
+                if handle_cleaning_chore_list_click(mx, my):
+                    continue
+
+                if handle_chore_button_click(mx, my):
+                    continue
 
                 if handle_emotion_popup_click(mx, my):
                     continue

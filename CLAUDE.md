@@ -14,6 +14,8 @@ by [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT).
 No test suite or linter/build step exists in this repo. `dev/test_pir_sensor.py` and
 `dev/llm_smoke_test.py` are manual smoke-test scripts, not an automated suite — run them directly
 with `python3` when touching PIR sensor or LLM-classification code.
+`dev/test_merz_burn_and_quiz_zoom.py` and `dev/test_moabeats_checklist.py` are headless
+(`SDL_VIDEODRIVER=dummy`) assert-based checks of the overlays — run them when touching that code.
 
 Setup:
 ```bash
@@ -103,8 +105,15 @@ through the JSON files in `logs/`:
 - **MoaBeats integration** (optional, config-gated via `config.json["MOABEATS"]["ENABLED"]`) —
   `PiDashboard.py` polls an external MoaBeats WG-chores instance's `GET /api/display/status` and
   renders it two ways: a small always-on status band (`draw_moabeats_panel()`, with per-line
-  scrolling instead of truncation for overflowing content) and, on `CLEANING_DAY`, real chore names
-  added to the existing fullscreen reminder.
+  scrolling instead of truncation for overflowing content) and one "Putzdienste" screen
+  (`draw_chore_screen()`) listing `cleaning_chores` (Putzplan, not completed, due today or
+  overdue). That screen is both the `CLEANING_DAY` screensaver (plus "IT'S CLEANING DAY, YAY!")
+  and an overlay opened any day via the "PUTZEN" pill (bottom right, next to "AFM"). Chores with
+  a checklist show `done/total` and open a detail screen on tap (`draw_chore_detail()`), which
+  ticks/unticks sub-items via `PATCH /api/display/chores/{id}/checklist` — tick only, completing
+  a chore stays in the app on purpose. `dev/test_moabeats_checklist.py` tests it headless against
+  `dev/fake_moabeats_server.py`, which also runs standalone for a local look (point
+  `MOABEATS.API_URL` at it; never test ticking against the real instance).
 - Two built-in safety mechanisms exist specifically because this runs headless/unattended on a
   touchscreen with no keyboard: an emergency-exit corner tap (top-left corner, 5 rapid taps
   anywhere within the hitbox — deliberately generous, not pixel-exact, because real touchscreen
