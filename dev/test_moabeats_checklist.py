@@ -339,6 +339,13 @@ def test_checklist_detail():
     FAKE["status"]["cleaning_chores"] = saved
     P.DISPLAY_BLANK = True
 
+    # MoaBeats off: the screensaver is just the cleaning-day headline.
+    P.config["MOABEATS"]["ENABLED"] = False
+    P.draw_cleaning_day_screen()
+    shot("14_moabeats_disabled.png")
+    assert P.CLEANING_CHORE_ROW_RECTS == [] and P.CHORE_LIST_CLOSE_RECT is None
+    P.config["MOABEATS"]["ENABLED"] = True
+
     server.shutdown()
     print(f"CHECKLIST: {len(FAKE['patches'])} PATCHes, {FAKE['gets']} status GETs against the fake server", flush=True)
 
@@ -422,6 +429,9 @@ def test_pills_fogged_by_emotion_prompt():
     P.draw_dashboard_overlays()
     shot("13_emotion_prompt_over_pills.png", check_edges=False)
     fogged = pill_pixels()
+    # ...and not tappable through the popup either.
+    assert not P.handle_chore_button_click(*P.CHORE_BUTTON_RECT.center)
+    assert not P.CHORE_LIST_OPEN, "PUTZEN opened through the emotion prompt"
     # Not dismiss_emotion_prompt(): that would log a real event to the store.
     P.EMOTION_PROMPT_VISIBLE = False
     for before, after in zip(plain, fogged):
@@ -429,8 +439,68 @@ def test_pills_fogged_by_emotion_prompt():
     print(f"PILLS: brightness {plain} -> {fogged} under the emotion prompt", flush=True)
 
 
+def test_no_tap_through_overlays():
+    """Regression for the whole class: with any dashboard overlay open, a
+    tap on a (fogged) pill or the emolog footer must not start that
+    feature - it either belongs to the overlay or closes it. Found:
+    PUTZEN through the emotion prompt, AFM (quiz) and the emolog footer
+    through the WiFi QR."""
+    P.DISPLAY_BLANK = False
+    P.WIFI_ENABLED = P.MERZ_ENABLED = P.QUIZ_ENABLED = True
+    P.config["MOABEATS"]["ENABLED"] = True
+    P.tft_surf.fill(P.BLACK)
+    P.draw_dashboard_overlays()  # pill rects as drawn with nothing open
+    pills = {
+        "AFM": P.QUIZ_BUTTON_RECT.copy(),
+        "WIFI": P.WIFI_BUTTON_RECT.copy(),
+        "MERZ": P.MERZ_BUTTON_RECT.copy(),
+        "PUTZEN": P.CHORE_BUTTON_RECT.copy(),
+    }
+    footer = pygame.Rect(P.FIT_SCREEN[0] + int(10 * P.ZOOM), P.FIT_SCREEN[1] + int(383 * P.ZOOM), 150, 16)
+    P.EMOLOG_FOOTER_RECT = footer.copy()
+
+    def reset():
+        P.EMOTION_PROMPT_VISIBLE = P.EMOTION_RESULTS_VISIBLE = P.EMOTION_CONFIRMATION_VISIBLE = False
+        P.QUIZ_STAGE = None
+        P.WIFI_QR_VISIBLE = P.MERZ_VISIBLE = P.CHORE_LIST_OPEN = False
+        P.CHORE_DETAIL_ID = None
+
+    def features():
+        return {
+            "quiz": P.QUIZ_STAGE is not None, "wifi": P.WIFI_QR_VISIBLE, "merz": P.MERZ_VISIBLE,
+            "chores": P.CHORE_LIST_OPEN, "results": P.EMOTION_RESULTS_VISIBLE,
+        }
+
+    overlays = {
+        "emotion prompt": lambda: setattr(P, "EMOTION_PROMPT_VISIBLE", True),
+        "wifi qr": lambda: setattr(P, "WIFI_QR_VISIBLE", True),
+        "chore overlay": lambda: setattr(P, "CHORE_LIST_OPEN", True),
+    }
+    targets = dict(pills, footer=footer)
+    checked = 0
+    for overlay_name, open_overlay in overlays.items():
+        for target_name, rect in targets.items():
+            reset()
+            open_overlay()
+            if overlay_name == "chore overlay":
+                P.tft_surf.fill(P.BLACK)
+                P.draw_chore_overlay()
+                wait_idle()
+            before = features()
+            P.handle_tap(*rect.center)
+            after = features()
+            # Allowed: the open overlay closing itself. Not allowed: any
+            # other feature turning on.
+            started = [k for k in after if after[k] and not before[k]]
+            assert not started, f"{target_name} tap through {overlay_name} started {started}"
+            checked += 1
+    reset()
+    print(f"TAP-THROUGH: {checked} pill/footer taps across {len(overlays)} overlays, none leaked", flush=True)
+
+
 if __name__ == "__main__":
     test_checklist_detail()
     test_real_checklists_fit()
     test_pills_fogged_by_emotion_prompt()
+    test_no_tap_through_overlays()
     print(f"ALL PASSED - screenshots in {OUT_DIR}", flush=True)

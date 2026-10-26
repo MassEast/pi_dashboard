@@ -3449,14 +3449,9 @@ def handle_emolog_footer_click(mx, my):
     # pill sits right on it: every other tap there opened the hidden QR,
     # the next one closed it again, so the BURN combo could never land).
     # Same while blank (incl. the cleaning-day screen): a tap there has to
-    # wake the display, not invisibly flip the QR on.
-    if (
-        DISPLAY_BLANK
-        or EMOTION_PROMPT_VISIBLE
-        or EMOTION_RESULTS_VISIBLE
-        or MERZ_VISIBLE
-        or QUIZ_STAGE is not None
-    ):
+    # wake the display, not invisibly flip the QR on. And under the WiFi QR
+    # it has to close that QR, not open this one hidden behind it.
+    if DISPLAY_BLANK or dashboard_overlay_open():
         return False
     if not EMOLOG_FOOTER_RECT or not EMOLOG_FOOTER_RECT.collidepoint((mx, my)):
         return False
@@ -3690,7 +3685,7 @@ def draw_wifi_button():
 def handle_wifi_button_click(mx, my):
     global WIFI_QR_VISIBLE, WIFI_QR_OPENED_AT
 
-    if DISPLAY_BLANK or MERZ_VISIBLE:
+    if DISPLAY_BLANK or dashboard_overlay_open():
         # Let this tap fall through to the normal wake-display handling
         # instead of silently swallowing it via a stale pre-blank rect.
         return False
@@ -4515,7 +4510,7 @@ def draw_merz_overlay():
 
 
 def handle_merz_button_click(mx, my):
-    if DISPLAY_BLANK:
+    if DISPLAY_BLANK or dashboard_overlay_open():
         return False
     if MERZ_BUTTON_RECT and MERZ_BUTTON_RECT.collidepoint((mx, my)):
         activate_merz_game()
@@ -4861,6 +4856,11 @@ def draw_chore_screen():
         yay = CHORE_ITEM_FONT_BOLD.render("IT'S CLEANING DAY, YAY!", True, YELLOW)
         tft_surf.blit(yay, yay.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
         y += CHORE_ITEM_FONT_BOLD.get_linesize() + 10
+    if not config.get("MOABEATS", {}).get("ENABLED", False):
+        # No MoaBeats: nothing to list - just the cleaning-day headline
+        # (only the screensaver gets here; PUTZEN isn't drawn without it).
+        CHORE_LIST_CLOSE_RECT = None
+        return
     title = CLEANING_FONT.render("Putzdienste", True, WHITE)
     tft_surf.blit(title, title.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
     y += CLEANING_FONT.get_linesize() + 6
@@ -4880,11 +4880,8 @@ def draw_chore_screen():
     # this screen, see emergency_exit_active()) and clear of the header.
     list_top = max(y, EMERGENCY_EXIT_MAX_Y) + 14
 
-    if not config.get("MOABEATS", {}).get("ENABLED", False):
-        has_chores = False
-    else:
-        with MOABEATS_STATUS_LOCK:
-            has_chores = bool(MOABEATS_STATUS.get("cleaning_chores"))
+    with MOABEATS_STATUS_LOCK:
+        has_chores = bool(MOABEATS_STATUS.get("cleaning_chores"))
     if has_chores:
         _draw_chore_list(list_top, status_top - 8)
     elif not (CHORE_LIST_OPEN and CHORE_DETAIL_REFRESHING):
@@ -5235,6 +5232,8 @@ def handle_chore_button_click(mx, my):
         # Let this tap fall through to the normal wake-display handling
         # instead of silently swallowing it via a stale pre-blank rect.
         return False
+    if dashboard_overlay_open():
+        return False
     if CHORE_BUTTON_RECT and CHORE_BUTTON_RECT.collidepoint((mx, my)):
         open_chore_list()
         return True
@@ -5489,6 +5488,10 @@ def handle_quiz_button_click(mx, my):
     if DISPLAY_BLANK:
         # Let this tap fall through to the normal wake-display handling
         # instead of silently swallowing it via a stale pre-blank rect.
+        return False
+    if dashboard_overlay_open():
+        # E.g. the AFM pill under the WiFi QR's fog: this runs before the
+        # QR's tap-to-close handler and used to open the quiz under it.
         return False
     if QUIZ_BUTTON_RECT and QUIZ_BUTTON_RECT.collidepoint((mx, my)):
         activate_quiz()
@@ -6192,6 +6195,45 @@ def handle_quiz_click(mx, my):
     return True
 
 
+def dashboard_overlay_open():
+    """Any popup/fullscreen overlay on the awake dashboard. The small pills
+    (and the emolog footer) stay drawn, fogged, underneath some of these,
+    and some pill handlers run before the overlay's own handler in
+    handle_tap() - so every pill handler must check this, or a tap on the
+    dimmed pill opens its feature over (or under) the open overlay."""
+    return (
+        EMOTION_PROMPT_VISIBLE
+        or EMOTION_RESULTS_VISIBLE
+        or EMOTION_CONFIRMATION_VISIBLE
+        or QUIZ_STAGE is not None
+        or WIFI_QR_VISIBLE
+        or MERZ_VISIBLE
+        or CHORE_LIST_OPEN
+    )
+
+
+def handle_tap(mx, my):
+    """All tap handlers after the emergency exit, in priority order; True if
+    one of them consumed the tap (otherwise loop() wakes a blank display).
+    Overlay handlers swallow every tap while their overlay is open."""
+    # Cleaning-day fullscreen (display "blank"): chore rows open the
+    # checklist detail screen instead of waking the dashboard. First, so
+    # stale rects of the hidden dashboard can't steal these taps.
+    return (
+        handle_chore_detail_click(mx, my)
+        or handle_cleaning_chore_list_click(mx, my)
+        or handle_chore_button_click(mx, my)
+        or handle_emotion_popup_click(mx, my)
+        or handle_emolog_footer_click(mx, my)
+        or handle_quiz_click(mx, my)
+        or handle_quiz_button_click(mx, my)
+        or handle_wifi_qr_click(mx, my)
+        or handle_wifi_button_click(mx, my)
+        or handle_merz_click(mx, my)
+        or handle_merz_button_click(mx, my)
+    )
+
+
 def emergency_exit_active():
     """The 5-tap top-left emergency exit is off inside the AFM quiz, the MERZ
     game and the chore checklist detail screen: all tap-heavy, full-screen,
@@ -6499,41 +6541,7 @@ def loop():
                     exit_clicks = 0  # Reset if they click elsewhere
                 # ----------------------------
 
-                # Cleaning-day fullscreen (display "blank"): chore rows open
-                # the checklist detail screen instead of waking the dashboard.
-                # First, so stale rects of the hidden dashboard (e.g. the
-                # emolog footer) can't steal these taps.
-                if handle_chore_detail_click(mx, my):
-                    continue
-
-                if handle_cleaning_chore_list_click(mx, my):
-                    continue
-
-                if handle_chore_button_click(mx, my):
-                    continue
-
-                if handle_emotion_popup_click(mx, my):
-                    continue
-
-                if handle_emolog_footer_click(mx, my):
-                    continue
-
-                if handle_quiz_click(mx, my):
-                    continue
-
-                if handle_quiz_button_click(mx, my):
-                    continue
-
-                if handle_wifi_qr_click(mx, my):
-                    continue
-
-                if handle_wifi_button_click(mx, my):
-                    continue
-
-                if handle_merz_click(mx, my):
-                    continue
-
-                if handle_merz_button_click(mx, my):
+                if handle_tap(mx, my):
                     continue
 
                 if DISPLAY_BLANK:
