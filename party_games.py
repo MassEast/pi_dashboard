@@ -223,9 +223,10 @@ class StackGame(_Game):
     # exactly on top, nothing cut off. Fingers on a laggy touchscreen aren't
     # pixel-exact, so be generous.
     PERFECT_TOLERANCE = 7
-    # After this many perfect drops in a row the floor grows back a bit.
+    # From this many perfect drops in a row on, every perfect drop grows the
+    # floor back a bit (up to the base width).
     PERFECT_STREAK_TO_GROW = 3
-    GROW_PX = 12
+    GROW_PX = 20
     START_SPEED = 170.0  # px/s
     SPEED_PER_FLOOR = 9.0
     MAX_SPEED = 520.0
@@ -244,6 +245,7 @@ class StackGame(_Game):
         self.perfect_streak = 0
         self.perfect_flash_until = 0.0
         self.perfect_text = ""
+        self.grow_flash_until = 0.0
 
     def _floor_color(self, level):
         color = pygame.Color(0)
@@ -278,12 +280,16 @@ class StackGame(_Game):
         if abs(offset) <= self.PERFECT_TOLERANCE:
             self.perfect_streak += 1
             new_x, new_w = top_x, top_w
+            grown = False
             if self.perfect_streak >= self.PERFECT_STREAK_TO_GROW:
                 grow = min(self.GROW_PX, int(self.width * 0.6) - new_w)
                 new_x -= grow / 2
                 new_w += grow
+                grown = grow > 0
             self.perfect_flash_until = self.last_tick + 0.7
             self.perfect_text = "PERFEKT!" if self.perfect_streak < 3 else f"PERFEKT x{self.perfect_streak}!"
+            if grown:
+                self.grow_flash_until = self.last_tick + 0.7
         else:
             self.perfect_streak = 0
             left = max(x, top_x)
@@ -351,6 +357,12 @@ class StackGame(_Game):
 
         for level, (x, w, color) in enumerate(self.floors):
             self._draw_floor(surf, x, self._floor_top(level), w, color)
+        growing = self.last_tick < self.grow_flash_until
+        if growing:
+            # Green glow around the floor that just grew.
+            x, w, _ = self.floors[-1]
+            glow = pygame.Rect(int(x) - 4, int(self._floor_top(len(self.floors) - 1)) - 4, int(w) + 8, self.FLOOR_HEIGHT + 8)
+            pygame.draw.rect(surf, (90, 255, 120), glow, width=3, border_radius=4)
         for piece in self.debris:
             self._draw_floor(surf, piece["x"], self._floor_top(piece["level"]) + piece["dy"], piece["w"], piece["color"])
         if self.state == "play":
@@ -359,6 +371,8 @@ class StackGame(_Game):
 
         if self.last_tick < self.perfect_flash_until:
             self._draw_outlined(surf, self.perfect_text, 34, BVG_YELLOW, center=(self.width // 2, int(self.height * 0.25)))
+        if growing:
+            self._draw_outlined(surf, "ANBAU! <->", 26, (90, 255, 120), center=(self.width // 2, int(self.height * 0.25) + 38))
 
         self._draw_hud(surf)
         if self.state == "ready":
@@ -389,6 +403,10 @@ class FlappyGame(_Game):
     MAX_GAP_SHIFT = 170
     BUS_W, BUS_H = 64, 34
     STREET_HEIGHT = 80
+    # Purely cosmetic nonsense, no effect on the score.
+    PIGEON_EVERY_SECONDS = (2.5, 6.0)
+    BUBBLE_SECONDS = 1.4
+    SHAKE_SECONDS = 0.4
 
     def reset(self, now):
         super().reset(now)
@@ -398,6 +416,18 @@ class FlappyGame(_Game):
         self.barriers = []  # each: {x, gap_y (center), gap, scored}
         self.scroll = 0.0  # total distance, for the parallax/street dashes
         self._bus_surf = None
+        self.puffs = []  # exhaust clouds: {x, y, age}
+        self.popups = []  # floating "+1": {text, x, y, age}
+        self.pigeons = []  # {x, y, vx, phase, pooped}
+        self.poops = []  # falling: {x, y, vx, vy}
+        self.splats = []  # (dx, dy) on the bus, until the next round
+        self.next_pigeon_at = now + random.uniform(*self.PIGEON_EVERY_SECONDS)
+        self.bubble_text = ""
+        self.bubble_until = 0.0
+        self.shake_until = 0.0
+        self.bonk_until = 0.0
+        self.wheel = None  # {x, y, vx, vy, rot} after a crash
+        self.spin = 0.0  # bus rotation after a crash, degrees
 
     def _street_top(self):
         return self.height - self.STREET_HEIGHT
@@ -417,10 +447,86 @@ class FlappyGame(_Game):
 
     def start(self):
         self._spawn_barrier(self.width + 60)
-        self.vy = self.FLAP_VY
+        self._flap()
+        self._say(random.choice(FLAPPY_START_LINES))
 
     def play_tap(self):
+        self._flap()
+
+    def _flap(self):
         self.vy = self.FLAP_VY
+        for i in range(3):
+            self.puffs.append(
+                {"x": self.bus_x - self.BUS_W / 2 - 4 - i * 6, "y": self.bus_y + 8 + random.uniform(-4, 4), "age": -i * 0.04}
+            )
+
+    def _say(self, text):
+        self.bubble_text = text
+        self.bubble_until = self.last_tick + self.BUBBLE_SECONDS
+
+    def _crash(self):
+        self.game_over(random.choice(FLAPPY_OVER_LINES))
+        self.shake_until = self.last_tick + self.SHAKE_SECONDS
+        self.bonk_until = self.last_tick + 0.9
+        self.bubble_until = 0.0
+        self.wheel = {"x": self.bus_x + 17, "y": self.bus_y + self.BUS_H / 2 - 2, "vx": 230.0, "vy": -480.0, "rot": 0.0}
+
+    def _landed(self):
+        return self.bus_y + self.BUS_H / 2 >= self._street_top() - 0.5
+
+    def _step_fx(self, dt, speed):
+        """Puffs, popups, pigeons, poop, the lost wheel - all cosmetic."""
+        for puff in self.puffs:
+            puff["age"] += dt
+            puff["x"] -= (speed * 0.6 + 40) * dt
+            puff["y"] -= 15 * dt
+        self.puffs = [p for p in self.puffs if p["age"] < 0.7]
+        for popup in self.popups:
+            popup["age"] += dt
+            popup["y"] -= 70 * dt
+        self.popups = [p for p in self.popups if p["age"] < 0.9]
+
+        if self.last_tick >= self.next_pigeon_at:
+            self.next_pigeon_at = self.last_tick + random.uniform(*self.PIGEON_EVERY_SECONDS)
+            self.pigeons.append(
+                {
+                    "x": self.width + 20,
+                    "y": random.uniform(150, self._street_top() - 220),
+                    "vx": -random.uniform(70, 150),
+                    "phase": random.uniform(0, 6),
+                    "pooped": False,
+                }
+            )
+        for pigeon in self.pigeons:
+            pigeon["x"] += (pigeon["vx"] - speed * 0.3) * dt
+            # Drops it roughly above the bus, so it has a fair chance of hitting.
+            if not pigeon["pooped"] and pigeon["x"] < self.bus_x + random.uniform(40, 160):
+                pigeon["pooped"] = True
+                if random.random() < 0.6:
+                    self.poops.append({"x": pigeon["x"], "y": pigeon["y"] + 6, "vx": pigeon["vx"] * 0.3, "vy": 0.0})
+        self.pigeons = [p for p in self.pigeons if p["x"] > -40]
+
+        bus = self._bus_rect().inflate(8, 8)
+        for poop in self.poops:
+            poop["vy"] += self.GRAVITY * 0.5 * dt
+            poop["x"] += (poop["vx"] - speed) * dt
+            poop["y"] += poop["vy"] * dt
+            if bus.collidepoint(poop["x"], poop["y"]) and self.state != "over":
+                poop["y"] = self.height * 2
+                self.splats.append((max(4.0, min(self.BUS_W - 8.0, poop["x"] - (self.bus_x - self.BUS_W / 2))), random.uniform(2, 9)))
+                self._say(random.choice(FLAPPY_POOP_LINES))
+        self.poops = [p for p in self.poops if p["y"] < self._street_top()]
+
+        if self.wheel is not None:
+            wheel = self.wheel
+            wheel["vy"] += self.GRAVITY * dt
+            wheel["x"] += wheel["vx"] * dt
+            wheel["y"] += wheel["vy"] * dt
+            wheel["rot"] += wheel["vx"] * dt * 3
+            if wheel["y"] + 6 > self._street_top() + 14 and wheel["vy"] > 0:
+                wheel["y"] = self._street_top() + 8
+                wheel["vy"] *= -0.55  # boing
+                wheel["vx"] *= 0.8
 
     def _bus_rect(self):
         # A bit smaller than the drawn bus - forgiving hitbox.
@@ -440,12 +546,18 @@ class FlappyGame(_Game):
         if self.state == "ready":
             self.bus_y = self.height * 0.42 + math.sin(self.last_tick * 3) * 10
             self.scroll += self.START_SPEED * dt
+            self._step_fx(dt, self.START_SPEED)
             return
         if self.state == "over":
-            # Bus drops onto the street.
-            if self.bus_y + self.BUS_H / 2 < self._street_top():
+            self._step_fx(dt, 0.0)
+            # Bus tumbles onto the street and ends up on its roof.
+            if not self._landed():
                 self.vy = min(self.MAX_FALL_VY, self.vy + self.GRAVITY * dt)
                 self.bus_y = min(self._street_top() - self.BUS_H / 2, self.bus_y + self.vy * dt)
+                self.spin += 600 * dt
+            else:
+                roof = 180 + 360 * round((self.spin - 180) / 360)
+                self.spin += (roof - self.spin) * min(1.0, dt * 10)
             return
 
         speed = self._speed()
@@ -461,18 +573,22 @@ class FlappyGame(_Game):
             if not barrier["scored"] and barrier["x"] + self.BARRIER_WIDTH < self.bus_x - self.BUS_W / 2:
                 barrier["scored"] = True
                 self.score += 1
+                self.popups.append({"text": "+1", "x": self.bus_x, "y": self.bus_y - 30, "age": 0.0})
+                if self.score % 5 == 0:
+                    self._say(random.choice(FLAPPY_SCORE_LINES))
         self.barriers = [b for b in self.barriers if b["x"] + self.BARRIER_WIDTH > -10]
         if self.barriers[-1]["x"] < self.width + 60 - self.BARRIER_SPACING:
             self._spawn_barrier(self.barriers[-1]["x"] + self.BARRIER_SPACING)
 
+        self._step_fx(dt, speed)
         bus = self._bus_rect()
         if bus.bottom >= self._street_top():
-            self.game_over(random.choice(FLAPPY_OVER_LINES))
+            self._crash()
             return
         for barrier in self.barriers:
             if any(bus.colliderect(r) for r in self._barrier_rects(barrier)):
                 self.vy = 0.0
-                self.game_over(random.choice(FLAPPY_OVER_LINES))
+                self._crash()
                 return
 
     def _get_bus_surf(self):
@@ -493,6 +609,68 @@ class FlappyGame(_Game):
                 pygame.draw.circle(s, GRAY, (cx, self.BUS_H - 2), 2)
             self._bus_surf = s
         return self._bus_surf
+
+    def _draw_bus(self, surf):
+        bus = self._get_bus_surf().copy()
+        for dx, dy in self.splats:
+            pygame.draw.circle(bus, WHITE, (int(dx), int(dy) + 2), 4)
+            pygame.draw.circle(bus, WHITE, (int(dx) + 3, int(dy) + 5), 2)
+            pygame.draw.circle(bus, (200, 200, 170), (int(dx) + 1, int(dy) + 2), 1)
+        # Googly eye in the windshield; x_x after a crash.
+        ex, ey = self.BUS_W - 9, 11
+        pygame.draw.circle(bus, WHITE, (ex, ey), 6)
+        pygame.draw.circle(bus, BLACK, (ex, ey), 6, width=1)
+        if self.state == "over":
+            pygame.draw.line(bus, BLACK, (ex - 3, ey - 3), (ex + 3, ey + 3), 2)
+            pygame.draw.line(bus, BLACK, (ex - 3, ey + 3), (ex + 3, ey - 3), 2)
+        else:
+            look = max(-1.0, min(1.0, self.vy / 400.0))
+            wobble = math.sin(self.last_tick * 17) * 1.5 * abs(look)
+            pygame.draw.circle(bus, BLACK, (int(ex + 1 + wobble), int(ey + look * 3)), 3)
+        if self.state == "over":
+            angle = self.spin
+        elif self.state == "play":
+            angle = max(-25.0, min(60.0, self.vy / 12.0))
+        else:
+            angle = 0.0
+        rotated = pygame.transform.rotate(bus, -angle)
+        surf.blit(rotated, rotated.get_rect(center=(int(self.bus_x), int(self.bus_y))))
+
+    def _draw_pigeon(self, surf, pigeon):
+        x, y = int(pigeon["x"]), int(pigeon["y"])
+        flap = math.sin(self.last_tick * 14 + pigeon["phase"])
+        body = (125, 125, 140)
+        pygame.draw.ellipse(surf, body, (x - 11, y - 5, 22, 11))
+        pygame.draw.circle(surf, (95, 110, 120), (x - 11, y - 4), 5)
+        pygame.draw.polygon(surf, (240, 150, 30), [(x - 16, y - 5), (x - 21, y - 3), (x - 16, y - 2)])
+        pygame.draw.circle(surf, BLACK, (x - 12, y - 6), 1)
+        tip_y = y - 4 - int(flap * 13)
+        pygame.draw.polygon(surf, (105, 105, 120), [(x - 4, y - 2), (x + 7, y - 2), (x + 3, tip_y)])
+
+    def _draw_bubble(self, surf):
+        font = self.fonts.get(16, True)
+        text = font.render(self.bubble_text, True, BLACK)
+        box = text.get_rect().inflate(18, 12)
+        box.midbottom = (int(self.bus_x) + 30, int(self.bus_y) - 30)
+        box.clamp_ip(pygame.Rect(6, 60, self.width - 12, self.height))
+        tail = [(box.left + 22, box.bottom - 1), (box.left + 36, box.bottom - 1), (int(self.bus_x) + 8, int(self.bus_y) - 16)]
+        pygame.draw.polygon(surf, WHITE, tail)
+        pygame.draw.rect(surf, WHITE, box, border_radius=10)
+        pygame.draw.rect(surf, BLACK, box, width=2, border_radius=10)
+        surf.blit(text, text.get_rect(center=box.center))
+
+    def _draw_bonk(self, surf):
+        cx, cy = int(self.bus_x) + 40, int(self.bus_y) - 75
+        grow = min(1.0, (self.last_tick - self.over_at) * 6)
+        points = []
+        for i in range(16):
+            r = (46 if i % 2 == 0 else 26) * grow
+            a = i * math.pi / 8 + 0.2
+            points.append((cx + math.cos(a) * r * 1.3, cy + math.sin(a) * r))
+        if grow > 0.1:
+            pygame.draw.polygon(surf, BVG_YELLOW, points)
+            pygame.draw.polygon(surf, (220, 30, 30), points, width=3)
+            self._draw_outlined(surf, "BONK!", int(14 + 12 * grow), (220, 30, 30), center=(cx, cy))
 
     def _draw_barrier(self, surf, rect, cap_at_bottom):
         if rect.height <= 0:
@@ -542,19 +720,47 @@ class FlappyGame(_Game):
 
     def draw(self, surf):
         self._draw_backdrop(surf)
+        for pigeon in self.pigeons:
+            self._draw_pigeon(surf, pigeon)
+        for poop in self.poops:
+            pygame.draw.circle(surf, WHITE, (int(poop["x"]), int(poop["y"])), 3)
         for barrier in self.barriers:
             top, bottom = self._barrier_rects(barrier)
             self._draw_barrier(surf, top, cap_at_bottom=True)
             self._draw_barrier(surf, bottom, cap_at_bottom=False)
-        angle = max(-25.0, min(60.0, self.vy / 12.0)) if self.state != "ready" else 0.0
-        bus = pygame.transform.rotate(self._get_bus_surf(), -angle)
-        surf.blit(bus, bus.get_rect(center=(int(self.bus_x), int(self.bus_y))))
+        for puff in self.puffs:
+            if puff["age"] < 0:
+                continue
+            t = puff["age"] / 0.7
+            radius = int(5 + 12 * t)
+            cloud = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+            pygame.draw.circle(cloud, (90, 90, 95, int(170 * (1 - t))), (radius, radius), radius)
+            surf.blit(cloud, (int(puff["x"]) - radius, int(puff["y"]) - radius))
+        if self.wheel is not None:
+            wx, wy = int(self.wheel["x"]), int(self.wheel["y"])
+            pygame.draw.circle(surf, (25, 25, 25), (wx, wy), 7)
+            a = math.radians(self.wheel["rot"])
+            pygame.draw.line(surf, GRAY, (wx, wy), (wx + int(math.cos(a) * 5), wy + int(math.sin(a) * 5)), 2)
+        self._draw_bus(surf)
+        if self.state == "over" and self._landed():
+            for i in range(3):  # dizzy stars
+                a = self.last_tick * 5 + i * 2.1
+                sx, sy = self.bus_x + math.cos(a) * 26, self.bus_y - 30 + math.sin(a) * 7
+                self._draw_outlined(surf, "*", 22, BVG_YELLOW, center=(int(sx), int(sy)))
+        if self.state == "over" and self.last_tick < self.bonk_until:
+            self._draw_bonk(surf)
+        if self.state != "over" and self.last_tick < self.bubble_until:
+            self._draw_bubble(surf)
+        for popup in self.popups:
+            self._draw_outlined(surf, popup["text"], 26, BVG_YELLOW, center=(int(popup["x"]), int(popup["y"])))
 
         self._draw_hud(surf)
         if self.state == "ready":
             self._draw_ready(surf)
         elif self.state == "over" and self.last_tick - self.over_at > 0.5:
             self._draw_over(surf)
+        if self.last_tick < self.shake_until:
+            surf.scroll(random.randint(-7, 7), random.randint(-7, 7))
 
 
 STACK_OVER_LINES = [
@@ -571,6 +777,28 @@ FLAPPY_OVER_LINES = [
     "Ersatzverkehr eingerichtet.",
     "Dieser Bus endet hier.",
     "Fahrt fällt aus.",
+]
+
+FLAPPY_START_LINES = [
+    "Einsteigen bitte!",
+    "Ick fahr ja schon!",
+    "Festhalten, Leute!",
+    "Fahrkarten? Egal!",
+]
+
+FLAPPY_SCORE_LINES = [
+    "Nächster Halt: Baustelle",
+    "Hupp hupp!",
+    "Pünktlich wie nie!",
+    "Tür freigeben!",
+    "Bitte nach hinten durchgehen!",
+]
+
+FLAPPY_POOP_LINES = [
+    "Igitt!",
+    "Ey, Taube!",
+    "Waschanlage bitte!",
+    "Glück bringt's ja...",
 ]
 
 GAMES = [StackGame, FlappyGame]

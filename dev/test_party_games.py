@@ -143,6 +143,9 @@ def test_stack():
         game.moving_x = game.floors[-1][0]
         game.tap(10, 400)
     assert game.floors[-1][1] > width_before, "perfect streak did not grow the floor"
+    assert game.last_tick < game.grow_flash_until, "growing should be shown"
+    game.draw(P.tft_surf)
+    shot("03b_stack_grow.png")
 
     # Full miss -> game over, record set.
     top_x, top_w, _ = game.floors[-1]
@@ -191,8 +194,15 @@ def test_flappy():
 
     # No more taps after the start: falls onto the street.
     game.tap(200, 400)
+    assert game.puffs and game.last_tick < game.bubble_until, "flap should puff, start should talk"
     now = run_frames(game, now, 5.0)
     assert game.state == "over" and game.score == 0, (game.state, game.score)
+    assert game.wheel is not None, "crash should lose a wheel"
+    now = run_frames(game, now, 0.3)
+    game.draw(P.tft_surf)
+    shot("06b_flappy_bonk.png")
+    now = run_frames(game, now, 1.5)
+    assert abs(game.spin % 360 - 180) < 5, f"bus should end on its roof, spin {game.spin}"
 
     # Bot: tap whenever the bus sinks below the next gap's centre. If this
     # can't get through, the physics are too hard for humans too.
@@ -201,6 +211,9 @@ def test_flappy():
     game.tap(*game.buttons["again"].center)
     game.tap(200, 400)
     random.seed(3)
+
+    # Fake a pigeon right above the bus: its poop must splat on the bus.
+    game.poops.append({"x": game.bus_x, "y": game.bus_y - 40, "vx": 0.0, "vy": 0.0})
 
     def bot(g):
         upcoming = [b for b in g.barriers if b["x"] + g.BARRIER_WIDTH > g.bus_x - g.BUS_W / 2]
@@ -212,6 +225,7 @@ def test_flappy():
             shot("07_flappy_play.png")
 
     now = run_frames(game, now, 60.0, on_frame=bot)
+    assert game.splats, "poop above the bus did not hit it"
     print(f"FLAPPY: bot reached {game.score} Haltestellen ({game.state})", flush=True)
     assert game.score >= 15, f"bot only reached {game.score} - too hard?"
 
