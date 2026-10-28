@@ -65,6 +65,7 @@ LOG_PATH = PATH + "logs/"
 UPTIME_LOG_PATH = PATH + "logs/"
 EMOTION_LOG_PATH = PATH + "logs/"
 QUIZ_LOG_PATH = PATH + "logs/"
+GAMES_LOG_PATH = PATH + "logs/"  # party_games all-time highscores
 
 # Load config file
 config_data = open(PATH + "config.json").read()
@@ -601,6 +602,7 @@ WIFI_PASSWORD = WIFI_CONFIG.get("PASSWORD", "")
 GAMES_CONFIG = config.get("GAMES", {})
 GAMES_ENABLED = GAMES_CONFIG.get("ENABLED", False)
 GAMES_IDLE_TIMEOUT_SECONDS = GAMES_CONFIG.get("IDLE_TIMEOUT_SECONDS", 60)
+party_games.configure(GAMES_LOG_PATH)
 # Frame rate while a game is open - the dashboard's own DISPLAY.FPS is
 # kept low (10 on the Pi) to save CPU, which makes taps/throws feel laggy
 # in the games. All game motion is dt-based, so only smoothness changes.
@@ -3811,6 +3813,7 @@ def close_games(reason):
     if not games_open():
         return
     if ACTIVE_GAME is not None:
+        ACTIVE_GAME.save_name()  # closed mid name entry: keep the highscore
         logger.info(f"Game {ACTIVE_GAME.NAME} closed ({reason}), score {ACTIVE_GAME.score}")
     else:
         logger.info(f"Games menu closed ({reason})")
@@ -3886,8 +3889,9 @@ def draw_games_menu():
         tft_surf.blit(small_font.render(description, True, SWEET_PURPLE), (text_left, line_y))
         line_y += small_font.get_linesize() + line_gap
         if key != "merz":
-            record = party_games.record_today(key)
-            tft_surf.blit(small_font.render(f"Rekord heute: {record}", True, (150, 150, 150)), (text_left, line_y))
+            top = party_games.best(key)
+            record = f"Rekord: {top['score']} ({top['name']})" if top else "Noch kein Rekord"
+            tft_surf.blit(small_font.render(record, True, (150, 150, 150)), (text_left, line_y))
         _draw_chevron((rect.right - 26, rect.centery), 14, SWEET_PURPLE)
         rects.append((rect, key))
         y = rect.bottom + gap

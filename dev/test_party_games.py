@@ -7,6 +7,9 @@ Headless check of the PLAY menu and the party_games.py games:
   FLAPPY BVG, "Schließen" closes, emergency exit only off inside a game.
 - STAPEL-TURM: perfect drop keeps the width, offset drop cuts it, a full
   miss ends the game, game-over taps are ignored for a moment, NOCHMAL/MENÜ.
+- Highscores: a top-5 score asks for a name (on-screen keyboard), saves it
+  to the JSON store (temp dir), the list keeps only 5, a score that doesn't
+  make it skips the keyboard, closing mid-entry still saves (as ANONYM).
 - FLAPPY BVG: no taps -> crashes into the street; a simple tapping bot gets
   through barriers (the physics are actually playable); x closes.
 - Idle timeout and display blank close the game.
@@ -31,6 +34,8 @@ import PiDashboard as P  # noqa: E402
 
 OUT_DIR = tempfile.mkdtemp(prefix="pidashboard_games_")
 FRAME = 1.0 / 30
+# Never touch the real logs/game_highscores.json.
+party_games.configure(os.path.join(OUT_DIR, "logs"))
 
 
 def shot(name):
@@ -99,6 +104,17 @@ def test_menu():
     print("MENU: PLAY -> menu -> MERZ/close ok, config gating ok", flush=True)
 
 
+def press(game, token):
+    game.tap(*next(r for r, t in game.key_rects if t == token).center)
+
+
+def type_name(game, text, ok=True):
+    for token in text:
+        press(game, token)
+    if ok:
+        press(game, "ok")
+
+
 def open_game(name):
     P.open_games_menu()
     P.draw_games_menu()
@@ -110,7 +126,6 @@ def open_game(name):
 
 
 def test_stack():
-    party_games.RECORDS.clear()
     game = open_game("STAPEL-TURM")
     now = game.last_tick
     game.draw(P.tft_surf)
@@ -152,18 +167,28 @@ def test_stack():
     game.moving_x = top_x + top_w + 5
     score = game.score
     game.tap(10, P.DISPLAY_HEIGHT // 2)
-    assert game.state == "over" and game.new_record and party_games.record_today("STAPEL-TURM") == score
+    assert game.state == "over" and game.name_entry, "first score must ask for a name"
 
-    # Taps right after game over do nothing (not even NOCHMAL).
-    game.draw(P.tft_surf)
+    # Taps right after game over do nothing (not even a key).
     now = run_frames(game, now, 0.6)
     game.draw(P.tft_surf)
-    again = game.buttons["again"]
-    game.tap(*again.center)
-    assert game.state == "over", "NOCHMAL hit within the game-over tap delay"
+    game.tap(*game.key_rects[0][0].center)
+    assert game.name_text == "", "key hit within the game-over tap delay"
     now = run_frames(game, now, 0.5)
     game.draw(P.tft_surf)
+    for rect, token in game.key_rects:
+        assert 0 < rect.left and rect.right < P.DISPLAY_WIDTH, token
+    type_name(game, "JUU", ok=False)
+    press(game, "back")
+    game.draw(P.tft_surf)
+    shot("04a_stack_name.png")
+    press(game, "ok")
+    assert not game.name_entry and game.place == 0
+    top = party_games.best("STAPEL-TURM")
+    assert (top["name"], top["score"]) == ("JU", score), top
+    game.draw(P.tft_surf)
     shot("04_stack_over.png")
+    again = game.buttons["again"]
     for rect in game.buttons.values():
         assert P.DISPLAY_WIDTH > rect.right and rect.left > 0
     game.tap(*again.center)
@@ -181,7 +206,68 @@ def test_stack():
     P.draw_games_menu()
     shot("05_menu_with_record.png")
     P.close_games("test")
-    print(f"STACK: perfect/cut/grow/miss ok, record {party_games.record_today('STAPEL-TURM')}", flush=True)
+    print(f"STACK: perfect/cut/grow/miss/name ok, record {party_games.best('STAPEL-TURM')}", flush=True)
+
+
+def test_highscores():
+    name = "STAPEL-TURM"
+    game = open_game(name)
+    now = game.last_tick
+
+    def finish(score, text):
+        nonlocal now
+        game.reset(now)
+        game.tap(1, 400)
+        game.score = score
+        game.game_over("test")
+        now = run_frames(game, now, 1.0)
+        game.draw(P.tft_surf)
+        if game.name_entry:
+            type_name(game, text)
+        return game.place
+
+    for score, text in ((5, "A"), (7, "B"), (3, "C"), (9, "D"), (4, "E")):
+        finish(score, text)
+    scores = [e["score"] for e in party_games.top_list(name)]
+    assert scores == sorted(scores, reverse=True) and len(scores) == 5, scores
+
+    # Too low for the top 5: no keyboard, straight to the list.
+    game.reset(now)
+    game.tap(1, 400)
+    game.score = scores[-1]  # a tie with the last place does not push it out
+    game.game_over("test")
+    assert not game.name_entry and game.place is None
+    now = run_frames(game, now, 1.0)
+    game.draw(P.tft_surf)
+    assert "again" in game.buttons
+
+    # Middle place, highlighted in the list.
+    # List is now 13 (JU from test_stack), 9, 7, 5, 4 -> 8 lands on place 3.
+    place = finish(8, "MITTE")
+    assert place == 2 and party_games.top_list(name)[2]["name"] == "MITTE", party_games.top_list(name)
+    game.draw(P.tft_surf)
+    shot("09_leaderboard.png")
+
+    # Persisted: a fresh load from disk sees the same list.
+    in_memory = party_games.top_list(name)
+    party_games.configure(party_games.LOG_DIR)
+    assert party_games.top_list(name) == in_memory
+
+    # Closed (x / idle) mid-entry: still saved, as ANONYM.
+    game.reset(now)
+    game.tap(1, 400)
+    game.score = 99
+    game.game_over("test")
+    assert game.name_entry
+    assert P.handle_tap(*game.close_rect.center) and not P.games_open()
+    assert party_games.best(name)["name"] == "ANONYM" and party_games.best(name)["score"] == 99
+
+    # Menu card shows the all-time record.
+    P.open_games_menu()
+    P.draw_games_menu()
+    shot("10_menu_alltime.png")
+    P.close_games("test")
+    print(f"HIGHSCORES: top5/keyboard/skip/persist/close-saves ok: {party_games.top_list(name)}", flush=True)
 
 
 def test_flappy():
@@ -261,5 +347,6 @@ if __name__ == "__main__":
     test_menu()
     test_stack()
     test_flappy()
+    test_highscores()
     test_timeouts()
     print(f"ALL PASSED - screenshots in {OUT_DIR}", flush=True)

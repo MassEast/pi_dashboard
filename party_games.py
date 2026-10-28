@@ -11,16 +11,17 @@ PiDashboard.py itself, these two are self-contained):
 
 Each game is one object PiDashboard.py drives every frame: update(now),
 draw(surf), tap(x, y) -> None | "close" | "menu". All motion is dt-based,
-so the frame rate only changes smoothness. Scores are not persisted - just a
-"Rekord heute" kept in memory (RECORDS), which resets at midnight and on an
-app restart.
+so the frame rate only changes smoothness. An all-time top 5 per game is
+kept in logs/ (highscore_store.py); getting into it asks for a name on an
+on-screen keyboard in the game-over panel.
 """
 
-import datetime
 import math
 import random
 
 import pygame
+
+import highscore_store
 
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
@@ -37,23 +38,39 @@ GAME_OVER_TAP_DELAY_SECONDS = 0.8
 # bus into a barrier.
 MAX_DT_SECONDS = 0.05
 
-# name -> (date, best score) - "Rekord heute", memory only.
-RECORDS = {}
+NAME_MAX_CHARS = 10
+KEYBOARD_ROWS = ["QWERTZUIOP", "ASDFGHJKL", "YXCVBNM"]
+NAME_FALLBACK = "ANONYM"
+HIGHLIGHT_GREEN = (90, 255, 120)
+
+# Set by configure() from PiDashboard.py: game name -> top list, best first.
+LOG_DIR = None
+HIGHSCORES = {}
 
 
-def record_today(name):
-    entry = RECORDS.get(name)
-    if entry is None or entry[0] != datetime.date.today():
-        return 0
-    return entry[1]
+def configure(log_dir):
+    global LOG_DIR, HIGHSCORES
+    LOG_DIR = log_dir
+    HIGHSCORES = highscore_store.read_highscores(log_dir)
 
 
-def _submit_score(name, score):
-    """Returns True if score is a new record for today."""
-    if score > record_today(name):
-        RECORDS[name] = (datetime.date.today(), score)
-        return True
-    return False
+def top_list(name):
+    return HIGHSCORES.get(name, [])
+
+
+def best(name):
+    """Best entry {name, score, ts_iso} of a game, or None."""
+    entries = top_list(name)
+    return entries[0] if entries else None
+
+
+def projected_place(name, score):
+    """0-based place a score would get in the top list, None if it doesn't make it."""
+    if score <= 0:
+        return None
+    entries = top_list(name)
+    place = next((i for i, e in enumerate(entries) if score > e["score"]), len(entries))
+    return place if place < highscore_store.TOP_N else None
 
 
 class _Fonts:
@@ -88,9 +105,12 @@ class _Game:
         self.score = 0
         self.last_tick = now
         self.over_at = 0.0
-        self.new_record = False
         self.over_text = ""
         self.buttons = {}
+        self.name_entry = False  # game-over panel shows the keyboard
+        self.name_text = ""
+        self.key_rects = []  # (rect, token) of the on-screen keyboard
+        self.place = None  # 0-based place in the top list once saved
 
     def tap(self, x, y):
         """Returns "close", "menu" or None (tap used by the game)."""
@@ -98,6 +118,9 @@ class _Game:
             return "close"
         if self.state == "over":
             if self.last_tick - self.over_at < GAME_OVER_TAP_DELAY_SECONDS:
+                return None
+            if self.name_entry:
+                self._name_tap(x, y)
                 return None
             if "again" in self.buttons and self.buttons["again"].collidepoint((x, y)):
                 self.reset(self.last_tick)
@@ -120,7 +143,31 @@ class _Game:
         self.state = "over"
         self.over_at = self.last_tick
         self.over_text = text
-        self.new_record = _submit_score(self.NAME, self.score)
+        self.name_entry = projected_place(self.NAME, self.score) is not None
+        self.name_text = ""
+
+    def _name_tap(self, x, y):
+        token = next((t for rect, t in self.key_rects if rect.collidepoint((x, y))), None)
+        if token == "back":
+            self.name_text = self.name_text[:-1]
+        elif token == "space":
+            if self.name_text and not self.name_text.endswith(" ") and len(self.name_text) < NAME_MAX_CHARS:
+                self.name_text += " "
+        elif token == "ok":
+            self.save_name()
+        elif token is not None and len(self.name_text) < NAME_MAX_CHARS:
+            self.name_text += token
+
+    def save_name(self):
+        """Stores the score under the typed name (empty -> ANONYM). Also
+        called by PiDashboard.py when the game gets closed mid-entry (x, idle
+        timeout), so walking away doesn't lose a highscore."""
+        global HIGHSCORES
+        if not self.name_entry:
+            return
+        name = self.name_text.strip() or NAME_FALLBACK
+        HIGHSCORES, self.place = highscore_store.submit_highscore(LOG_DIR, self.NAME, name, self.score)
+        self.name_entry = False
 
     # Subclass hooks
     def start(self):
@@ -156,8 +203,9 @@ class _Game:
     def _draw_hud(self, surf):
         if self.state != "ready":
             self._draw_outlined(surf, str(self.score), 64, WHITE, midtop=(self.width // 2, 60))
-        record = record_today(self.NAME)
-        self._draw_outlined(surf, f"Rekord heute: {record}", 18, WHITE, topleft=(12, 14))
+        top = best(self.NAME)
+        record = f"Rekord: {top['score']} {top['name']}" if top else "Rekord: -"
+        self._draw_outlined(surf, record, 18, WHITE, topleft=(12, 14))
         pygame.draw.rect(surf, CLOSE_ORANGE, self.close_rect, border_radius=10)
         pygame.draw.rect(surf, BVG_YELLOW, self.close_rect, width=2, border_radius=10)
         self._text(surf, "x", 28, BLACK, center=self.close_rect.center)
@@ -172,21 +220,85 @@ class _Game:
         fog = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         fog.fill((0, 0, 0, 150))
         surf.blit(fog, (0, 0))
+        if self.name_entry:
+            self._draw_name_entry(surf)
+        else:
+            self._draw_leaderboard(surf)
 
-        panel = pygame.Rect(0, 0, self.width - 60, 380)
+    def _panel(self, surf, height):
+        panel = pygame.Rect(0, 0, self.width - 60, height)
         panel.center = (self.width // 2, self.height // 2)
         pygame.draw.rect(surf, PANEL_BG, panel, border_radius=18)
         pygame.draw.rect(surf, BUTTON_PURPLE, panel, width=3, border_radius=18)
+        return panel
 
-        y = panel.top + 24
+    def _draw_name_entry(self, surf):
+        panel = self._panel(surf, 470)
+        place = projected_place(self.NAME, self.score)
+        y = self._text(surf, "NEUER REKORD!" if place == 0 else "HIGHSCORE!", 32, BVG_YELLOW, midtop=(panel.centerx, panel.top + 20)).bottom
+        y = self._text(
+            surf, f"Platz {place + 1} mit {self.score} {self.SCORE_LABEL}", 20, WHITE, bold=False, midtop=(panel.centerx, y + 4)
+        ).bottom
+
+        inner = panel.inflate(-30, 0)
+        field = pygame.Rect(inner.left, y + 14, inner.width, 54)
+        pygame.draw.rect(surf, WHITE, field, border_radius=10)
+        if self.name_text:
+            cursor = "_" if int(self.last_tick * 2) % 2 == 0 and len(self.name_text) < NAME_MAX_CHARS else ""
+            self._text(surf, self.name_text + cursor, 30, BLACK, midleft=(field.left + 14, field.centery))
+        else:
+            self._text(surf, "Dein Name", 26, GRAY, bold=False, midleft=(field.left + 14, field.centery))
+        self._text(
+            surf, f"{len(self.name_text)}/{NAME_MAX_CHARS}", 16, GRAY, bold=False, midright=(field.right - 10, field.centery)
+        )
+
+        ready = self.last_tick - self.over_at >= GAME_OVER_TAP_DELAY_SECONDS
+        gap, key_h = 5, 58
+        key_w = (inner.width - gap * (len(KEYBOARD_ROWS[0]) - 1)) / len(KEYBOARD_ROWS[0])
+        self.key_rects = []
+        row_y = field.bottom + 16
+        for chars in KEYBOARD_ROWS:
+            # Shorter rows centered, like a real keyboard.
+            row_x = inner.left + (inner.width - (len(chars) * (key_w + gap) - gap)) / 2
+            for i, char in enumerate(chars):
+                rect = pygame.Rect(int(row_x + i * (key_w + gap)), row_y, int(key_w), key_h)
+                pygame.draw.rect(surf, BUTTON_PURPLE if ready else GRAY, rect, border_radius=8)
+                self._text(surf, char, 24, BLACK, center=rect.center)
+                self.key_rects.append((rect, char))
+            row_y += key_h + gap
+        third = (inner.width - 2 * gap) // 3
+        for i, (token, label, fill) in enumerate(
+            (("back", "<-", (230, 230, 230)), ("space", "LEER", (230, 230, 230)), ("ok", "OK", HIGHLIGHT_GREEN))
+        ):
+            rect = pygame.Rect(inner.left + i * (third + gap), row_y + 4, third, key_h)
+            pygame.draw.rect(surf, fill if ready else GRAY, rect, border_radius=8)
+            self._text(surf, label, 24, BLACK, center=rect.center)
+            self.key_rects.append((rect, token))
+
+    def _draw_leaderboard(self, surf):
+        panel = self._panel(surf, 560)
+        y = panel.top + 22
         for line in _wrap(self.fonts.get(28, True), self.over_text, panel.width - 40):
             y = self._text(surf, line, 28, BVG_YELLOW, midtop=(panel.centerx, y)).bottom + 2
-        y = self._text(surf, str(self.score), 72, WHITE, midtop=(panel.centerx, y + 6)).bottom
-        self._text(surf, self.SCORE_LABEL, 20, GRAY, bold=False, midtop=(panel.centerx, y))
-        record_line = "NEUER REKORD!" if self.new_record else f"Rekord heute: {record_today(self.NAME)}"
-        self._text(
-            surf, record_line, 22, BUTTON_PURPLE if self.new_record else WHITE, midtop=(panel.centerx, y + 32)
-        )
+        y = self._text(surf, str(self.score), 64, WHITE, midtop=(panel.centerx, y + 2)).bottom
+        y = self._text(surf, self.SCORE_LABEL, 20, GRAY, bold=False, midtop=(panel.centerx, y)).bottom
+        if self.place == 0:
+            y = self._text(surf, "NEUER REKORD!", 22, BUTTON_PURPLE, midtop=(panel.centerx, y + 6)).bottom
+
+        y = self._text(surf, "Bestenliste", 22, WHITE, midtop=(panel.centerx, y + 14)).bottom + 6
+        entries = top_list(self.NAME)
+        if not entries:
+            self._text(surf, "Noch keine Einträge", 20, GRAY, bold=False, midtop=(panel.centerx, y + 4))
+        row_h = 32
+        for i, entry in enumerate(entries):
+            row = pygame.Rect(panel.left + 24, y + i * row_h, panel.width - 48, row_h - 2)
+            mine = i == self.place
+            if mine:
+                pygame.draw.rect(surf, (60, 48, 90), row, border_radius=8)
+            color = HIGHLIGHT_GREEN if mine else WHITE
+            self._text(surf, f"{i + 1}.", 22, GRAY, midleft=(row.left + 10, row.centery))
+            self._text(surf, entry["name"], 22, color, midleft=(row.left + 46, row.centery))
+            self._text(surf, str(entry["score"]), 22, color, midright=(row.right - 10, row.centery))
 
         ready = self.last_tick - self.over_at >= GAME_OVER_TAP_DELAY_SECONDS
         button_w = (panel.width - 60) // 2

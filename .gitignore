@@ -91,6 +91,7 @@ logs/latest_weather.json
 emotions*.json
 uptime.json
 quiz_results.json
+game_highscores.json
 .DS_Store
 docs/PROGRESS.md
 tmp_prompt_just_for_me.txt

@@ -375,8 +375,9 @@ default) and ignore this section entirely.
   a sliding Plattenbau floor on the tower, overhang gets cut off) and **FLAPPY BVG** (tap to hop a
   BVG bus through gaps between Baustellen barriers).
 - One flag/timeout/FPS for all three games (MERZ had its own `MERZ` section before; it's no
-  longer read). "Rekord heute" per party game, in memory only (resets at midnight and on
-  restart). The menu/game closes after `IDLE_TIMEOUT_SECONDS` without a tap or when the display
+  longer read). All-time top 5 per party game in `logs/game_highscores.json`
+  (`highscore_store.py`, gitignored); getting into it asks for a name on an on-screen keyboard
+  in the game-over panel (empty -> "ANONYM", also saved if the game is closed mid-entry). The menu/game closes after `IDLE_TIMEOUT_SECONDS` without a tap or when the display
   blanks.
 - Disabled by default.
 
