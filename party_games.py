@@ -64,12 +64,14 @@ def best(name):
     return entries[0] if entries else None
 
 
-def projected_place(name, score):
+def projected_place(name, score, lower_is_better=False):
     """0-based place a score would get in the top list, None if it doesn't make it."""
     if score <= 0:
         return None
     entries = top_list(name)
-    place = next((i for i, e in enumerate(entries) if score > e["score"]), len(entries))
+    place = next(
+        (i for i, e in enumerate(entries) if highscore_store.better(score, e["score"], lower_is_better)), len(entries)
+    )
     return place if place < highscore_store.TOP_N else None
 
 
@@ -92,6 +94,12 @@ class _Game:
     NAME = ""
     READY_TEXT = "Tippen zum Starten"
     SCORE_LABEL = "Punkte"
+    SCORE_UNIT = ""  # appended in lists/record lines, e.g. " s"
+    LOWER_IS_BETTER = False
+
+    @staticmethod
+    def format_score(score):
+        return str(score)
 
     def __init__(self, width, height, regular_font_path, bold_font_path):
         self.width = width
@@ -123,7 +131,7 @@ class _Game:
                 self._name_tap(x, y)
                 return None
             if "again" in self.buttons and self.buttons["again"].collidepoint((x, y)):
-                self.reset(self.last_tick)
+                return self.again()
             elif "menu" in self.buttons and self.buttons["menu"].collidepoint((x, y)):
                 return "menu"
             return None
@@ -134,6 +142,17 @@ class _Game:
         self.play_tap()
         return None
 
+    def again(self):
+        self.reset(self.last_tick)
+        return None
+
+    def _entry_extra(self):
+        """Extra fields stored with this round's highscore entry."""
+        return {}
+
+    def _draw_entry_mark(self, surf, entry, x, y):
+        """Small mark left of the score in a Bestenliste row (x = its right edge)."""
+
     def update(self, now):
         dt = max(0.0, min(MAX_DT_SECONDS, now - self.last_tick))
         self.last_tick = now
@@ -143,8 +162,11 @@ class _Game:
         self.state = "over"
         self.over_at = self.last_tick
         self.over_text = text
-        self.name_entry = projected_place(self.NAME, self.score) is not None
+        self.name_entry = self._projected_place() is not None
         self.name_text = ""
+
+    def _projected_place(self):
+        return projected_place(self.NAME, self.score, self.LOWER_IS_BETTER)
 
     def _name_tap(self, x, y):
         token = next((t for rect, t in self.key_rects if rect.collidepoint((x, y))), None)
@@ -166,7 +188,9 @@ class _Game:
         if not self.name_entry:
             return
         name = self.name_text.strip() or NAME_FALLBACK
-        HIGHSCORES, self.place = highscore_store.submit_highscore(LOG_DIR, self.NAME, name, self.score)
+        HIGHSCORES, self.place = highscore_store.submit_highscore(
+            LOG_DIR, self.NAME, name, self.score, self.LOWER_IS_BETTER, self._entry_extra()
+        )
         self.name_entry = False
 
     # Subclass hooks
@@ -203,9 +227,7 @@ class _Game:
     def _draw_hud(self, surf):
         if self.state != "ready":
             self._draw_outlined(surf, str(self.score), 64, WHITE, midtop=(self.width // 2, 60))
-        top = best(self.NAME)
-        record = f"Rekord: {top['score']} {top['name']}" if top else "Rekord: -"
-        self._draw_outlined(surf, record, 18, WHITE, topleft=(12, 14))
+        self._draw_outlined(surf, record_line(type(self), short=True), 18, WHITE, topleft=(12, 14))
         pygame.draw.rect(surf, CLOSE_ORANGE, self.close_rect, border_radius=10)
         pygame.draw.rect(surf, BVG_YELLOW, self.close_rect, width=2, border_radius=10)
         self._text(surf, "x", 28, BLACK, center=self.close_rect.center)
@@ -234,10 +256,10 @@ class _Game:
 
     def _draw_name_entry(self, surf):
         panel = self._panel(surf, 470)
-        place = projected_place(self.NAME, self.score)
+        place = self._projected_place()
         y = self._text(surf, "NEUER REKORD!" if place == 0 else "HIGHSCORE!", 32, BVG_YELLOW, midtop=(panel.centerx, panel.top + 20)).bottom
         y = self._text(
-            surf, f"Platz {place + 1} mit {self.score} {self.SCORE_LABEL}", 20, WHITE, bold=False, midtop=(panel.centerx, y + 4)
+            surf, f"Platz {place + 1} mit {self.format_score(self.score)} {self.SCORE_LABEL}", 20, WHITE, bold=False, midtop=(panel.centerx, y + 4)
         ).bottom
 
         inner = panel.inflate(-30, 0)
@@ -280,7 +302,7 @@ class _Game:
         y = panel.top + 22
         for line in _wrap(self.fonts.get(28, True), self.over_text, panel.width - 40):
             y = self._text(surf, line, 28, BVG_YELLOW, midtop=(panel.centerx, y)).bottom + 2
-        y = self._text(surf, str(self.score), 64, WHITE, midtop=(panel.centerx, y + 2)).bottom
+        y = self._text(surf, self.format_score(self.score), 64, WHITE, midtop=(panel.centerx, y + 2)).bottom
         y = self._text(surf, self.SCORE_LABEL, 20, GRAY, bold=False, midtop=(panel.centerx, y)).bottom
         if self.place == 0:
             y = self._text(surf, "NEUER REKORD!", 22, BUTTON_PURPLE, midtop=(panel.centerx, y + 6)).bottom
@@ -298,7 +320,10 @@ class _Game:
             color = HIGHLIGHT_GREEN if mine else WHITE
             self._text(surf, f"{i + 1}.", 22, GRAY, midleft=(row.left + 10, row.centery))
             self._text(surf, entry["name"], 22, color, midleft=(row.left + 46, row.centery))
-            self._text(surf, str(entry["score"]), 22, color, midright=(row.right - 10, row.centery))
+            score_rect = self._text(
+                surf, self.format_score(entry["score"]) + self.SCORE_UNIT, 22, color, midright=(row.right - 10, row.centery)
+            )
+            self._draw_entry_mark(surf, entry, score_rect.left - 8, row.centery)
 
         ready = self.last_tick - self.over_at >= GAME_OVER_TAP_DELAY_SECONDS
         button_w = (panel.width - 60) // 2
@@ -914,3 +939,61 @@ FLAPPY_POOP_LINES = [
 ]
 
 GAMES = [StackGame, FlappyGame]
+
+
+class MerzResult(_Game):
+    """Only the game-over panel (name keyboard + Bestenliste) for MERZ, whose
+    game itself lives in PiDashboard.py: created once Merz explodes, with the
+    seconds from first throw to the last hit as score - lower is better.
+    Its tap() returns "again" for NOCHMAL so PiDashboard.py restarts MERZ."""
+
+    NAME = "MERZ"
+    SCORE_LABEL = "Sekunden"
+    SCORE_UNIT = " s"
+    LOWER_IS_BETTER = True
+
+    def __init__(self, width, height, regular_font_path, bold_font_path, seconds, now, burn=False):
+        super().__init__(width, height, regular_font_path, bold_font_path)
+        self.last_tick = now
+        self.score = seconds
+        self.burn = burn  # a BURN flame scored this round -> flame mark in the list
+        self.game_over("MERZ HAT EIER GELECKT!")
+
+    @staticmethod
+    def format_score(score):
+        return f"{score:.1f}"
+
+    def again(self):
+        return "again"
+
+    def _entry_extra(self):
+        return {"burn": True} if self.burn else {}
+
+    def _draw_entry_mark(self, surf, entry, x, y):
+        if entry.get("burn"):
+            _draw_flame(surf, x, y)
+
+    def step(self, dt):
+        pass
+
+    def draw(self, surf):
+        self._draw_over(surf)
+
+
+def _draw_flame(surf, right, cy):
+    """Little two-tone flame, its right edge at `right`, centered on cy."""
+    h, w = 20, 14
+    left, top = right - w, cy - h // 2
+    outer = [(left + w // 2, top), (right, top + h * 0.6), (left + w * 0.8, top + h), (left + w * 0.2, top + h), (left, top + h * 0.6)]
+    inner = [(left + w // 2, top + h * 0.4), (left + w * 0.75, top + h * 0.75), (left + w // 2, top + h), (left + w * 0.25, top + h * 0.75)]
+    pygame.draw.polygon(surf, CLOSE_ORANGE, outer)
+    pygame.draw.polygon(surf, BVG_YELLOW, inner)
+
+
+def record_line(game_cls, short=False):
+    """ "Rekord: 13 (JU)" for menu cards, "Rekord: 13 JU" (short) for HUDs."""
+    top = best(game_cls.NAME)
+    if top is None:
+        return "Rekord: -" if short else "Noch kein Rekord"
+    score = game_cls.format_score(top["score"]) + game_cls.SCORE_UNIT
+    return f"Rekord: {score} {top['name']}" if short else f"Rekord: {score} ({top['name']})"

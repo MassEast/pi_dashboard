@@ -1011,6 +1011,15 @@ MERZ_EXPLODED_AT = 0.0  # set the instant MERZ_EXPLODED flips True, see MERZ_WIN
 # him before you'd even seen them go off - hold it back a couple seconds so
 # the burst itself is the first thing visible.
 MERZ_WIN_TEXT_DELAY_SECONDS = 2.0
+# How long the "MERZ HAT EIER GELECKT!" banner stays before the result panel
+# (name entry / Bestenliste) replaces it.
+MERZ_RESULT_DELAY_SECONDS = 3.0
+# All-time top 5 by time (party_games.MerzResult, lower is better): the clock
+# starts with the first throw/flame, not when the game opens, so reading
+# the taunts before starting doesn't cost anything.
+MERZ_TIMER_STARTED_AT = None
+MERZ_WIN_SECONDS = 0.0
+MERZ_RESULT = None  # party_games.MerzResult once the win banner delay passed
 MERZ_EXPLOSION_PARTICLES = []  # each: {x, y, vx, vy, kind, started_at}
 MERZ_FLAME_PARTICLES = []  # each: {x, y, vx, vy, started_at} - see MERZ_FLAME_LIFETIME_SECONDS
 MERZ_FLAME_LIFETIME_SECONDS = 1.0
@@ -1038,11 +1047,10 @@ MERZ_BURN_PARTICLES = []  # each: {x, y, vx, vy, started_at, lifetime}
 MERZ_BURN_SPAWN_PER_SEC = 55.0
 MERZ_BURN_SPAWN_CARRY = 0.0  # fractional spawn count carried between frames
 MERZ_BURN_SPEED = 430.0  # px/sec
-# Flames are a continuous stream, so counting every particle that touches
-# him would rack up dozens of hits a second - instead a hit registers at
-# most once per this interval while the stream is on him.
-MERZ_BURN_HIT_INTERVAL_SECONDS = 0.2
-MERZ_BURN_LAST_HIT_AT = 0.0
+# Every flame particle that reaches him scores (Ju's call - BURN is the
+# secret fast lane; such rounds get a flame mark in the Bestenliste, see
+# MERZ_BURN_SCORED).
+MERZ_BURN_SCORED = False  # any flame hit this round
 # Position is in the overlay's own coordinate space (DISPLAY_WIDTH/HEIGHT,
 # it's drawn full-bleed over tft_surf, not scaled through the 240x400
 # dashboard surface like the rest of the UI). Both axes wander between
@@ -1056,8 +1064,11 @@ MERZ_WANDER_SPEED = 55.0  # px/sec
 # Fractions of DISPLAY_HEIGHT, not px - shared between update_merz_game()'s
 # idle wander and handle_merz_click()'s dodge-reroute so both always agree
 # on how high/low he's allowed to go, regardless of screen aspect ratio.
-MERZ_BOUNDS_TOP_FRACTION = 0.24
-MERZ_BOUNDS_BOTTOM_FRACTION = 0.42
+# Top is low enough that even the longest quote's bubble fits above his head
+# (it may cover the hits/timer row, but never him - asserted in
+# dev/test_party_games.py); bottom keeps him clear of the building.
+MERZ_BOUNDS_TOP_FRACTION = 0.36
+MERZ_BOUNDS_BOTTOM_FRACTION = 0.52
 MERZ_NEXT_WANDER_AT = 0.0
 MERZ_DODGE_UNTIL = 0.0
 MERZ_HIT_FLINCH_UNTIL = 0.0
@@ -1148,6 +1159,21 @@ MERZ_TAUNT_BAG = []
 #  - „Der Bundestag ist ja nun kein Zirkuszelt.“ - ARD "maischberger",
 #    01.07.2025, defending the Bundestag not flying the rainbow flag for
 #    CSD - https://www.zdfheute.de/politik/merz-regenbogenfahne-bundestag-zirkuszelt-100.html
+# A third pass (2026-10-28) added 3 from 2026 (an October remark at the
+# Arbeitgebertag about Bärbel Bas was left out on purpose - too close to
+# her stepping down over a death in the family):
+#  - „Kein Bundeskanzler vor mir hat so etwas ertragen müssen.“ - SPIEGEL
+#    interview, published 29.04.2026, on social-media attacks -
+#    https://nius.de/politik/merz-beschwert-sich-kritik-social-media (same
+#    wording in https://www.l-iz.de/leben/gesellschaft/2026/04/kommentar-hoeren-wir-da-ein-mimimi-herr-merz-655618)
+#  - „Diese ewige Nörgelei, ... ich bin es einfach leid.“ - ZDF
+#    Sommerinterview, 19.07.2026 -
+#    https://www.t-online.de/nachrichten/deutschland/innenpolitik/id_101350580/bundeskanzler-friedrich-merz-faehrt-aus-der-haut-bin-es-einfach-leid-.html
+#  - „...Nöler, Nörgler, empörte Berufskritiker: Wegtreten!“ - full:
+#    "Kulturpessimisten, Untergangspropheten, Nöler, Nörgler, empörte
+#    Berufskritiker: Wegtreten!" - CDU-Landesparteitag NRW (Düsseldorf),
+#    2026, exact date not confirmed - same t-online article, and
+#    https://apollo-news.net/merz-nennt-kritiker-seines-reformkurses-noeler-und-untergangspropheten-diese-sollen-wegtreten/
 MERZ_TAUNTS = [
     {
         "text": "„...die kleinen Paschas, da mal etwas zurechtweisen.“",
@@ -1183,6 +1209,21 @@ MERZ_TAUNTS = [
         "text": "„Der Bundestag ist ja nun kein Zirkuszelt.“",
         "year": "2025",
         "source": "maischberger",
+    },
+    {
+        "text": "„Kein Bundeskanzler vor mir hat so etwas ertragen müssen.“",
+        "year": "2026",
+        "source": "SPIEGEL",
+    },
+    {
+        "text": "„Diese ewige Nörgelei, diese ewige Nölerei, dieses Schlechtreden, dieses Kaputtreden unseres Landes – ich darf mir das bei solchen Gelegenheiten auch mal erlauben – ich bin es einfach leid.“",
+        "year": "2026",
+        "source": "ZDF-Sommerinterview",
+    },
+    {
+        "text": "„...Nöler, Nörgler, empörte Berufskritiker: Wegtreten!“",
+        "year": "2026",
+        "source": "CDU-Landesparteitag",
     },
     {"text": "IHR SEID ZU FAUL!!!"},
     {"text": "MEINE FRISUR!!"},
@@ -1999,6 +2040,7 @@ FONT_BUS_TIME = pygame.font.Font(
     FONT_PATH + FONT_MEDIUM, int(TINY_SIZE + (SMALL_SIZE - TINY_SIZE) * 0.65)
 )
 FONT_BIG_BOLD = pygame.font.Font(FONT_PATH + FONT_BOLD, BIG_SIZE)
+MERZ_HUD_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, int(SMALL_SIZE * 0.75))  # MERZ hits/timer pills
 DATE_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, DATE_SIZE)
 CLOCK_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, CLOCK_SIZE)
 CLEANING_FONT = pygame.font.Font(FONT_PATH + FONT_BOLD, 40)
@@ -3888,10 +3930,9 @@ def draw_games_menu():
         line_y += name_font.get_linesize() + line_gap
         tft_surf.blit(small_font.render(description, True, SWEET_PURPLE), (text_left, line_y))
         line_y += small_font.get_linesize() + line_gap
-        if key != "merz":
-            top = party_games.best(key)
-            record = f"Rekord: {top['score']} ({top['name']})" if top else "Noch kein Rekord"
-            tft_surf.blit(small_font.render(record, True, (150, 150, 150)), (text_left, line_y))
+        game_cls = party_games.MerzResult if key == "merz" else next(g for g in party_games.GAMES if g.NAME == key)
+        record = party_games.record_line(game_cls)
+        tft_surf.blit(small_font.render(record, True, (150, 150, 150)), (text_left, line_y))
         _draw_chevron((rect.right - 26, rect.centery), 14, SWEET_PURPLE)
         rects.append((rect, key))
         y = rect.bottom + gap
@@ -3941,7 +3982,7 @@ def activate_merz_game():
     global MERZ_JETS, MERZ_NEXT_JET_AT, MERZ_TAUNT_BAG
     global MERZ_EXPLODED, MERZ_EXPLODED_AT, MERZ_EXPLOSION_PARTICLES, MERZ_FLAME_PARTICLES, MERZ_AMMO
     global MERZ_BURN_HELD, MERZ_BURN_PARTICLES, MERZ_BURN_COMBO_TAPS, MERZ_BURN_UNLOCKED
-    global MERZ_PROJECTILE_KIND
+    global MERZ_PROJECTILE_KIND, MERZ_TIMER_STARTED_AT, MERZ_WIN_SECONDS, MERZ_RESULT, MERZ_BURN_SCORED
 
     if (
         not GAMES_ENABLED
@@ -3964,7 +4005,7 @@ def activate_merz_game():
     MERZ_LAST_ACTIVITY_TS = now
     MERZ_LAST_TICK = now
     MERZ_X = DISPLAY_WIDTH / 2
-    MERZ_Y = DISPLAY_HEIGHT * 0.28
+    MERZ_Y = DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION
     MERZ_WANDER_TARGET_X = None
     MERZ_WANDER_TARGET_Y = None
     MERZ_NEXT_WANDER_AT = now
@@ -3979,6 +4020,10 @@ def activate_merz_game():
     MERZ_EXPLOSION_PARTICLES = []
     MERZ_FLAME_PARTICLES = []
     MERZ_AMMO = {"egg": MERZ_AMMO_MAX, "testicle": MERZ_AMMO_MAX}
+    MERZ_TIMER_STARTED_AT = None
+    MERZ_WIN_SECONDS = 0.0
+    MERZ_RESULT = None
+    MERZ_BURN_SCORED = False
     MERZ_BURN_HELD = False
     MERZ_BURN_PARTICLES = []
     MERZ_BURN_COMBO_TAPS = []
@@ -3993,6 +4038,8 @@ def dismiss_merz_game(reason):
 
     if not MERZ_VISIBLE:
         return
+    if MERZ_RESULT is not None:
+        MERZ_RESULT.save_name()  # closed mid name entry: keep the highscore
     MERZ_VISIBLE = False
     MERZ_ACTION_RECTS = {}
     MERZ_BURN_HELD = False
@@ -4026,8 +4073,8 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
     global MERZ_TAUNT_TEXT, MERZ_TAUNT_META, MERZ_TAUNT_NEXT_AT, MERZ_TAUNT_BAG
     global MERZ_JETS, MERZ_NEXT_JET_AT
     global MERZ_AMMO, MERZ_EXPLODED, MERZ_EXPLODED_AT, MERZ_EXPLOSION_PARTICLES, MERZ_FLAME_PARTICLES
-    global MERZ_BURN_PARTICLES, MERZ_BURN_SPAWN_CARRY, MERZ_BURN_LAST_HIT_AT, MERZ_BURN_HELD
-    global MERZ_LAST_ACTIVITY_TS
+    global MERZ_BURN_PARTICLES, MERZ_BURN_SPAWN_CARRY, MERZ_BURN_SCORED, MERZ_BURN_HELD
+    global MERZ_LAST_ACTIVITY_TS, MERZ_WIN_SECONDS
 
     dt = max(0.0, min(0.2, now - MERZ_LAST_TICK))  # clamp so a stall can't teleport him
     MERZ_LAST_TICK = now
@@ -4143,27 +4190,28 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
     else:
         MERZ_BURN_SPAWN_CARRY = 0.0
 
-    burn_hit_pos = None
     still_burning = []
     for p in MERZ_BURN_PARTICLES:
         p["x"] += p["vx"] * dt
         p["y"] += p["vy"] * dt
         if merz_rect.collidepoint((p["x"], p["y"])):
-            burn_hit_pos = (p["x"], p["y"])
-            continue  # absorbed - flames don't pass through him
+            # Absorbed - flames don't pass through him; each one scores.
+            if MERZ_HITS < MERZ_WIN_HITS:
+                MERZ_HITS += 1
+                MERZ_BURN_SCORED = True
+                MERZ_SCALE = max(MERZ_SCALE_MIN, MERZ_SCALE - MERZ_SCALE_SHRINK_STEP)
+                MERZ_SPLATS.append({"pos": (p["x"], p["y"]), "started_at": now, "kind": "hit"})
+                MERZ_HIT_FLINCH_UNTIL = now + 0.4
+            continue
         if now - p["started_at"] < p["lifetime"]:
             still_burning.append(p)
     MERZ_BURN_PARTICLES = still_burning
-    if burn_hit_pos is not None and now - MERZ_BURN_LAST_HIT_AT >= MERZ_BURN_HIT_INTERVAL_SECONDS:
-        MERZ_BURN_LAST_HIT_AT = now
-        MERZ_HITS += 1
-        MERZ_SCALE = max(MERZ_SCALE_MIN, MERZ_SCALE - MERZ_SCALE_SHRINK_STEP)
-        MERZ_SPLATS.append({"pos": burn_hit_pos, "started_at": now, "kind": "hit"})
-        MERZ_HIT_FLINCH_UNTIL = now + 0.4
 
     if MERZ_HITS >= MERZ_WIN_HITS:
         MERZ_EXPLODED = True
         MERZ_EXPLODED_AT = now
+        MERZ_WIN_SECONDS = round(now - MERZ_TIMER_STARTED_AT, 1)
+        logger.info(f"Merz game won in {MERZ_WIN_SECONDS:.1f}s")
         MERZ_PROJECTILES = []
         MERZ_JETS = []
         MERZ_BURN_PARTICLES = []
@@ -4343,7 +4391,10 @@ def _draw_merz_explosion(now):
     MERZ_WIN_HITS) plus a banner - drawn every frame while MERZ_EXPLODED is
     True, replacing the normal sprite/throw UI entirely (see
     draw_merz_overlay()). The banner is held back MERZ_WIN_TEXT_DELAY_SECONDS
-    so it doesn't immediately cover up the burst it's celebrating."""
+    so it doesn't immediately cover up the burst it's celebrating, and
+    MERZ_RESULT_DELAY_SECONDS later the party_games.MerzResult panel (name
+    entry, Bestenliste) replaces it."""
+    global MERZ_RESULT
     for p in MERZ_EXPLOSION_PARTICLES:
         _draw_merz_projectile(p["x"], p["y"], p["kind"])
     for p in MERZ_FLAME_PARTICLES:
@@ -4351,6 +4402,15 @@ def _draw_merz_explosion(now):
         _draw_merz_flame_particle(p["x"], p["y"], life_frac)
 
     if now - MERZ_EXPLODED_AT < MERZ_WIN_TEXT_DELAY_SECONDS:
+        return
+    if now - MERZ_EXPLODED_AT >= MERZ_WIN_TEXT_DELAY_SECONDS + MERZ_RESULT_DELAY_SECONDS:
+        if MERZ_RESULT is None:
+            MERZ_RESULT = party_games.MerzResult(
+                DISPLAY_WIDTH, DISPLAY_HEIGHT, FONT_PATH + FONT_MEDIUM, FONT_PATH + FONT_BOLD,
+                MERZ_WIN_SECONDS, now, burn=MERZ_BURN_SCORED,
+            )
+        MERZ_RESULT.update(now)
+        MERZ_RESULT.draw(tft_surf)
         return
 
     title_font = FONT_BIG_BOLD
@@ -4371,20 +4431,142 @@ def _draw_merz_explosion(now):
     _draw_merz_flame(banner_rect.left - 16, banner_rect.centery)
     _draw_merz_flame(banner_rect.right + 16, banner_rect.centery)
 
-    sub_text = FONT_SMALL_BOLD.render(f"{MERZ_WIN_HITS} TREFFER!", True, WHITE)
+    sub_text = FONT_SMALL_BOLD.render(f"{MERZ_WIN_HITS} TREFFER IN {MERZ_WIN_SECONDS:.1f} s!", True, WHITE)
     sub_bg = sub_text.get_rect(midtop=(DISPLAY_WIDTH // 2, banner_rect.bottom + 12)).inflate(16, 8)
     pygame.draw.rect(tft_surf, (30, 30, 30), sub_bg, border_radius=8)
     tft_surf.blit(sub_text, sub_text.get_rect(center=sub_bg.center))
 
 
-def _draw_merz_replay_button():
-    text_surf = FONT_SMALL_BOLD.render("NOCHMAL SPIELEN", True, BLACK)
-    rect = text_surf.get_rect().inflate(30, 20)
-    rect.center = (DISPLAY_WIDTH // 2, int(DISPLAY_HEIGHT * 0.48))
-    pygame.draw.rect(tft_surf, GREEN, rect, border_radius=12)
-    pygame.draw.rect(tft_surf, BLACK, rect, width=2, border_radius=12)
-    tft_surf.blit(text_surf, text_surf.get_rect(center=rect.center))
-    return rect
+# Drawn at 1/MERZ_REICHSTAG_PIXEL_SIZE resolution and scaled up
+# nearest-neighbour, to match the pixelated Merz sprite (1 = smooth, with a
+# readable inscription - Ju picked the pixel look).
+MERZ_REICHSTAG_PIXEL_SIZE = 3
+_MERZ_REICHSTAG_CACHE = {}  # (width, ground_y) -> (pre-rendered surface, top)
+
+
+def _draw_reichstag(ground_y):
+    """Reichstag backdrop sitting on the lawn: sandstone front with the four
+    corner towers, the columned portico with "DEM DEUTSCHEN VOLKE" under
+    its pediment, the glass dome on top and flags on the towers. Static,
+    so it's rendered once and cached."""
+    key = (DISPLAY_WIDTH, ground_y)
+    if key not in _MERZ_REICHSTAG_CACHE:
+        _MERZ_REICHSTAG_CACHE[key] = _render_reichstag(ground_y)
+    surf, top = _MERZ_REICHSTAG_CACHE[key]
+    tft_surf.blit(surf, (0, top))
+
+
+def _render_reichstag(ground_y):
+    k = MERZ_REICHSTAG_PIXEL_SIZE
+    w = DISPLAY_WIDTH
+    height = 190  # dome top down to the lawn
+    top = ground_y - height
+    surf = pygame.Surface((w // k, height // k), pygame.SRCALPHA)
+
+    def y(v):  # px above the lawn -> surface row
+        return (height - v) / k
+
+    def rect(color, x0, x1, y_top, y_bottom=0):
+        pygame.draw.rect(surf, color, pygame.Rect(x0 * w / k, y(y_top), (x1 - x0) * w / k + 1, (y_top - y_bottom) / k + 1))
+
+    stone, stone_dark, stone_light = (200, 184, 150), (160, 144, 114), (222, 208, 176)
+    window, glass, glass_line = (80, 84, 100), (200, 230, 245), (120, 150, 170)
+
+    # Glass dome (behind everything else) on its drum.
+    cx = w / 2 / k
+    rect(stone_dark, 0.40, 0.60, 128, 100)
+    dome = pygame.Rect(0, 0, 0.26 * w / k, 110 / k)
+    dome.center = (cx, y(128))
+    pygame.draw.ellipse(surf, glass, dome)
+    pygame.draw.ellipse(surf, glass_line, dome, width=max(1, 2 // k))
+    for i in range(1, 6):  # meridians
+        rib = dome.inflate(-dome.width * i / 6, 0)
+        pygame.draw.ellipse(surf, glass_line, rib, width=1)
+    for v in (140, 152, 164):  # rings, clipped to the dome's outline
+        half = dome.width / 2 * math.sqrt(max(0.0, 1 - ((y(v) - dome.centery) / (dome.height / 2)) ** 2))
+        pygame.draw.line(surf, glass_line, (cx - half, y(v)), (cx + half, y(v)))
+    rect(stone_dark, 0.36, 0.64, 130, 100)  # hides the dome's lower half
+    pygame.draw.rect(surf, glass, pygame.Rect(cx - 3 / k, y(186), 6 / k + 1, 4 / k + 1))  # lantern
+
+    # Main block with two window rows.
+    rect(stone, 0.06, 0.94, 96)
+    rect(stone_dark, 0.06, 0.94, 100, 94)  # cornice
+    rect(stone_dark, 0.06, 0.94, 14)  # plinth
+    for row_top in (80, 50):
+        for i in range(14):
+            x0 = 0.19 + i * 0.045
+            if 0.33 < x0 < 0.64:
+                continue  # portico in front
+            rect(window, x0, x0 + 0.022, row_top, row_top - 18)
+
+    # Corner towers.
+    for x0 in (0.02, 0.84):
+        rect(stone_light, x0, x0 + 0.14, 120)
+        rect(stone_dark, x0 - 0.005, x0 + 0.145, 124, 116)
+        rect(stone_dark, x0, x0 + 0.14, 14)
+        for row_top in (104, 80, 50):
+            rect(window, x0 + 0.035, x0 + 0.06, row_top, row_top - 16)
+            rect(window, x0 + 0.08, x0 + 0.105, row_top, row_top - 16)
+        # Flag: black / red / gold.
+        pole_x = x0 + 0.07
+        rect(stone_dark, pole_x, pole_x + 0.004, 160, 124)
+        for i, color in enumerate(((20, 20, 20), (220, 0, 0), (255, 204, 0))):
+            rect(color, pole_x + 0.004, pole_x + 0.07, 160 - i * 6, 154 - i * 6)
+
+    # Portico: pediment, inscription band, six columns, steps.
+    left, right = 0.33, 0.67
+    rect(stone_light, left, right, 108, 90)
+    pygame.draw.polygon(
+        surf, stone_light, [(left * w / k, y(108)), (right * w / k, y(108)), (cx, y(132))]
+    )
+    pygame.draw.polygon(
+        surf, stone_dark, [(left * w / k, y(108)), (right * w / k, y(108)), (cx, y(132))], width=1
+    )
+    if k == 1:
+        label = pygame.font.Font(FONT_PATH + FONT_BOLD, 9).render("DEM DEUTSCHEN VOLKE", True, (90, 80, 60))
+        surf.blit(label, label.get_rect(center=(cx, y(99))))
+    else:
+        rect((120, 108, 84), left + 0.04, right - 0.04, 101, 97)  # inscription as a line
+    rect(stone_dark, left, right, 90, 86)
+    for i in range(6):
+        x0 = left + 0.02 + i * (right - left - 0.06) / 5
+        rect(stone_light, x0, x0 + 0.022, 86, 14)
+        rect(stone_dark, x0 + 0.017, x0 + 0.022, 86, 14)  # shadow side
+    rect(window, left + 0.03, right - 0.03, 70, 14)  # dark hall behind the columns
+    for i in range(6):  # columns again, in front of the dark hall
+        x0 = left + 0.02 + i * (right - left - 0.06) / 5
+        rect(stone_light, x0, x0 + 0.022, 86, 14)
+        rect(stone_dark, x0 + 0.017, x0 + 0.022, 86, 14)
+    for i, (x0, x1) in enumerate(((0.30, 0.70), (0.31, 0.69), (0.32, 0.68))):
+        rect(stone_dark if i % 2 else stone, x0, x1, 14 - i * 4, 10 - i * 4)
+
+    if k > 1:
+        surf = pygame.transform.scale(surf, (surf.get_width() * k, surf.get_height() * k))
+    return surf, top
+
+
+def _merz_hud_rects():
+    """Hits and timer pills, side by side, centered in the top row. Fixed
+    widths (sized for the widest values) so they don't jitter while the
+    numbers change."""
+    height = MERZ_HUD_FONT.get_height() + 6
+    hits_w = MERZ_HUD_FONT.size(f"{MERZ_WIN_HITS}/{MERZ_WIN_HITS}")[0] + 20
+    time_w = MERZ_HUD_FONT.size("888.8 s")[0] + 20
+    gap = 8
+    left = DISPLAY_WIDTH // 2 - (hits_w + gap + time_w) // 2
+    hits_rect = pygame.Rect(left, 12, hits_w, height)
+    time_rect = pygame.Rect(hits_rect.right + gap, 12, time_w, height)
+    return hits_rect, time_rect
+
+
+def _draw_merz_hud(seconds):
+    """Same purple look as the Spiele menu cards."""
+    hits_rect, time_rect = _merz_hud_rects()
+    for rect, text in ((hits_rect, f"{MERZ_HITS}/{MERZ_WIN_HITS}"), (time_rect, f"{seconds:.1f} s")):
+        pygame.draw.rect(tft_surf, (40, 34, 56), rect, border_radius=10)
+        pygame.draw.rect(tft_surf, SWEET_PURPLE, rect, width=2, border_radius=10)
+        text_surf = MERZ_HUD_FONT.render(text, True, SWEET_PURPLE)
+        tft_surf.blit(text_surf, text_surf.get_rect(center=rect.center))
 
 
 def _draw_merz_sprite(expression):
@@ -4472,6 +4654,8 @@ def _draw_merz_speech_bubble():
     # bubble on top of the image instead of above it. The tail points at
     # the top of his head rather than the actual mouth, so it doesn't
     # spear down across the picture itself.
+    # Always above him (below would block the throws), even if a long quote
+    # then covers the hits/timer row while he's up there.
     sprite_top = _merz_rect().top
     bubble_left = min(max(mouth_x - bubble_width // 2, 6), DISPLAY_WIDTH - bubble_width - 6)
     bubble_bottom = sprite_top - 14
@@ -4480,19 +4664,22 @@ def _draw_merz_speech_bubble():
 
     pygame.draw.rect(tft_surf, WHITE, bubble_rect, border_radius=8)
     pygame.draw.rect(tft_surf, BLACK, bubble_rect, width=2, border_radius=8)
+    # No tail once the clamped bubble reaches down over his head - it would
+    # point upwards through the text.
     tail_tip = (mouth_x, sprite_top + 6)
     tail_base_x = min(max(mouth_x, bubble_rect.left + 10), bubble_rect.right - 10)
-    pygame.draw.polygon(
-        tft_surf,
-        WHITE,
-        [(tail_base_x - 6, bubble_rect.bottom), (tail_base_x + 6, bubble_rect.bottom), tail_tip],
-    )
-    pygame.draw.polygon(
-        tft_surf,
-        BLACK,
-        [(tail_base_x - 6, bubble_rect.bottom), tail_tip, (tail_base_x + 6, bubble_rect.bottom)],
-        width=1,
-    )
+    if bubble_rect.bottom < tail_tip[1]:
+        pygame.draw.polygon(
+            tft_surf,
+            WHITE,
+            [(tail_base_x - 6, bubble_rect.bottom), (tail_base_x + 6, bubble_rect.bottom), tail_tip],
+        )
+        pygame.draw.polygon(
+            tft_surf,
+            BLACK,
+            [(tail_base_x - 6, bubble_rect.bottom), tail_tip, (tail_base_x + 6, bubble_rect.bottom)],
+            width=1,
+        )
 
     for i, line in enumerate(lines):
         line_surf = bubble_font.render(line, True, BLACK)
@@ -4534,14 +4721,7 @@ def draw_merz_overlay():
     tft_surf.fill((150, 200, 235))  # sky
     pygame.draw.rect(tft_surf, (90, 150, 90), (0, ground_y, DISPLAY_WIDTH, DISPLAY_HEIGHT - ground_y))
 
-    # Cheap Reichstag-ish silhouette so the backdrop reads as "government",
-    # not just a random lawn - a handful of flat rects, no asset needed.
-    building_color = (120, 120, 130)
-    building_top = ground_y - 90
-    pygame.draw.rect(tft_surf, building_color, (DISPLAY_WIDTH * 0.15, building_top, DISPLAY_WIDTH * 0.7, 90))
-    for i in range(7):
-        col_x = DISPLAY_WIDTH * 0.18 + i * (DISPLAY_WIDTH * 0.66 / 6)
-        pygame.draw.rect(tft_surf, (100, 100, 110), (col_x, building_top + 10, 8, 70))
+    _draw_reichstag(ground_y)
 
     for jet in MERZ_JETS:  # behind him, background gag only
         _draw_merz_jet(jet)
@@ -4553,16 +4733,17 @@ def draw_merz_overlay():
     close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
     tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
 
-    hits_text = FONT_SMALL_BOLD.render(f"Treffer: {MERZ_HITS} / {MERZ_WIN_HITS}", True, WHITE)
-    hits_bg = hits_text.get_rect(topleft=(10, 10)).inflate(10, 6)
-    pygame.draw.rect(tft_surf, (30, 30, 30), hits_bg, border_radius=6)
-    tft_surf.blit(hits_text, hits_text.get_rect(center=hits_bg.center))
+    if MERZ_EXPLODED:
+        seconds = MERZ_WIN_SECONDS
+    elif MERZ_TIMER_STARTED_AT is None:
+        seconds = 0.0
+    else:
+        seconds = now - MERZ_TIMER_STARTED_AT
+    _draw_merz_hud(seconds)
 
     if MERZ_EXPLODED:
         _draw_merz_explosion(now)
         MERZ_ACTION_RECTS = {"close": close_rect}
-        if now - MERZ_EXPLODED_AT >= MERZ_WIN_TEXT_DELAY_SECONDS:
-            MERZ_ACTION_RECTS["replay"] = _draw_merz_replay_button()
         return
 
     expression = "neutral"
@@ -4664,9 +4845,9 @@ def draw_merz_overlay():
         hint_text, hint_text.get_rect(midbottom=(DISPLAY_WIDTH // 2, buttons_top - 12))
     )
 
-    # Drawn last/on top of everything, including the hit counter - he can
-    # wander close enough to the top corner that the counter would
-    # otherwise sit in front of (and obscure) the bubble.
+    # Drawn last/on top of everything, including the hits/timer row - he can
+    # wander close enough to the top that the row would otherwise sit in
+    # front of (and obscure) the bubble.
     _draw_merz_speech_bubble()
 
     MERZ_ACTION_RECTS = {"close": close_rect}
@@ -4707,7 +4888,7 @@ def handle_merz_release():
 def handle_merz_click(mx, my):
     global MERZ_PROJECTILE_KIND, MERZ_PROJECTILES, MERZ_LAST_ACTIVITY_TS, MERZ_AMMO
     global MERZ_WANDER_TARGET_X, MERZ_WANDER_TARGET_Y, MERZ_NEXT_WANDER_AT, MERZ_DODGE_UNTIL
-    global MERZ_BURN_HELD
+    global MERZ_BURN_HELD, MERZ_TIMER_STARTED_AT
 
     if not MERZ_VISIBLE:
         return False
@@ -4720,11 +4901,16 @@ def handle_merz_click(mx, my):
         return True
 
     if MERZ_EXPLODED:
-        # Won - only the replay button does anything now, everything else
-        # (throwing, egg/testicle toggle) is moot until he's reborn.
-        replay_rect = MERZ_ACTION_RECTS.get("replay")
-        if replay_rect and replay_rect.collidepoint((mx, my)):
+        # Won - only the result panel (name keyboard, NOCHMAL/MENÜ) does
+        # anything now, throwing is moot until he's reborn.
+        action = MERZ_RESULT.tap(mx, my) if MERZ_RESULT is not None else None
+        if action == "again":
             activate_merz_game()
+        elif action == "menu":
+            dismiss_merz_game("menu-button")
+            open_games_menu()
+        elif action == "close":  # its x hitbox is a bit bigger than MERZ's own
+            dismiss_merz_game("close-button")
         return True
 
     for kind in ("egg", "testicle", "burn"):
@@ -4735,6 +4921,9 @@ def handle_merz_click(mx, my):
                 # May flip MERZ_PROJECTILE_KIND straight to "burn".
                 _merz_register_pill_tap(kind, time.time())
             return True
+
+    if MERZ_TIMER_STARTED_AT is None:
+        MERZ_TIMER_STARTED_AT = time.time()  # first throw/flame starts the clock
 
     if MERZ_PROJECTILE_KIND == "burn":
         MERZ_BURN_HELD = True  # stream runs in update_merz_game() until release

@@ -12,6 +12,11 @@ Headless check of the PLAY menu and the party_games.py games:
   make it skips the keyboard, closing mid-entry still saves (as ANONYM).
 - FLAPPY BVG: no taps -> crashes into the street; a simple tapping bot gets
   through barriers (the physics are actually playable); x closes.
+- MERZ: clock starts with the first throw (not a pill tap), the win opens
+  the same name keyboard + Bestenliste, sorted by time (lower is better),
+  NOCHMAL restarts MERZ, MENÜ goes back, closing mid-entry still saves;
+  the banner stays MERZ_RESULT_DELAY_SECONDS before the panel, BURN rounds
+  get a flame mark.
 - Idle timeout and display blank close the game.
 
 Simulated time, no real waiting. Screenshots go to a fresh temp dir (path
@@ -270,6 +275,120 @@ def test_highscores():
     print(f"HIGHSCORES: top5/keyboard/skip/persist/close-saves ok: {party_games.top_list(name)}", flush=True)
 
 
+def merz_win(seconds, burn=False):
+    """Plays MERZ to a win in `seconds` (clock and hits faked) and opens the
+    result panel, past its tap delay."""
+    P.activate_merz_game()
+    P.draw_merz_overlay()
+    P.handle_merz_click(*P.MERZ_ACTION_RECTS["select_testicle"].center)
+    assert P.MERZ_TIMER_STARTED_AT is None, "pill tap started the MERZ clock"
+    P.handle_merz_click(P.DISPLAY_WIDTH // 2, P.DISPLAY_HEIGHT // 2)
+    assert P.MERZ_TIMER_STARTED_AT is not None, "throw did not start the MERZ clock"
+    P.MERZ_TIMER_STARTED_AT -= seconds
+    P.MERZ_HITS = P.MERZ_WIN_HITS
+    P.MERZ_BURN_SCORED = burn
+    P.draw_merz_overlay()
+    assert P.MERZ_EXPLODED and abs(P.MERZ_WIN_SECONDS - seconds) < 0.2, P.MERZ_WIN_SECONDS
+    P.MERZ_EXPLODED_AT -= P.MERZ_WIN_TEXT_DELAY_SECONDS
+    P.draw_merz_overlay()
+    assert P.MERZ_RESULT is None, "result panel replaced the banner too early"
+    if burn:
+        shot("11a_merz_win_banner.png")
+    P.MERZ_EXPLODED_AT -= P.MERZ_RESULT_DELAY_SECONDS
+    P.draw_merz_overlay()
+    result = P.MERZ_RESULT
+    assert result is not None and result.state == "over"
+    result.over_at -= party_games.GAME_OVER_TAP_DELAY_SECONDS
+    P.draw_merz_overlay()
+    return result
+
+
+def test_merz_hud():
+    P.activate_merz_game()
+    P.draw_merz_overlay()
+    P.handle_merz_click(P.DISPLAY_WIDTH // 2, P.DISPLAY_HEIGHT // 2)
+    P.MERZ_TIMER_STARTED_AT -= 12.3
+    P.MERZ_HITS = 23
+    longest = max((t for t in P.MERZ_TAUNTS if "year" in t), key=lambda t: len(t["text"]))
+    P.MERZ_TAUNT_TEXT, P.MERZ_TAUNT_META = longest["text"], f"{longest['year']} · {longest['source']}"
+    P.MERZ_TAUNT_SHOWN_AT = P.time.time()
+    P.MERZ_TAUNT_NEXT_AT = P.time.time() + 60
+    P.MERZ_Y = P.DISPLAY_HEIGHT * P.MERZ_BOUNDS_TOP_FRACTION
+    P.MERZ_WANDER_TARGET_X, P.MERZ_WANDER_TARGET_Y = P.MERZ_X, P.MERZ_Y
+    P.MERZ_NEXT_WANDER_AT = P.time.time() + 10
+    P.draw_merz_overlay()
+    P.MERZ_SCALE = P.MERZ_SCALE_MAX  # biggest sprite = least room above him
+    P.draw_merz_overlay()
+    shot("10b_merz_hud_long_quote.png")  # may cover the hits/timer row, never him
+    for taunt in P.MERZ_TAUNTS:
+        lines = P._quiz_wrap_text(P.FONT_TINY, taunt["text"], int(P.DISPLAY_WIDTH * 0.62))
+        bubble_h = len(lines) * P.FONT_TINY.get_height() + 16
+        if "year" in taunt:
+            bubble_h += P.FONT_SUPER_TINY.get_height() + 4
+        assert P._merz_rect().top - 14 - bubble_h >= 6, f"bubble covers Merz at the top: {taunt['text'][:30]}"
+    P.MERZ_TAUNT_TEXT, P.MERZ_TAUNT_META = "„Der Bundestag ist ja nun kein Zirkuszelt.“", "2025 · maischberger"
+    P.MERZ_Y = P.DISPLAY_HEIGHT * P.MERZ_BOUNDS_BOTTOM_FRACTION
+    P.MERZ_WANDER_TARGET_X, P.MERZ_WANDER_TARGET_Y = P.MERZ_X, P.MERZ_Y
+    P.draw_merz_overlay()
+    shot("10c_merz_hud_short_quote.png")
+    hits_rect, time_rect = P._merz_hud_rects()
+    assert 0 <= hits_rect.left and not time_rect.colliderect(P.MERZ_ACTION_RECTS["close"]), (hits_rect, time_rect)
+    P.dismiss_merz_game("test")
+    print("MERZ HUD: hits/timer row clear of the x", flush=True)
+
+
+def merz_press(result, token):
+    P.handle_merz_click(*next(r for r, t in result.key_rects if t == token).center)
+
+
+def test_merz_highscores():
+    name = party_games.MerzResult.NAME
+    for seconds, text in ((40.0, "LANGSAM"), (25.0, "FIX"), (60.0, "OPA")):
+        result = merz_win(seconds, burn=text == "LANGSAM")
+        assert result.name_entry
+        for token in text:
+            merz_press(result, token)
+        shot("11_merz_name_entry.png") if text == "FIX" else None
+        merz_press(result, "ok")
+        P.draw_merz_overlay()
+    entries = party_games.top_list(name)
+    assert [e["name"] for e in entries] == ["FIX", "LANGSAM", "OPA"], entries
+    assert [bool(e.get("burn")) for e in entries] == [False, True, False], entries
+    assert result.place == 2
+    shot("12_merz_leaderboard.png")
+
+    # NOCHMAL restarts MERZ itself.
+    P.handle_merz_click(*result.buttons["again"].center)
+    assert P.MERZ_VISIBLE and not P.MERZ_EXPLODED and P.MERZ_RESULT is None
+
+    # Best time so far, tie with FIX keeps FIX first; MENÜ back to the menu.
+    result = merz_win(25.0)
+    merz_press(result, "J")
+    merz_press(result, "ok")
+    assert [e["name"] for e in party_games.top_list(name)][:2] == ["FIX", "J"]
+    P.draw_merz_overlay()
+    P.handle_merz_click(*result.buttons["menu"].center)
+    assert not P.MERZ_VISIBLE and P.GAMES_MENU_OPEN
+    P.draw_games_menu()
+    shot("13_menu_merz_record.png")
+    P.close_games("test")
+
+    # Fill to 5, then a too-slow time skips the keyboard.
+    for seconds in (70.0, 999.0):
+        result = merz_win(seconds)
+        if result.name_entry:
+            merz_press(result, "ok")
+    assert len(party_games.top_list(name)) == 5 and not result.name_entry and result.place is None
+
+    # Closed (x) mid-entry: still saved, as ANONYM.
+    result = merz_win(10.0)
+    assert result.name_entry
+    P.handle_merz_click(*P.MERZ_ACTION_RECTS["close"].center)
+    assert not P.MERZ_VISIBLE
+    assert party_games.best(name)["name"] == "ANONYM" and party_games.best(name)["score"] == 10.0
+    print(f"MERZ HIGHSCORES: clock/time-sort/again/menu/close-saves ok: {party_games.top_list(name)}", flush=True)
+
+
 def test_flappy():
     game = open_game("FLAPPY BVG")
     now = game.last_tick
@@ -348,5 +467,7 @@ if __name__ == "__main__":
     test_stack()
     test_flappy()
     test_highscores()
+    test_merz_hud()
+    test_merz_highscores()
     test_timeouts()
     print(f"ALL PASSED - screenshots in {OUT_DIR}", flush=True)

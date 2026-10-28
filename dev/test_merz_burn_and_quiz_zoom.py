@@ -5,7 +5,8 @@ Headless check for two PiDashboard.py overlay features:
 
 1. MERZ "BURN" easter egg - the EIER, KLÖTEN x3, EIER, KLÖTEN x2 ("1312")
    pill combo unlocks/selects BURN, a too-slow combo does not, holding fire
-   streams flames that score hits (rate-limited), release stops the stream.
+   streams flames where every flame reaching him scores, release stops
+   the stream. Plus a screenshot of the longest taunt bubble.
 2. AFM quiz results zoom - tapping empty plot space zooms in, "-" zooms out,
    and a held dot's name label is drawn on top of everything else.
 
@@ -77,6 +78,8 @@ def test_merz_burn():
 
     # Hold fire at Merz for ~3s of simulated frames; he can't dodge this.
     hits_before = P.MERZ_HITS
+    win_hits = P.MERZ_WIN_HITS
+    P.MERZ_WIN_HITS = 10_000  # measure the raw hit rate, don't win meanwhile
     P.handle_merz_click(int(P.MERZ_X), int(P.MERZ_Y))
     assert P.MERZ_BURN_HELD
     t0 = time.time() - 3.0  # simulate the last 3s, so particle timestamps stay in the past
@@ -90,10 +93,14 @@ def test_merz_burn():
         P.MERZ_NEXT_WANDER_AT = now + 10
         P.update_merz_game(now, 40, P.DISPLAY_WIDTH - 40, 100, 300)
     hits = P.MERZ_HITS - hits_before
-    max_hits = int(frames * 0.05 / P.MERZ_BURN_HIT_INTERVAL_SECONDS) + 1
-    print(f"BURN: {hits} hits in {frames * 0.05:.1f}s simulated (cap {max_hits}), "
+    P.MERZ_WIN_HITS = win_hits
+    P.MERZ_HITS = hits_before
+    spawned = int(frames * 0.05 * P.MERZ_BURN_SPAWN_PER_SEC)
+    print(f"BURN: {hits} hits in {frames * 0.05:.1f}s simulated ({spawned} flames spawned), "
           f"{len(P.MERZ_BURN_PARTICLES)} flames alive", flush=True)
-    assert 0 < hits <= max_hits, hits
+    # The old 0.2 s rate limit capped this at 16; now every flame that arrives scores.
+    assert 30 < hits <= spawned, hits
+    assert P.MERZ_BURN_SCORED
     assert P.MERZ_BURN_PARTICLES
 
     # Render one real frame mid-stream for the screenshot.
@@ -104,9 +111,21 @@ def test_merz_burn():
     P.handle_merz_release()
     assert not P.MERZ_BURN_HELD
 
+    # Longest taunt with Merz at the top of his range: bubble stays on screen.
+    longest = max((t for t in P.MERZ_TAUNTS if "year" in t), key=lambda t: len(t["text"]))
+    P.MERZ_TAUNT_TEXT = longest["text"]
+    P.MERZ_TAUNT_META = f"{longest['year']} · {longest['source']}"
+    P.MERZ_TAUNT_SHOWN_AT = time.time()
+    P.MERZ_Y = P.DISPLAY_HEIGHT * P.MERZ_BOUNDS_TOP_FRACTION
+    P.MERZ_WANDER_TARGET_X, P.MERZ_WANDER_TARGET_Y = P.MERZ_X, P.MERZ_Y
+    P.MERZ_NEXT_WANDER_AT = time.time() + 10
+    P.MERZ_TAUNT_NEXT_AT = time.time() + 60
+    P.draw_merz_overlay()
+    pygame.image.save(P.tft_surf, os.path.join(OUT_DIR, "merz_longest_quote.png"))
+
     # A new game (replay) drops BURN again.
     P.activate_merz_game()
-    assert not P.MERZ_BURN_UNLOCKED and P.MERZ_PROJECTILE_KIND == "egg"
+    assert not P.MERZ_BURN_UNLOCKED and P.MERZ_PROJECTILE_KIND == "egg" and not P.MERZ_BURN_SCORED
     P.dismiss_merz_game("test")
 
 

@@ -36,17 +36,23 @@ def read_highscores(log_dir, store_file=STORE_FILE):
         return _read_payload(_store_path(log_dir, store_file))["games"]
 
 
-def submit_highscore(log_dir, game, name, score, store_file=STORE_FILE):
+def better(score, other, lower_is_better=False):
+    return score < other if lower_is_better else score > other
+
+
+def submit_highscore(log_dir, game, name, score, lower_is_better=False, extra=None, store_file=STORE_FILE):
     """Inserts the entry (after equal scores: the older one keeps its place),
     cuts the list to TOP_N, returns (all games' lists, 0-based place or None
-    if it didn't make it)."""
+    if it didn't make it). lower_is_better for times (MERZ: seconds to win),
+    extra = additional entry fields (MERZ: {"burn": True})."""
     os.makedirs(log_dir, exist_ok=True)
     file_path = _store_path(log_dir, store_file)
     entry = {"name": name, "score": score, "ts_iso": datetime.datetime.now().astimezone().isoformat()}
+    entry.update(extra or {})
     with _STORE_LOCK:
         payload = _read_payload(file_path)
         entries = payload["games"].setdefault(game, [])
-        place = next((i for i, e in enumerate(entries) if score > e["score"]), len(entries))
+        place = next((i for i, e in enumerate(entries) if better(score, e["score"], lower_is_better)), len(entries))
         entries.insert(place, entry)
         del entries[TOP_N:]
         tmp_path = f"{file_path}.tmp"

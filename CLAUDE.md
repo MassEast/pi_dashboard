@@ -117,7 +117,7 @@ through the JSON files in `logs/`:
 - **PLAY menu** — the "PLAY" pill under WIFI opens a "Spiele" menu: MERZ plus the tap-only
   party games in `party_games.py` (STAPEL-TURM, FLAPPY BVG), all behind one `GAMES` config section.
   Each game is a self-contained object (`update(now)`, `draw(surf)`, `tap(x, y)`) that
-  `PiDashboard.py` only drives; an all-time top 5 per game is persisted via `highscore_store.py`
+  `PiDashboard.py` only drives; an all-time top 5 per game (MERZ too, by time, via `party_games.MerzResult`) is persisted via `highscore_store.py`
   (`logs/game_highscores.json`, name typed on an on-screen keyboard in the game-over panel).
 - Two built-in safety mechanisms exist specifically because this runs headless/unattended on a
   touchscreen with no keyboard: an emergency-exit corner tap (top-left corner, 5 rapid taps
