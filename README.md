@@ -1,19 +1,29 @@
 > **Disclaimer**
 > This dashboard, run on a Raspberry Pi and displayed on a small TFT display, is heavily inspired by [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT) and [BusStopPi](https://github.com/LoveBootCaptain/BusStopPi), so most of the props go to [LoveBootCaptain](https://github.com/LoveBootCaptain) (Stephan Ansorge)! Especially the [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT) repository is more general and contains information and manuals about many more displays and settings. Check it out if you do not want to rebuild my exact setup as described below, which works perfectly as of March 2025.
+> Since the KiezOS 161 redesign (October 2026), the look is completely its own (a purple, quirky, old-school desktop OS with self-drawn pixel icons), but the weather/BVG plumbing underneath still comes from there.
 
-# A low-resource, efficient Dashboard to ease your daily life - Weather, Public Transport (in Berlin), and Emotion Log for your 'smart' WG
+# KiezOS 161 - a low-resource, efficient Dashboard to ease your daily life - Weather, Public Transport (in Berlin), and Emotion Log for your 'smart' WG
 
 ## Preview
 
-| Weather + Bus view                                                                          | Emotion prompt                                                                         | Web dashboard                                                              | Wall installation (older UI)                                                              |
-| ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| <img src="images/weather+bus_example.png" alt="Weather and bus dashboard view" width="300"> | <img src="images/emotion_prompt_example.png" alt="Emotion prompt example" width="300"> | <img src="images/web_example.png" alt="Web dashboard example" width="300"> | <img src="images/example_installation.jpg" alt="Dashboard wall installation" width="300"> |
+| Home screen (made-up stops and flatmates)                                  | Wall installation (older UI)                                                              |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| <img src="images/kiezos_home.png" alt="KiezOS 161 home screen" width="300"> | <img src="images/example_installation.jpg" alt="Dashboard wall installation" width="300"> |
 
 ## Abstract
 In here, I explain (for my future me and anyone else reading this, feel free to share!) how to successfully set up on a Pi 4B with the Waveshare 4,3 Zoll QLED Touch Display (DSI, 800x480) and Pi OS 20241119 (bookworm).
 
 ## Problem Setting
 The classic issue: you're living in Berlin, juggling a dozen things at once, and checking the bus times for the stop right outside your door is the last thing on your mind. That’s exactly where this dashboard comes in. It shows you live info for your nearby bus or train stop (you can pick any line or station you want), plus real-time weather data. Basically, the stuff you’re probably already checking on your phone every day, but now it’s just there. Stick it in your hallway and make life easier for you and your flatmates. It can also support emotional awareness: lightweight emotional logging creates a simple reflection trail that helps you and your flatmates spot mood patterns over time.
+
+## What's on the screen
+The 480x800 screen is dressed up as *KiezOS 161*, a purple 90s desktop, ordered by what you look at first when you walk by:
+- `uhr.exe`: a big 7-segment clock with a blinking colon.
+- `wetter.exe`: current weather, today's low/high and whether rain is coming in the next 12 hours (hourly forecast from [Open-Meteo](https://open-meteo.com/), no API key needed). `Mehr...` opens the details: feels-like, humidity, wind, UV, the rain chart, sunrise/sunset, moon phase and the next 3 days.
+- `bvg.exe`: one row per configured bus connection with its destination landmark, "in x min" plus the departures after it, and delays in red. `Karte...` draws the same connections on a little map of the Kiez.
+- `wg.txt`: what's due, what to buy and who's visiting (optional MoaBeats integration, see below).
+- The `Start` menu bundles everything else: Spiele, AFM-Quiz, Putzdienste, WLAN-Zugang, Stimmung & Stats and `Herunterfahren...` (try it).
+- Some surprises when you walk past. Not telling.
 
 ## Cost estimate
 As of March 2025, the Raspberry Pi 4B that I am using costs ~40€ and the display is ~35€. My mount on the wall is very experimental and cost me less than 5€. If you add the optional HC-SR505 PIR motion sensor, that's another ~2€.
@@ -129,15 +139,10 @@ cp example.config.json config.json
 and edit it using, e.g., `nano config.json`.
 
 #### Display options
-Our display is 800x480 (resp. 480x800, depending on how you turn it). These are the default settings in the example config file.
+Our display is 800x480, mounted in portrait, so the dashboard runs at 480x800 (`WIDTH` 480, `HEIGHT` 800, the defaults in the example config file). KiezOS 161 is drawn for exactly that size.
 Further options explained:
-- As long as you configure a 3:4 ratio, the Dashboard will be scaled
-- `FPS` is used for pygame internal ticks - 30 fps is more than enough to render clock transitions and precipitation
-animations smoothly
-- `AA` turns antialiasing on and off (leave it on a Pi Zero off, it is performance heavy on higher FPS)
-- `ANIMATION` enables the little particle simulation for precipitation, disable will show an image instead
+- `FPS` is used for pygame internal ticks - 20 fps is plenty for the blinking clock and scrolling text
 - `SHOW_FPS`: show the current fps on the display
-- `SHOW_API_STATS`: show how many API calls are left over (resets every midnight UTC)
 - `MOUSE` enable/disable mouse pointer - needed for local development, better leave it disabled
 
 #### weatherbit.io settings
@@ -148,15 +153,11 @@ animations smoothly
 is from berlin city, germany)
 - For language-support, units, etc please refer to -> **[weatherbit API Docs](https://www.weatherbit.io/api)**
 
-#### Future idea: hourly temp/rain chart for today
-Not implemented. The app currently only calls Weatherbit's `/current` and `/forecast/daily`
-endpoints (that's where today's high/low and the 3-day-ahead forecast come from) — there's no
-hour-by-hour data being fetched, so a small intraday temp/rain chart isn't possible without adding
-a call to Weatherbit's `/forecast/hourly` endpoint. Worth checking API quota first: at the default
-30-minute update interval, the current 2-calls-per-cycle setup is already ~96 calls/day, above the
-free tier's 50/day — adding a third call makes that worse. (Side note: `WEATHERBIT_HOURS` in
-`config.json` is currently dead config — loaded but never used anywhere, presumably left over from
-when hourly data was planned.)
+#### Rain forecast (Open-Meteo)
+Weatherbit's free tier has no hourly forecast within its 50 calls/day, so the "rain coming?" line
+and the 12-hour rain chart come from [Open-Meteo](https://open-meteo.com/)'s hourly
+`precipitation_probability` instead: free, no API key, queried for the location Weatherbit reports.
+(Side note: `WEATHERBIT_HOURS` in `config.json` is dead config — loaded but never used anywhere.)
 
 #### Hardcoded localise strings and ISO settings
 ```json
@@ -180,18 +181,24 @@ when hourly data was planned.)
         "departure_id": "XXXXXXXXX",
         "direction_id": "YYYYYYYYY",
         "line": "ABC",
-        "icon": "left"
+        "icon": "left",
+        "label": "Schlossplatz",
+        "landmark": "palace"
       },
       {
         "id": "row-two",
         "departure_id": "XXXXXXXXX",
         "direction_id": "ZZZZZZZZZ",
         "line": "ABC",
-        "icon": "right"
+        "icon": "right",
+        "label": "Gartenstr.",
+        "landmark": "garden"
       }
     ],
     "LOOKAHEAD_MIN": 30,
-    "LOOKBACK_MIN": 5
+    "LOOKBACK_MIN": 5,
+    "MAP": {"WATER": [...], "STREETS": [...], "BRIDGES": [...], "ROUTES": [...],
+            "LANDMARKS": [...], "HOME": {...}, "STOPS": [...]}
   }
 ```
 Each entry in `ROWS` is its own dashboard row - not limited to one stop with a left and a right
@@ -200,29 +207,32 @@ connection you actually want to see:
 - `id`: any unique string you pick, just used internally to match departures back to their row.
 - `departure_id`: BVG stop id departures are queried from.
 - `direction_id`: BVG stop id identifying which direction/final-destination-area to filter for.
-- `line`: exact line name to keep (e.g. `"M245"`) - departures for other lines at that stop are ignored.
+- `line`: exact line name to keep (e.g. `"M41"`) - departures for other lines at that stop are ignored.
 - `icon`: `"up"`, `"down"`, `"left"`, `"right"`, or `"double_left"` (drawn as two overlapping left
   arrows, since there's no dedicated double-arrow asset - useful for a "this way, further than
   usual" distinction).
 - `direction_text` (optional): exact match against a departure's human-readable destination string
-  (e.g. `"U Turmstr."`). Use this if a `direction_id` alone returns multiple branches heading to
+  (e.g. `"S+U Hauptbahnhof"`). Use this if a `direction_id` alone returns multiple branches heading to
   different final destinations and you only want one of them.
+
+- `label`: destination text shown in `bvg.exe` (e.g. the stop or area the bus heads to).
+- `landmark`: the little picture next to it: `"palace"`, `"garden"`, `"zoo"` or `"lake"`.
+
+`MAP` draws the `Karte...` view: a hand-made map of your Kiez in screen pixels (the map area is
+x 8-472, y 58-716): water (lines or ellipses), streets (lines with a half width, optional centre
+dashes), bridges, dotted bus routes, one landmark + time tooltip per row, your home and the stop
+signs. `example.config.json` has a complete made-up example to start from. Your real map only
+lives in your (gitignored) `config.json`, since it shows pretty precisely where you live.
 
 You can find the BVG stop/direction IDs as I did in `dev/bvg_departures.ipynb` notebook.
 
 #### Theme file and options
-Set your theme file [darcula.json, light.json or example.json] in `config.json` via
+The KiezOS 161 look has one theme file, set in `config.json` via
 ```json
-"THEME": "darcula.theme",
+"THEME": "themes/kiezos.json",
 ```
 
-- Inside your theme, you can specify with json file with information -> an example for the default theme is in the file `themes/example.json`
-- In there, you can change some basic theme information, like colors, formatting, etc.
-  - about the colors:
-    - "RED" is used for errors in status bar icons and wind direction
-    - "BLUE" is used for sync and update in status bar icons and rain precip icon
-    - "GREEN" is used for everything fine in status bar icons
-- You can change every color of an image by adding a color `(r, g, b)` to the optional `fillcolor` parameter in the `DrawImage` class
+- In there, you can change the KiezOS colors (desktop, window faces, title bar gradient, accent) and the date/time formats
 - You can change the time and date format according to your preferences
     - a good reference for strftime options can be found here [Python strftime()](https://www.programiz.com/python-programming/datetime/strftime)
     - for 12h clock with am and pm support you can use `"%I:%M:%S %p"` instead of `"%H:%M:%S"` for a 24h clock in `yourTheme.DATE_FORMAT.TIME`
@@ -269,14 +279,27 @@ default) and ignore this section entirely.
 - Polls a MoaBeats instance's `GET /api/display/status` for WG chores, shopping list, and upcoming
   visits (bearer-token auth via `DISPLAY_SECRET`). If `ENABLED` is `false` or the block is missing
   entirely, the whole feature is skipped - no crash, nothing shown.
-- A small status band (`ZU TUN:` / `ZU KAUFEN:` / `ZU BESUCH:`) is drawn between the BVG rows and
-  the footer, showing overdue chores + shopping on separate lines from upcoming visits. If a line's
+- The `wg.txt` window under `bvg.exe` shows overdue chores (`TUN:`), shopping (`KAUFEN:`) and
+  upcoming visits (`BESUCH:`), one line each. If a line's
   content is wider than the display, it scrolls (pause → reveal the cut-off tail → pause → back)
   instead of being cut off - nothing is ever permanently hidden. When everything's empty, a rotating
   idle message ("WG läuft. Alles gut.", etc.) shows instead.
+- `Start` → `Putzdienste` lists today's and overdue cleaning chores (the same list as the cleaning-day
+  screen); chores with a checklist show their progress and open on tap, where sub-items can be
+  ticked (ticking only - completing a chore stays in the MoaBeats app).
 - Polling pauses while the display is blank, same as weather/BVG, *except* on `CLEANING_DAY`: the
   blanked screen is actively showing the cleaning-day fullscreen then, so it keeps polling to stay
   current through the day rather than freezing on stale data.
+
+#### Surprises (EGGS)
+```json
+"EGGS": {
+  "ENABLED": false,
+  "ONE_IN": 15
+}
+```
+- When the display wakes up from motion (PIR), there's a 1 in `ONE_IN` chance that KiezOS 161 does something unexpected instead of just showing the dashboard (never the same surprise twice in a row). A tap or ~10 seconds closes it; the normal dashboard and emotion prompt follow as usual. Touch wakes never trigger one.
+- Disabled by default. What happens is left for you to find out (or read in `PiDashboard.py`).
 
 #### Emotion Logging Prompt
 ```json
@@ -298,10 +321,10 @@ default) and ignore this section entirely.
 - Whenever the display is reactivated from blank state (touch or PIR motion), an emotion popup can appear.
 - Prompt frequency is rate-limited by `COOLDOWN_SECONDS` (default: once every 30 minutes).
 - The post-save confirmation popup stays visible for `CONFIRMATION_SECONDS` (default: 5 seconds).
-- Emotion buttons show up to 16 options (default catalog + custom slots), plus `Skip` and `Show results` actions.
-- `Show results` opens a second overlay with a QR code to the web results page.
+- Emotion buttons show up to 16 options (default catalog + custom slots), plus `Abbrechen` and `Ergebnisse anzeigen` actions (also under `Start` → `Stimmung & Stats`).
+- `Ergebnisse anzeigen` opens a second overlay with a QR code to the web results page.
 - If nobody interacts, prompt dismissal follows `TIMER.DISPLAY_BLANK` timing and is not logged.
-- **Custom emotions**: Tap `custom` to enter text. New emotions auto-deduplicate against catalog. If LLM enabled, auto-classifies with emoji, color, and position on sentiment spectrum (green=positive→red=negative). Spelling fixes from LLM map back to existing entries.
+- **Custom emotions**: Tap `eigene...` to enter text. New emotions auto-deduplicate against catalog. If LLM enabled, auto-classifies with emoji, color, and position on sentiment spectrum (green=positive→red=negative). Spelling fixes from LLM map back to existing entries.
 
 #### Local Web Dashboard
 ```json
@@ -344,7 +367,7 @@ default) and ignore this section entirely.
   "IDLE_TIMEOUT_SECONDS": 90
 }
 ```
-- A small button in the bottom-right corner opens a dadaist personality-quiz easter egg: name entry (on-screen QWERTZ keyboard) → a fake "biometric" scan you hold a fingerprint icon down for → a random subset of multiple-choice questions from `QUIZ_QUESTION_BANK` (in `PiDashboard.py`), each option scored onto one of three axes (`mausig`/`atzig`/`fotzig`) → a ternary-plot results screen showing your own result against every previously stored participant's.
+- `Start` → `AFM-Quiz` opens a dadaist personality-quiz easter egg: name entry (on-screen QWERTZ keyboard) → a fake "biometric" scan you hold a fingerprint icon down for → a random subset of multiple-choice questions from `QUIZ_QUESTION_BANK` (in `PiDashboard.py`), each option scored onto one of three axes (`mausig`/`atzig`/`fotzig`) → a ternary-plot results screen showing your own result against every previously stored participant's.
 - Disabled by default. Results persist to `quiz_results.json` (gitignored); one entry per name - retaking under the same name averages the new vote counts into that person's existing entry (weighted by how many times they've taken it) rather than adding another dot, so the triangle shows one point per person. Different people can still land on the exact same point if they score identically; overlapping dots get a small count badge, and holding the point labels every name sharing it.
 - `IDLE_TIMEOUT_SECONDS` (default `90`) closes the quiz after this many seconds without a tap, at any stage - resets on every tap, so it only fires on genuine inactivity, not time spent reading a question.
 - Quiz-only feature, no web dashboard integration.
@@ -359,10 +382,10 @@ default) and ignore this section entirely.
 }
 ```
 - **Not related to the Pi's own network connection** (that's configured at the OS level, e.g. via `raspi-config` or `wpa_supplicant`) - this is purely the household WiFi network's credentials, used only to render a scannable join-QR so guests don't have to be told the password out loud.
-- Adds a small "WIFI" button next to the clock. Tapping it shows a QR code (standard `WIFI:` payload - a phone camera app offers to join the network directly from it) plus the SSID as text, auto-closes after 20s or on tap.
+- Adds `WLAN-Zugang` to the `Start` menu. It shows a QR code (standard `WIFI:` payload - a phone camera app offers to join the network directly from it) plus the SSID as text, auto-closes after 20s or on tap.
 - Disabled by default.
 
-#### GAMES (PLAY menu party games)
+#### GAMES (Start -> Spiele)
 ```json
 "GAMES": {
   "ENABLED": false,
@@ -370,7 +393,7 @@ default) and ignore this section entirely.
   "FPS": 30
 }
 ```
-- A small "PLAY" button under the WIFI button opens a "Spiele" menu with MERZ (below) and two
+- `Start` → `Spiele` opens a menu with MERZ (below) and two
   tap-only games from `party_games.py`: **STAPEL-TURM** (tap to drop
   a sliding Plattenbau floor on the tower, overhang gets cut off) and **FLAPPY BVG** (tap to hop a
   BVG bus through gaps between Baustellen barriers).
@@ -383,11 +406,11 @@ default) and ignore this section entirely.
 - Disabled by default.
 
 #### MERZ (dadaist easter-egg minigame, part of GAMES)
-- Opened from the PLAY menu (see GAMES above): a full-screen tap-to-throw minigame: a
+- Opened from Start -> Spiele (see GAMES above): a full-screen tap-to-throw minigame: a
   pixel-art portrait of the German chancellor wanders around a flat backdrop (tap "EIER" or
   "KLÖTEN" to pick which you're currently throwing) while you tap anywhere to lob one at him. He
   periodically has a chance to juke sideways when a throw lands close to him, so landing a hit
-  isn't guaranteed even with good aim. A live hit counter shows in the corner - no persistence, no
+  isn't guaranteed even with good aim. A live hit counter and timer show under the title bar - no persistence, no
   score/round structure, resets every time you open it.
 - He also periodically "says" something in a speech bubble from his mouth, with a year/source line
   underneath - some lines are real, verbatim (not paraphrased), independently re-verified quotes
@@ -403,7 +426,7 @@ default) and ignore this section entirely.
   and the source photo's license (an EU-owned press photo that explicitly permits derivative works
   - deliberately not an alternative candidate photo whose White House source explicitly forbids
   manipulation).
-- Disabled by default. Closes via the corner-X, or automatically after `IDLE_TIMEOUT_SECONDS`
+- Disabled by default. Closes via the title bar's X, or automatically after `IDLE_TIMEOUT_SECONDS`
   (default 60) of no taps.
 
 ## Starting the Dashboard without a Service
@@ -466,5 +489,6 @@ autostart-app output, which for the standard LXDE-pi session is
   - default font: [google - roboto](https://fonts.google.com/)
   - darcula font: [jetbrains - mono](https://www.jetbrains.com/lp/mono/)
   - moon phase rendering: [@miyaichi for his awesome fork](https://github.com/miyaichi/WeatherPi) and great ideas
+- rain forecast: [Open-Meteo](https://open-meteo.com/) (CC-BY 4.0)
 - quiz emoji icons (`icons/quiz_emoji_*.png`): [Twemoji](https://github.com/jdecked/twemoji), graphics licensed [CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 - AFM Test quiz: concept and a number of the questions are inspired by / ported from [atzigfotzigmausig.de/quiz](https://atzigfotzigmausig.de/quiz)

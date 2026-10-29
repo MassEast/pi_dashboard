@@ -12,7 +12,9 @@ config.json's MOABEATS block is overridden):
 - a network error shows a red line too
 - "Zurück" and the 60 s idle timeout close it; nothing tappable sits in the
   emergency-exit corner
-- the "PUTZEN" pill opens the same list as an overlay on the awake dashboard
+- Start -> Putzdienste opens the same list as an overlay on the awake dashboard
+- with any overlay open, taps on the KiezOS desktop (Start, title buttons,
+  Mehr..., Karte...) never start another feature underneath
 
 Renders screenshots to a fresh temp dir (path printed at the end). Run directly:
 SDL_VIDEODRIVER=dummy venv/bin/python3 dev/test_moabeats_checklist.py
@@ -72,14 +74,18 @@ def tap_item(text):
     assert P.handle_chore_detail_click(*rect.center)
 
 
+# What may sit in the outermost pixel columns: the desktop or a window frame.
+EDGE_COLORS = {P.K.DESK, P.K.DESK_DITHER, P.K.F_FACE, P.K.F_LIGHT, P.K.F_DARK, P.K.SHADOW}
+
+
 def shot(name, check_edges=True):
     pygame.image.save(P.tft_surf, os.path.join(OUT_DIR, name))
     if check_edges:
-        # Chore screens keep a margin: anything lit in the outermost pixel
+        # Chore screens keep a margin: anything else in the outermost pixel
         # columns is text running off the 480 px screen.
         for x in (0, P.DISPLAY_WIDTH - 1):
             for y in range(0, P.DISPLAY_HEIGHT, 2):
-                assert P.tft_surf.get_at((x, y))[:3] == P.BLACK, f"{name}: content at screen edge ({x}, {y})"
+                assert tuple(P.tft_surf.get_at((x, y))[:3]) in EDGE_COLORS, f"{name}: content at screen edge ({x}, {y})"
 
 
 def test_checklist_detail():
@@ -91,11 +97,11 @@ def test_checklist_detail():
     P.DISPLAY_BLANK = True
     exit_zone = pygame.Rect(0, 0, P.EMERGENCY_EXIT_MAX_X, P.EMERGENCY_EXIT_MAX_Y)
 
-    # Regression: the dashboard's never-cleared emolog footer rect used to
-    # swallow taps on the blank/cleaning screen (invisible QR, no wake).
-    P.EMOLOG_FOOTER_RECT = pygame.Rect(0, P.DISPLAY_HEIGHT - 40, 200, 40)
-    assert not P.handle_emolog_footer_click(20, P.DISPLAY_HEIGHT - 20)
-    assert not P.EMOTION_RESULTS_VISIBLE
+    # Regression: stale desktop hit rects (Start button, last drawn while
+    # awake) must not swallow taps on the blank/cleaning screen (no wake).
+    P.START_BUTTON_RECT = pygame.Rect(0, P.DISPLAY_HEIGHT - 40, 110, 40)
+    assert not P.handle_home_click(20, P.DISPLAY_HEIGHT - 20)
+    assert not P.START_MENU_OPEN
 
     assert P._moabeats_fetch_status()
     P.draw_cleaning_day_screen()
@@ -205,7 +211,7 @@ def test_checklist_detail():
     P.config["MOABEATS"]["API_URL"] = api_url
 
     # Taps outside controls are swallowed (no dashboard wake behind it).
-    assert P.handle_chore_detail_click(P.DISPLAY_WIDTH // 2, 120)
+    assert P.handle_chore_detail_click(P.DISPLAY_WIDTH // 2, 50)
     assert P.CHORE_DETAIL_ID == 7
 
     # Zurück.
@@ -245,7 +251,7 @@ def test_checklist_detail():
     shot("8_long_list.png")
     rows = [r for r, _ in P.CHORE_DETAIL_ROW_RECTS]
     assert 0 < len(rows) < 12 and all(r.height >= 52 for r in rows)
-    assert rows[-1].bottom < P.CHORE_DETAIL_BACK_RECT.top - 2 * P.CHORE_ITEM_FONT_SMALL.get_linesize()
+    assert rows[-1].bottom < P.CHORE_DETAIL_BACK_RECT.top
     print(f"CHECKLIST: long list shows {len(rows)}/12 rows + '+{12 - len(rows)} weitere'", flush=True)
     P.close_chore_detail("test")
 
@@ -266,28 +272,26 @@ def test_checklist_detail():
     assert all(" ".join(lines) == e["item"] for (lines, _), e in zip(layout, FAKE["status"]["cleaning_chores"][0]["checklist"]))
     P.close_chore_detail("test")
 
-    # "PUTZEN" pill on the awake dashboard: bottom right, left of "AFM",
-    # clear of the emolog footer text and the emergency-exit corner.
+    # Start -> Putzdienste on the awake dashboard; the Start button and its
+    # menu stay clear of the emergency-exit corner.
     P.DISPLAY_BLANK = False
     P.QUIZ_ENABLED = True
-    P.draw_quiz_button()
-    P.draw_chore_button()
-    button = P.CHORE_BUTTON_RECT
-    footer_size = P.FONT_SUPER_TINY.size(f"emolog/stats: {P.get_results_url()}")
-    footer = pygame.Rect(P.FIT_SCREEN[0] + int(10 * P.ZOOM), P.FIT_SCREEN[1] + int(383 * P.ZOOM), *footer_size)
-    assert button.right < P.QUIZ_BUTTON_RECT.left and button.centery == P.QUIZ_BUTTON_RECT.centery
-    assert not button.colliderect(footer), f"PUTZEN {button} overlaps emolog footer {footer}"
-    assert not button.colliderect(exit_zone)
-    assert P.FONT_SUPER_TINY.size("PUTZEN")[0] < button.width and P.FONT_SUPER_TINY.size("AFM")[0] < P.QUIZ_BUTTON_RECT.width
-    pygame.image.save(P.tft_surf.subsurface(pygame.Rect(0, P.DISPLAY_HEIGHT - 80, P.DISPLAY_WIDTH, 80)), os.path.join(OUT_DIR, "10_buttons.png"))
+    P.draw_home()
+    assert not P.START_BUTTON_RECT.colliderect(exit_zone)
+    assert P.handle_tap(*P.START_BUTTON_RECT.center) and P.START_MENU_OPEN
+    P.draw_home()
+    for rect, action in P.START_MENU_RECTS:
+        assert not rect.colliderect(exit_zone), f"Start menu entry {action} in the emergency-exit corner"
+    pygame.image.save(P.tft_surf, os.path.join(OUT_DIR, "10_start_menu.png"))
+    putz = next(r for r, a in P.START_MENU_RECTS if a == "putz")
 
     FAKE["status"]["cleaning_chores"][0]["checklist"] = [
         {"item": "Waschbecken", "done": False},
         {"item": "Toilette", "done": True},
     ]
     gets_before = FAKE["gets"]
-    assert P.handle_chore_button_click(*button.center)
-    assert P.CHORE_LIST_OPEN
+    assert P.handle_tap(*putz.center)
+    assert P.CHORE_LIST_OPEN and not P.START_MENU_OPEN
     wait_idle()
     assert FAKE["gets"] == gets_before + 1, "overlay open did not refetch"
     P.draw_chore_overlay()
@@ -404,93 +408,68 @@ def test_real_checklists_fit():
           f"{len(REAL_SHAPED_CHORES)} real checklists on screen", flush=True)
 
 
-def test_pills_fogged_by_emotion_prompt():
-    """Regression: the dashboard pills were drawn after the emotion prompt,
-    so they sat bright on top of its fog (while the prompt swallowed taps)."""
-    P.DISPLAY_BLANK = False
-    P.WIFI_ENABLED = P.GAMES_ENABLED = P.QUIZ_ENABLED = True
-
-    def pill_pixels():
-        rects = [P.WIFI_BUTTON_RECT, P.PLAY_BUTTON_RECT, P.CHORE_BUTTON_RECT, P.QUIZ_BUTTON_RECT]
-        assert all(rects), rects
-        # Just inside the left edge: pill fill, not label text.
-        return [sum(P.tft_surf.get_at((r.left + 3, r.centery))[:3]) for r in rects]
-
-    P.tft_surf.fill(P.BLACK)
-    P.draw_dashboard_overlays()
-    plain = pill_pixels()
-
-    P.EMOTION_ENABLED = True
-    P.EMOTION_LAST_PROMPT_TS = 0.0
-    P.EMOTION_PENDING_TRIGGER = "test"
-    P.activate_pending_emotion_prompt()
-    assert P.EMOTION_PROMPT_VISIBLE
-    P.tft_surf.fill(P.BLACK)
-    P.draw_dashboard_overlays()
-    shot("13_emotion_prompt_over_pills.png", check_edges=False)
-    fogged = pill_pixels()
-    # ...and not tappable through the popup either.
-    assert not P.handle_chore_button_click(*P.CHORE_BUTTON_RECT.center)
-    assert not P.CHORE_LIST_OPEN, "PUTZEN opened through the emotion prompt"
-    # Not dismiss_emotion_prompt(): that would log a real event to the store.
-    P.EMOTION_PROMPT_VISIBLE = False
-    for before, after in zip(plain, fogged):
-        assert after < 0.5 * before, f"pill not under the prompt's fog: {before} -> {after}"
-    print(f"PILLS: brightness {plain} -> {fogged} under the emotion prompt", flush=True)
-
-
 def test_no_tap_through_overlays():
-    """Regression for the whole class: with any dashboard overlay open, a
-    tap on a (fogged) pill or the emolog footer must not start that
-    feature - it either belongs to the overlay or closes it. Found:
-    PUTZEN through the emotion prompt, AFM (quiz) and the emolog footer
-    through the WiFi QR."""
+    """Regression for the whole class: with any overlay open, a tap where
+    the KiezOS desktop has a control (Start, the windows' x/o/_, Mehr...,
+    Karte...) must not start that feature underneath - it either belongs to
+    the overlay or closes it. (The old pills had exactly this bug: PUTZEN
+    through the emotion prompt, AFM through the WiFi QR.)"""
     P.DISPLAY_BLANK = False
     P.WIFI_ENABLED = P.GAMES_ENABLED = P.QUIZ_ENABLED = True
     P.config["MOABEATS"]["ENABLED"] = True
-    P.tft_surf.fill(P.BLACK)
-    P.draw_dashboard_overlays()  # pill rects as drawn with nothing open
-    pills = {
-        "AFM": P.QUIZ_BUTTON_RECT.copy(),
-        "WIFI": P.WIFI_BUTTON_RECT.copy(),
-        "PLAY": P.PLAY_BUTTON_RECT.copy(),
-        "PUTZEN": P.CHORE_BUTTON_RECT.copy(),
-    }
-    footer = pygame.Rect(P.FIT_SCREEN[0] + int(10 * P.ZOOM), P.FIT_SCREEN[1] + int(383 * P.ZOOM), 150, 16)
-    P.EMOLOG_FOOTER_RECT = footer.copy()
+    P.close_start_menu()
+    P.draw_home()  # desktop rects as drawn with nothing open
+    targets = {"Start": P.START_BUTTON_RECT.copy(), "Mehr": P.HOME_RECTS["mehr"].copy()}
+    if "karte" in P.HOME_RECTS:
+        targets["Karte"] = P.HOME_RECTS["karte"].copy()
+    for name, win in P.HOME_WINDOWS.items():
+        for glyph, rect in P.K.title_buttons(win).items():
+            if glyph != "bar":
+                targets[f"{name} {glyph}"] = rect.copy()
 
     def reset():
         P.EMOTION_PROMPT_VISIBLE = P.EMOTION_RESULTS_VISIBLE = P.EMOTION_CONFIRMATION_VISIBLE = False
         P.QUIZ_STAGE = None
-        P.WIFI_QR_VISIBLE = P.MERZ_VISIBLE = P.CHORE_LIST_OPEN = False
-        P.CHORE_DETAIL_ID = None
+        P.WIFI_QR_VISIBLE = P.MERZ_VISIBLE = P.CHORE_LIST_OPEN = P.SHUTDOWN_VISIBLE = False
+        P.CHORE_DETAIL_ID = P.EGG = P.DADA = None
+        P.MINIMIZED.clear()
+        P.SEV_UNTIL = 0.0
         P.close_games("test-reset")
+        P.close_start_menu()
+        P.close_home_window("test-reset")
 
     def features():
         return {
             "quiz": P.QUIZ_STAGE is not None, "wifi": P.WIFI_QR_VISIBLE, "merz": P.MERZ_VISIBLE,
             "games": P.GAMES_MENU_OPEN or P.ACTIVE_GAME is not None,
             "chores": P.CHORE_LIST_OPEN, "results": P.EMOTION_RESULTS_VISIBLE,
+            "start": P.START_MENU_OPEN, "window": P.HOME_WINDOW is not None, "dada": P.DADA is not None,
+            "minimized": bool(P.MINIMIZED), "sev": P.SEV_UNTIL > time.time(),
         }
 
     overlays = {
         "emotion prompt": lambda: setattr(P, "EMOTION_PROMPT_VISIBLE", True),
         "wifi qr": lambda: setattr(P, "WIFI_QR_VISIBLE", True),
+        "stats qr": lambda: setattr(P, "EMOTION_RESULTS_VISIBLE", True),
         "chore overlay": lambda: setattr(P, "CHORE_LIST_OPEN", True),
         "games menu": P.open_games_menu,
+        "shutdown gag": lambda: setattr(P, "SHUTDOWN_VISIBLE", True),
+        "egg": lambda: setattr(P, "EGG", "bluescreen0"),
     }
-    targets = dict(pills, footer=footer)
     checked = 0
     for overlay_name, open_overlay in overlays.items():
         for target_name, rect in targets.items():
             reset()
             open_overlay()
+            P.tft_surf.fill(P.BLACK)
+            P.draw_home()
+            P.draw_dashboard_overlays()
             if overlay_name == "chore overlay":
-                P.tft_surf.fill(P.BLACK)
-                P.draw_chore_overlay()
                 wait_idle()
-            if overlay_name == "games menu":
-                P.draw_games_menu()
+            # Not dismiss_emotion_prompt()/a choice: those would log a real event.
+            if overlay_name == "emotion prompt":
+                P.EMOTION_ACTION_RECTS = {}
+                P.EMOTION_BUTTON_RECTS = P.EMOTION_CUSTOM_BUTTON_RECTS = []
             before = features()
             P.handle_tap(*rect.center)
             after = features()
@@ -500,12 +479,11 @@ def test_no_tap_through_overlays():
             assert not started, f"{target_name} tap through {overlay_name} started {started}"
             checked += 1
     reset()
-    print(f"TAP-THROUGH: {checked} pill/footer taps across {len(overlays)} overlays, none leaked", flush=True)
+    print(f"TAP-THROUGH: {checked} desktop taps across {len(overlays)} overlays, none leaked", flush=True)
 
 
 if __name__ == "__main__":
     test_checklist_detail()
     test_real_checklists_fit()
-    test_pills_fogged_by_emotion_prompt()
     test_no_tap_through_overlays()
     print(f"ALL PASSED - screenshots in {OUT_DIR}", flush=True)

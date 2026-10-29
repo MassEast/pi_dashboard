@@ -1,12 +1,9 @@
 {
   "DISPLAY": {
-    "WIDTH": 800,
-    "HEIGHT": 480,
+    "WIDTH": 480,
+    "HEIGHT": 800,
     "FPS": 20,
-    "AA": false,
-    "ANIMATION": true,
     "SHOW_FPS": false,
-    "SHOW_API_STATS": true,
     "MOUSE": false
   },
   "WEATHERBIT_URL": "https://api.weatherbit.io/v2.0",
@@ -30,20 +27,110 @@
         "departure_id": "XXXXXXXXX",
         "direction_id": "YYYYYYYYY",
         "line": "ABC",
-        "icon": "left"
+        "icon": "left",
+        "label": "Schlossplatz",
+        "landmark": "palace"
       },
       {
         "id": "row-two",
         "departure_id": "XXXXXXXXX",
         "direction_id": "ZZZZZZZZZ",
         "line": "ABC",
-        "icon": "right"
+        "icon": "right",
+        "label": "Gartenstr.",
+        "landmark": "garden"
       }
     ],
     "LOOKAHEAD_MIN": 30,
-    "LOOKBACK_MIN": 5
+    "LOOKBACK_MIN": 5,
+    "MAP": {
+      "WATER": [
+        {
+          "line": [
+            [-10, 610],
+            [140, 570],
+            [300, 620],
+            [490, 585]
+          ],
+          "width": 32
+        },
+        {
+          "ellipse": [330, 150, 150, 90]
+        }
+      ],
+      "STREETS": [
+        {
+          "line": [
+            [240, 50],
+            [240, 720]
+          ],
+          "dashes": true
+        },
+        {
+          "line": [
+            [0, 330],
+            [240, 330]
+          ],
+          "dashes": true
+        }
+      ],
+      "BRIDGES": [
+        {
+          "from": [240, 560],
+          "to": [240, 640]
+        }
+      ],
+      "ROUTES": [
+        [
+          [200, 319],
+          [8, 319]
+        ],
+        [
+          [251, 380],
+          [251, 58]
+        ]
+      ],
+      "LANDMARKS": [
+        {
+          "row": "row-one",
+          "icon_pos": [30, 236],
+          "label": [16, 120, 220, 60],
+          "leader": [
+            [60, 180],
+            [60, 240]
+          ]
+        },
+        {
+          "row": "row-two",
+          "icon_pos": [300, 70],
+          "icon_size": 72,
+          "label": [250, 250, 214, 60],
+          "leader": [
+            [336, 250],
+            [336, 142]
+          ]
+        }
+      ],
+      "HOME": {
+        "pos": [290, 400],
+        "size": 50,
+        "label": [
+          "WG"
+        ]
+      },
+      "STOPS": [
+        {
+          "pos": [200, 256],
+          "row": "row-one"
+        },
+        {
+          "pos": [290, 352],
+          "row": "row-two"
+        }
+      ]
+    }
   },
-  "THEME": "themes/example.json",
+  "THEME": "themes/kiezos.json",
   "TIMER": {
     "WEATHER_UPDATE": 1800,
     "BVG_UPDATE": 15,
@@ -100,6 +187,10 @@
     "ENABLED": false,
     "IDLE_TIMEOUT_SECONDS": 60,
     "FPS": 30
+  },
+  "EGGS": {
+    "ENABLED": false,
+    "ONE_IN": 15
   },
   "ENV": "Pi",
   "LOG_TO_FILES": false,

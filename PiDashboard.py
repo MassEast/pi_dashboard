@@ -52,6 +52,7 @@ from emotion_store import append_emotion_event, read_emotion_events
 from quiz_store import read_quiz_results, submit_quiz_result
 from uptime_store import append_uptime_event, last_channel_is_up
 from utils import get_stop_data
+import kiezos as K
 import party_games
 
 # Allow the system to manage blanking
@@ -144,6 +145,10 @@ locale.setlocale(locale.LC_ALL, (config["LOCALE"]["ISO"], "UTF-8"))
 BVG_ROWS = config["BVG"]["ROWS"]
 BVG_LOOKAHEAD_MIN = config["BVG"]["LOOKAHEAD_MIN"]
 BVG_LOOKBACK_MIN = config["BVG"]["LOOKBACK_MIN"]
+# The Kiez map behind bvg.exe's "Karte..." (screen pixels, see
+# kiezos.draw_map) - lives only in the gitignored config.json since it shows
+# where the WG is; no MAP = no "Karte..." button.
+BVG_MAP = config["BVG"].get("MAP")
 
 # icon rotation angle (degrees) per row "icon" value; "double_left" is drawn
 # as two overlapping left arrows since there's no dedicated double-arrow asset
@@ -173,6 +178,8 @@ CLEANING_CHORE_ROW_RECTS = []  # [(rect, chore_id, has_checklist)] list rows fro
 CHORE_LIST_OPEN = False
 CHORE_BUTTON_RECT = None
 CHORE_LIST_CLOSE_RECT = None
+CHORE_LIST_TITLE_X = None  # putzdienste.exe's title bar x (same as "Schließen")
+CHORE_DETAIL_TITLE_X = None  # the detail window's title bar x (same as "< Zurück")
 
 emotion_cfg = config.get("EMOTION", {})
 EMOTION_ENABLED = emotion_cfg.get("ENABLED", True)
@@ -300,6 +307,8 @@ def wake_display(source, reason=None):
     logger.info(f"Display woken up by {source}")
     os.system("xset s reset")
     os.system("xset dpms force on")
+    if source == "motion":
+        maybe_start_egg()
     schedule_emotion_prompt(source)
     threading.Thread(target=BVGUpdate.update_bvg_stop_information).start()
     logger.info("BVG update triggered immediately (out of cycle).")
@@ -994,6 +1003,7 @@ PLAY_BUTTON_RECT = None
 GAMES_MENU_OPEN = False
 GAMES_MENU_RECTS = []  # (rect, key) - key "merz" or a party_games class NAME
 GAMES_MENU_CLOSE_RECT = None
+GAMES_MENU_TITLE_X = None
 ACTIVE_GAME = None  # a running party_games game object
 GAMES_LAST_ACTIVITY_TS = 0.0
 
@@ -1069,6 +1079,10 @@ MERZ_WANDER_SPEED = 55.0  # px/sec
 # dev/test_party_games.py); bottom keeps him clear of the building.
 MERZ_BOUNDS_TOP_FRACTION = 0.36
 MERZ_BOUNDS_BOTTOM_FRACTION = 0.52
+# The whole scene below the KiezOS title bar + hits/timer row sits this much
+# lower, so even the longest quote's bubble clamps below the HUD.
+MERZ_TOP_OFFSET = 80
+MERZ_HUD_BOTTOM = 80
 MERZ_NEXT_WANDER_AT = 0.0
 MERZ_DODGE_UNTIL = 0.0
 MERZ_HIT_FLINCH_UNTIL = 0.0
@@ -1101,7 +1115,7 @@ MERZ_JET_TEXT = "ICH BIN EIN NORMALVERDIENER-PRIVATJET!"
 MERZ_JET_CLIMB_VX_FACTOR = 0.7
 MERZ_JET_CLIMB_VY_FACTOR = 0.5
 MERZ_TAUNT_TEXT = None
-MERZ_TAUNT_META = None  # "year · source" line for real quotes, None for reaction lines
+MERZ_TAUNT_META = None  # "year, source" line for real quotes, None for reaction lines
 MERZ_TAUNT_SHOWN_AT = 0.0
 MERZ_TAUNT_NEXT_AT = 0.0
 MERZ_TAUNT_DISPLAY_SECONDS = 8.0  # was 4.5 - too short to actually read/dodge-throw at leisure
@@ -1929,8 +1943,6 @@ ZOOM = 1
 
 FPS = config["DISPLAY"]["FPS"]
 SHOW_FPS = config["DISPLAY"]["SHOW_FPS"]
-AA = config["DISPLAY"]["AA"]
-ANIMATION = config["DISPLAY"]["ANIMATION"]
 
 
 # correction for 1:1 displays like hyperpixel4 square
@@ -1983,24 +1995,11 @@ tft_surf = pygame.display.set_mode(
     (DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.NOFRAME if config["ENV"] == "Pi" else 0
 )
 
-# the drawing area - everything will be drawn here before scaling and rendering on the display tft_surf
-display_surf = pygame.Surface((SURFACE_WIDTH, SURFACE_HEIGHT))
-# dynamic surface for status bar updates and dynamic values like fps
-dynamic_surf = pygame.Surface((SURFACE_WIDTH, SURFACE_HEIGHT))
-# exclusive surface for the time
-time_surf = pygame.Surface((SURFACE_WIDTH, SURFACE_HEIGHT))
-# exclusive surface for the mouse/touch events
-mouse_surf = pygame.Surface((SURFACE_WIDTH, SURFACE_HEIGHT))
-# surface for the weather data - will only be created once if the data is updated from the api
-weather_surf = pygame.Surface((SURFACE_WIDTH, SURFACE_HEIGHT))
-# surface for the BVG departure data - will only be updated when the BVG API is called and delivers new data
-bvg_surf = pygame.Surface((SURFACE_WIDTH, SURFACE_HEIGHT))
-
 clock = pygame.time.Clock()
 
 logger.info(
     f"display with {DISPLAY_WIDTH}px width and {DISPLAY_HEIGHT}px height is "
-    f"set to {FPS} FPS with AA {AA}"
+    f"set to {FPS} FPS"
 )
 
 BACKGROUND = tuple(theme["COLOR"]["BACKGROUND"])
@@ -2060,6 +2059,8 @@ CHORE_NAME_FONTS = [pygame.font.Font(FONT_PATH + FONT_BOLD, size) for size in (3
 CHORE_ITEM_FONTS = [pygame.font.Font(FONT_PATH + FONT_MEDIUM, size) for size in (28, 24, 21, 18, 16)]
 # Detail-screen title sizes, largest that fits the chore name on one line
 # (real names like "Baddienst 2 (mit Badewanne)" don't at 40 px).
+K.configure(FONT_PATH, ICON_PATH, theme.get("KIEZOS"))
+
 CHORE_TITLE_FONTS = [CLEANING_FONT] + [pygame.font.Font(FONT_PATH + FONT_BOLD, size) for size in (34, 30, 26)]
 
 
@@ -2091,63 +2092,6 @@ def image_factory(image_path):
         else:
             result[image_id] = Image.open(image_path + img)
     return result
-
-
-class Particles(object):
-    def __init__(self):
-        self.size = int(20 * ZOOM)
-        self.count = 20
-        self.surf = pygame.Surface((self.size, self.size))
-
-    def create_particle_list(self):
-
-        particle_list = []
-
-        for i in range(self.count):
-            x = random.randrange(0, self.size)
-            y = random.randrange(0, self.size)
-            w = int(1 * ZOOM)
-            h = random.randint(int(2 * ZOOM), int(3 * ZOOM))
-            speed = random.choice([1, 2, 3])
-            color = random.choice(COLOR_LIST)
-            direct = random.choice([0, 0, 1])
-            particle_list.append([x, y, w, h, speed, color, direct])
-        return particle_list
-
-    def move(self, surf, particle_list):
-        # Process each snow flake in the list
-        self.surf.fill(BACKGROUND)
-        self.surf.set_colorkey(BACKGROUND)
-
-        if not PRECIPTYPE == config["LOCALE"]["PRECIP_STR"]:
-
-            for i in range(len(particle_list)):
-
-                particle = particle_list[i]
-                x, y, w, h, speed, color, direct = particle
-
-                # Draw the snow flake
-                if PRECIPTYPE == config["LOCALE"]["RAIN_STR"]:
-                    pygame.draw.rect(self.surf, color, (x, y, w, h), 0)
-                else:
-                    pygame.draw.rect(self.surf, PRECIPCOLOR, (x, y, 2, 2), 0)
-
-                # Move the snow flake down one pixel
-                particle_list[i][1] += speed if PRECIPTYPE == config["LOCALE"]["RAIN_STR"] else 1
-                if random.choice([True, False]):
-                    if PRECIPTYPE == config["LOCALE"]["SNOW_STR"]:
-                        particle_list[i][0] += 1 if direct else 0
-
-                # If the snow flake has moved off the bottom of the screen
-                if particle_list[i][1] > self.size:
-                    # Reset it just above the top
-                    y -= self.size
-                    particle_list[i][1] = y
-                    # Give it a new x position
-                    x = random.randrange(0, self.size)
-                    particle_list[i][0] = x
-
-            surf.blit(self.surf, (int(130 * ZOOM), int(90 * ZOOM)))
 
 
 class DrawString:
@@ -2233,7 +2177,7 @@ class DrawImage:
             else:
                 width, height = (int(self.size / width * height), self.size)
 
-            new_image = self.image.resize((width, height), Image.LANCZOS if AA else Image.BILINEAR)
+            new_image = self.image.resize((width, height), Image.LANCZOS)
             self.image = new_image
             self.img_size = new_image.size
 
@@ -2439,247 +2383,15 @@ class WeatherUpdate(object):
 
     @staticmethod
     def process_data(data):
-        """Process weather data and create surface"""
+        """Keep the new Weatherbit data and refresh the Open-Meteo rain
+        forecast for its location every RAIN_REFRESH_SECONDS."""
         global WEATHER_JSON_DATA
 
         WEATHER_JSON_DATA = data
-        WeatherUpdate.icon_path()
-
-    @staticmethod
-    def icon_path():
-
-        global WEATHERICON, FORECASTICON_DAY_1, FORECASTICON_DAY_2, FORECASTICON_DAY_3, PRECIPTYPE, PRECIPCOLOR, UPDATING
-
-        icon_extension = ".png"
-
-        updated_list = []
-
-        icon = WEATHER_JSON_DATA["current"]["data"][0]["weather"]["icon"]
-
-        forecast_icon_1 = WEATHER_JSON_DATA["daily"]["data"][1]["weather"]["icon"]
-        forecast_icon_2 = WEATHER_JSON_DATA["daily"]["data"][2]["weather"]["icon"]
-        forecast_icon_3 = WEATHER_JSON_DATA["daily"]["data"][3]["weather"]["icon"]
-
-        forecast = (
-            str(icon),
-            str(forecast_icon_1),
-            str(forecast_icon_2),
-            str(forecast_icon_3),
-        )
-
-        logger.debug(forecast)
-
-        logger.debug(f"validating path: {forecast}")
-
-        for icon in forecast:
-
-            if os.path.isfile(ICON_PATH + icon + icon_extension):
-
-                logger.debug(f"TRUE : {icon}")
-
-                updated_list.append(icon)
-
-            else:
-
-                logger.warning(f"FALSE : {icon}")
-
-                updated_list.append("unknown")
-
-        WEATHERICON = updated_list[0]
-        FORECASTICON_DAY_1 = updated_list[1]
-        FORECASTICON_DAY_2 = updated_list[2]
-        FORECASTICON_DAY_3 = updated_list[3]
-
-        global PATH_ERROR
-
-        if any("unknown" in s for s in updated_list):
-
-            PATH_ERROR = True
-
-        else:
-
-            PATH_ERROR = False
-
-        logger.info(f"update path for icons: {updated_list}")
-
-        WeatherUpdate.get_precip_type()
-
-    @staticmethod
-    def get_precip_type():
-
-        global WEATHER_JSON_DATA, PRECIPCOLOR, PRECIPTYPE
-
-        pop = int(WEATHER_JSON_DATA["daily"]["data"][0]["pop"])
-        rain = float(WEATHER_JSON_DATA["daily"]["data"][0]["precip"])
-        snow = float(WEATHER_JSON_DATA["daily"]["data"][0]["snow"])
-
-        if pop == 0:
-
-            PRECIPTYPE = config["LOCALE"]["PRECIP_STR"]
-            PRECIPCOLOR = GREEN
-
-        else:
-
-            if pop > 0 and rain > snow:
-
-                PRECIPTYPE = config["LOCALE"]["RAIN_STR"]
-                PRECIPCOLOR = BLUE
-
-            elif pop > 0 and snow > rain:
-
-                PRECIPTYPE = config["LOCALE"]["SNOW_STR"]
-                PRECIPCOLOR = WHITE
-
-        logger.info(f"update PRECIPPOP to: {pop} %")
-        logger.info(f"update PRECIPTYPE to: {PRECIPTYPE}")
-        logger.info(f"update PRECIPCOLOR to: {PRECIPCOLOR}")
-
-        WeatherUpdate.create_surface()
-
-    @staticmethod
-    def create_surface():
-
-        current_forecast = WEATHER_JSON_DATA["current"]["data"][0]
-        daily_forecast = WEATHER_JSON_DATA["daily"]["data"]
-        stats_data = WEATHER_JSON_DATA["stats"]
-
-        summary_string = current_forecast["weather"]["description"]
-        temp_out = str(int(current_forecast["temp"]))
-        temp_out_unit = "°C" if METRIC else "°F"
-        temp_out_string = str(temp_out + temp_out_unit)
-        precip = WEATHER_JSON_DATA["daily"]["data"][0]["pop"]
-        precip_string = str(f"{precip}%")
-
-        today = daily_forecast[0]
-        day_1 = daily_forecast[1]
-        day_2 = daily_forecast[2]
-        day_3 = daily_forecast[3]
-
-        df_forecast = theme["DATE_FORMAT"]["FORECAST_DAY"]
-        df_sun = theme["DATE_FORMAT"]["SUNRISE_SUNSET"]
-
-        day_1_ts = time.mktime(time.strptime(day_1["datetime"], "%Y-%m-%d"))
-        day_1_ts = convert_timestamp(day_1_ts, df_forecast)
-        day_2_ts = time.mktime(time.strptime(day_2["datetime"], "%Y-%m-%d"))
-        day_2_ts = convert_timestamp(day_2_ts, df_forecast)
-        day_3_ts = time.mktime(time.strptime(day_3["datetime"], "%Y-%m-%d"))
-        day_3_ts = convert_timestamp(day_3_ts, df_forecast)
-
-        today_min_max_temp = f"({int(today['high_temp'])} | {int(today['low_temp'])})"
-        day_1_min_max_temp = f"{int(day_1['high_temp'])} | {int(day_1['low_temp'])}"
-        day_2_min_max_temp = f"{int(day_2['high_temp'])} | {int(day_2['low_temp'])}"
-        day_3_min_max_temp = f"{int(day_3['high_temp'])} | {int(day_3['low_temp'])}"
-
-        sunrise = convert_timestamp(today["sunrise_ts"], df_sun)
-        sunset = convert_timestamp(today["sunset_ts"], df_sun)
-
-        wind_direction = str(current_forecast["wind_cdir"])
-        wind_speed = float(current_forecast["wind_spd"])
-        wind_speed = wind_speed * 3.6 if METRIC else wind_speed
-        wind_speed_unit = "km/h" if METRIC else "mph"
-        wind_speed_string = str(f"{round(wind_speed, 1)} {wind_speed_unit}")
-
-        global weather_surf, UPDATING
-
-        new_surf = pygame.Surface((SURFACE_WIDTH, SURFACE_HEIGHT))
-        new_surf.fill(BACKGROUND)
-
-        DrawImage(
-            new_surf,
-            images["wifi"],
-            5,
-            size=15,
-            fillcolor=RED if CONNECTION_ERROR else GREEN,
-        ).left()
-        DrawString(new_surf, "weather", FONT_SUPER_TINY, MAIN_FONT, 18).left(-2)
-        DrawString(new_surf, "API", FONT_SUPER_TINY, MAIN_FONT, 25).left(2)
-        DrawImage(
-            new_surf,
-            images["refresh"],
-            5,
-            size=15,
-            fillcolor=RED if REFRESH_ERROR else GREEN,
-        ).right(8)
-        DrawImage(
-            new_surf,
-            images["path"],
-            5,
-            size=15,
-            fillcolor=RED if PATH_ERROR else GREEN,
-        ).right(-5)
-
-        DrawImage(new_surf, images[WEATHERICON], 43, size=100).center(2, 0, offset=10)
-
-        if not ANIMATION:
-            if PRECIPTYPE == config["LOCALE"]["RAIN_STR"]:
-
-                DrawImage(new_surf, images["preciprain"], size=20).draw_position(pos=(130, 86))
-
-            elif PRECIPTYPE == config["LOCALE"]["SNOW_STR"]:
-
-                DrawImage(new_surf, images["precipsnow"], size=20).draw_position(pos=(130, 86))
-
-        DrawImage(new_surf, images["sunrise"], 132, size=20).left()
-        DrawImage(new_surf, images["sunset"], 152, size=20).left()
-
-        draw_wind_layer(new_surf, current_forecast["wind_dir"], 142)
-
-        draw_moon_layer(new_surf, int(132 * ZOOM), int(42 * ZOOM))
-
-        DrawImage(new_surf, images[FORECASTICON_DAY_1], 210, size=50).center(3, 0)
-        DrawImage(new_surf, images[FORECASTICON_DAY_2], 210, size=50).center(3, 1)
-        DrawImage(new_surf, images[FORECASTICON_DAY_3], 210, size=50).center(3, 2)
-
-        # draw all the strings
-        if config["DISPLAY"]["SHOW_API_STATS"]:
-            DrawString(
-                new_surf, str(stats_data["calls_remaining"]), FONT_SMALL_BOLD, BLUE, 20
-            ).right(offset=-5)
-
-        # DrawString(new_surf, summary_string, FONT_SMALL_BOLD, VIOLET, 50).center(1, 0)
-        # Ignoring the summary string for now (like "Scattered clouds")
-
-        DrawString(new_surf, temp_out_string, FONT_BIG, ORANGE, 50).right(33)
-        DrawString(new_surf, today_min_max_temp, FONT_TINY, MAIN_FONT, 64).right(-10)
-        DrawString(new_surf, precip_string, FONT_BIG, PRECIPCOLOR, 84).right(10)
-        # Ignoring the "Precipitation" label for now
-        # DrawString(new_surf, PRECIPTYPE, FONT_SMALL_BOLD, PRECIPCOLOR, 140).right()
-
-        DrawString(new_surf, sunrise, FONT_SMALL_BOLD, MAIN_FONT, 135).left(30)
-        DrawString(new_surf, sunset, FONT_SMALL_BOLD, MAIN_FONT, 154).left(30)
-
-        # DrawString(new_surf, wind_direction, FONT_SMALL_BOLD, MAIN_FONT, 250).center(
-        #     3, 2
-        # )
-        DrawString(new_surf, wind_speed_string, FONT_SMALL_BOLD, MAIN_FONT, 154).center(3, 2)
-
-        DrawString(new_surf, day_1_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 0)
-        DrawString(new_surf, day_2_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 1)
-        DrawString(new_surf, day_3_ts, FONT_SMALL_BOLD, ORANGE, 176).center(3, 2)
-
-        DrawString(new_surf, day_1_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 0)
-        DrawString(new_surf, day_2_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 1)
-        DrawString(new_surf, day_3_min_max_temp, FONT_SMALL_BOLD, MAIN_FONT, 191).center(3, 2)
-
-        weather_surf = new_surf
-
-        logger.info(f"summary: {summary_string}")
-        logger.info(f"temp out: {temp_out_string}")
-        logger.info(f"{PRECIPTYPE}: {precip_string}")
-        logger.info(f"icon: {WEATHERICON}")
-        logger.info(
-            f"forecast: "
-            f"{day_1_ts} {day_1_min_max_temp} {FORECASTICON_DAY_1}; "
-            f"{day_2_ts} {day_2_min_max_temp} {FORECASTICON_DAY_2}; "
-            f"{day_3_ts} {day_3_min_max_temp} {FORECASTICON_DAY_3}"
-        )
-        logger.info(f"sunrise: {sunrise} ; sunset {sunset}")
-        logger.info(f"WindSpeed: {wind_speed_string}")
-
-        pygame.time.delay(1500)
-        UPDATING = pygame.time.get_ticks() + 1500  # 1.5 seconds
-
-        return weather_surf
+        current = data["current"]["data"][0]
+        logger.info(f"weather: {current['temp']} {current['weather']['description']} (code {current['weather']['code']})")
+        if RAIN_FORECAST is None or time.time() - RAIN_FORECAST["fetched_at"] > RAIN_REFRESH_SECONDS:
+            _update_rain_forecast(current["lat"], current["lon"])
 
 
 class BVGUpdate(object):
@@ -2726,118 +2438,6 @@ class BVGUpdate(object):
                 )
                 BVG_AVAILABLE = False
             logger.error(f"BVG cycle failed: Unexpected error in BVG update: {e}")
-        if UPDATED_BVG_TIME is not None:
-            BVGUpdate.create_surface()
-            logger.info("BVG surface created")
-
-    @staticmethod
-    def create_surface():
-        global bvg_surf, UPDATED_BVG_TIME, BVG_STOP_INFORMATION, EMOLOG_FOOTER_RECT
-        new_surf = pygame.Surface((SURFACE_WIDTH, SURFACE_HEIGHT))
-        new_surf.fill(BACKGROUND)
-        new_surf.set_colorkey(BACKGROUND)
-        logger.info("Creating BVG surface")
-
-        if len(BVG_STOP_INFORMATION) > 0:  # Make sure that API really gave something
-            # Clear of cancelled stops
-            if "cancelled" in BVG_STOP_INFORMATION.columns:
-                BVG_STOP_INFORMATION = BVG_STOP_INFORMATION[~BVG_STOP_INFORMATION["cancelled"]]
-
-            # One row per BVG_ROWS entry - each is its own stop/direction/line,
-            # not just a left/right pair. Y-positions use the extra vertical
-            # room freed up by the 240x400 canvas fix. Nudged up and tightened
-            # (was 265/26) to free 2 lines of room above the footer for
-            # draw_moabeats_panel() - first pass, needs visual tuning.
-            row_y_start = 258
-            row_y_step = 18
-
-            for row_index, row_spec in enumerate(BVG_ROWS):
-                row_y = row_y_start + row_index * row_y_step
-                icon_style = row_spec.get("icon", "up")
-
-                if icon_style == "double_left":
-                    # Tighter spread than a plain overlap-for-effect pair,
-                    # so it doesn't run into the bus icon to its right.
-                    DrawImage(
-                        new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90
-                    ).left(-5)
-                    DrawImage(
-                        new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=90
-                    ).left(1)
-                else:
-                    angle = BVG_ROW_ICON_ANGLES.get(icon_style, 0)
-                    DrawImage(
-                        new_surf, images["arrow"], row_y + 2, size=13, fillcolor=RED, angle=angle
-                    ).left(-3)
-
-                departure_times = []
-                departure_delays = []
-                if len(BVG_STOP_INFORMATION) and len(
-                    row_results := BVG_STOP_INFORMATION[
-                        BVG_STOP_INFORMATION["row_id"] == row_spec["id"]
-                    ]
-                ):
-                    departures_reported = 0
-                    for _, departure in row_results.iterrows():
-                        if departures_reported >= 3:
-                            break
-                        departure_times.append(departure["departure"])
-                        departure_delays.append(departure["delay"])
-                        departures_reported += 1
-
-                DrawImage(new_surf, images["bus"], row_y + 2, size=10).left(
-                    18
-                )  # (TODO): make this image variable here according to lane (resp. ask for it in the config file)
-                DrawString(new_surf, row_spec["line"] + ":", FONT_SMALL, ORANGE, row_y).left(30)
-                if departure_times:
-                    departure_x = int(82 * ZOOM)
-                    for index, departure_time in enumerate(departure_times):
-                        if index > 0:
-                            comma_surface = FONT_BUS_TIME.render(",", True, ORANGE)
-                            new_surf.blit(comma_surface, (departure_x, int(row_y * ZOOM)))
-                            departure_x += comma_surface.get_width()
-
-                        departure_color = _delay_to_departure_text_color(departure_delays[index])
-                        departure_surface = FONT_BUS_TIME.render(
-                            departure_time, True, departure_color
-                        )
-                        new_surf.blit(departure_surface, (departure_x, int(row_y * ZOOM)))
-                        departure_x += departure_surface.get_width()
-                else:
-                    # Same font and x-start as the departure times themselves
-                    # (was FONT_SMALL at a different offset - too big and
-                    # crammed right up against the "245:" label).
-                    DrawString(new_surf, "none :(", FONT_BUS_TIME, ORANGE, row_y).left(72)
-
-        # Extra information - pushed down to sit near the bottom of the
-        # taller 240x400 canvas instead of the old 240x320 bottom edge.
-        ju_msg = "Ju likes you. Have a nice day!"
-        if UPDATED_BVG_TIME is not None and UPDATED_BVG_TIME is not False:
-            actuality_msg = "BVG API: {}".format(convert_timestamp(UPDATED_BVG_TIME, "%H:%M:%S"))
-        else:
-            actuality_msg = "BVG API: no data"
-        emolog_msg = f"emolog/stats: {get_results_url()}"
-        DrawString(new_surf, ju_msg, FONT_TINY, WHITE, 372).left()
-        DrawImage(new_surf, images["refresh"], 373, size=10, fillcolor=YELLOW).right(55)
-        DrawString(new_surf, actuality_msg, FONT_SUPER_TINY, WHITE, 375).right(-3)
-        DrawString(new_surf, emolog_msg, FONT_SUPER_TINY, SWEET_PURPLE, 383).left()
-        # Clickable hit zone for the text above - absolute on-screen coords,
-        # matching how this surface ends up blitted onto tft_surf (see
-        # tft_surf.blit(create_scaled_surf(display_surf, ...), FIT_SCREEN) in
-        # loop()). Same left()/y positioning math as DrawString itself.
-        emolog_size = FONT_SUPER_TINY.size(emolog_msg)
-        EMOLOG_FOOTER_RECT = pygame.Rect(
-            FIT_SCREEN[0] + int(10 * ZOOM),
-            FIT_SCREEN[1] + int(383 * ZOOM),
-            emolog_size[0],
-            emolog_size[1],
-        )
-
-        bvg_surf = new_surf
-
-        pygame.time.delay(1500)
-
-        return bvg_surf
 
 
 # Not using strftime("%a") here since LOCALE.ISO drives the system locale
@@ -2911,7 +2511,7 @@ def open_chore_detail(chore_id):
 
 
 def open_chore_list():
-    """Open the chore list overlay from the "PUTZEN" pill (refetches the status once)."""
+    """Open the chore list overlay from Start -> Putzdienste (refetches the status once)."""
     global CHORE_LIST_OPEN
 
     CHORE_LIST_OPEN = True
@@ -3053,7 +2653,7 @@ def activate_pending_emotion_prompt():
     global EMOTION_KEYBOARD_TEXT, EMOTION_CUSTOM_BUTTON_RECTS, EMOTION_KEYBOARD_RECTS
     global EMOTION_LAST_ACTIVITY_TS
 
-    if not EMOTION_ENABLED or DISPLAY_BLANK or QUIZ_STAGE is not None:
+    if not EMOTION_ENABLED or DISPLAY_BLANK or QUIZ_STAGE is not None or EGG is not None:
         return
 
     with EMOTION_PENDING_LOCK:
@@ -3164,356 +2764,147 @@ def get_qr_surface(url, pixel_size=210):
 
 
 def draw_results_overlay():
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-
-    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
-    fog.fill((0, 0, 0, 200))
-    tft_surf.blit(fog, (0, 0))
-
-    if EMOTION_MODAL_RECT is not None:
-        card = EMOTION_MODAL_RECT.inflate(
-            -int(EMOTION_MODAL_RECT.width * 0.08), -int(EMOTION_MODAL_RECT.height * 0.08)
-        )
-    else:
-        fallback = dashboard_rect.inflate(
-            -int(dashboard_rect.width * 0.10), -int(dashboard_rect.height * 0.10)
-        )
-        card = fallback
-
-    pygame.draw.rect(tft_surf, WHITE, card, border_radius=16)
-    pygame.draw.rect(tft_surf, DARK_GRAY, card, width=2, border_radius=16)
-
-    title = FONT_SMALL_BOLD.render("Scan for results", True, BLACK)
-    tft_surf.blit(title, title.get_rect(midtop=(card.centerx, card.top + 12)))
-
+    """Stimmungs-Stats: QR code to the web dashboard (from the emotion
+    prompt's "Ergebnisse anzeigen" or Start -> Stimmung & Stats). Any tap closes."""
     url = get_results_url()
-    qr_size = min(card.width - 36, card.height - 124)
-    qr_surface = get_qr_surface(url, pixel_size=max(120, qr_size))
-    qr_rect = qr_surface.get_rect(center=(card.centerx, card.centery + 12))
-    tft_surf.blit(qr_surface, qr_rect)
+    _draw_qr_dialog("stimmung.exe - Ergebnisse", "stats", "Stimmungs-Stats", url,
+                    [url, "Alle Stimmungen & Uptime im Browser"])
 
-    ip_text = FONT_TINY.render(url, True, BLACK)
-    tft_surf.blit(ip_text, ip_text.get_rect(midbottom=(card.centerx, card.bottom - 26)))
 
-    hint_text = FONT_SUPER_TINY.render("Tap anywhere to close", True, DARK_GRAY)
-    tft_surf.blit(hint_text, hint_text.get_rect(midbottom=(card.centerx, card.bottom - 8)))
+def _draw_qr_dialog(title, icon, heading, data, lines):
+    win = pygame.Rect(40, 150, DISPLAY_WIDTH - 80, 500)
+    inner = K.dialog(tft_surf, win, title, icon=icon)
+    K.t95(tft_surf, heading, 20, (inner.centerx, inner.y + 4), anchor="midtop")
+    box = pygame.Rect(inner.centerx - 130, inner.y + 40, 260, 260)
+    K.bevel(tft_surf, box, sunken=True, face=K.F_PAPER)
+    tft_surf.blit(K.qr95(data, 244), (box.x + 8, box.y + 8))
+    for i, line in enumerate(lines):
+        size = K.fit_size(line, inner.w - 8, sizes=(15, 13, 12, 11))
+        K.t95(tft_surf, line, size, (inner.centerx, box.bottom + 14 + i * 24), anchor="midtop", bold=i == 0)
+    K.button(tft_surf, pygame.Rect(inner.centerx - 60, inner.bottom - 44, 120, 42), "OK", size=17)
 
 
 def draw_emotion_confirmation_overlay():
     if not EMOTION_CONFIRMATION_VISIBLE:
         return
 
-    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
-    fog.fill((0, 0, 0, 120))
-    tft_surf.blit(fog, (0, 0))
+    lines = [line for line in EMOTION_CONFIRMATION_TEXT.splitlines() if line.strip()] or [EMOTION_CONFIRMATION_TEXT]
+    logged = re.fullmatch(r"Emotion '(.+)' logged", EMOTION_CONFIRMATION_TEXT)
+    height = 200 if logged else 170 + 24 * len(lines)
+    win = pygame.Rect(50, (DISPLAY_HEIGHT - height) // 2, DISPLAY_WIDTH - 100, height)
+    inner = K.dialog(tft_surf, win, "stimmung.exe", icon="heart")
+    tft_surf.blit(K.menu_icon("ok", 48), (inner.x + 6, inner.y + 10))
+    text_w = inner.w - 72
+    if logged:
+        K.t95(tft_surf, "Danke! Gespeichert:", 17, (inner.x + 66, inner.y + 10))
+        name = logged.group(1)
+        K.t95(tft_surf, name, K.fit_size(name, text_w, sizes=(22, 18, 15, 13)), (inner.x + 66, inner.y + 36), color=K.F_ACCENT)
+        y = inner.y + 70
+    else:
+        y = inner.y + 10
+        for line in lines:
+            K.t95(tft_surf, line, K.fit_size(line, text_w, sizes=(16, 14, 12)), (inner.x + 66, y))
+            y += 24
+        y += 6
+    K.t95(tft_surf, "Ju likes you.", 14, (inner.x + 66, y), color=K.F_DARK, bold=False)
+    K.button(tft_surf, pygame.Rect(inner.right - 100, inner.bottom - 40, 100, 38), "OK", size=16)
 
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
 
-    message_lines = [line for line in EMOTION_CONFIRMATION_TEXT.splitlines() if line.strip()]
-    if not message_lines:
-        message_lines = [EMOTION_CONFIRMATION_TEXT]
-
-    title_surface = FONT_SMALL_BOLD.render("Emotion saved", True, BLACK)
-    message_surfaces = [FONT_TINY.render(line, True, DARK_GRAY) for line in message_lines]
-    hint_surface = FONT_SUPER_TINY.render("Tap to close", True, DARK_GRAY)
-
-    content_width = max(
-        title_surface.get_width(),
-        hint_surface.get_width(),
-        max((surface.get_width() for surface in message_surfaces), default=0),
-    )
-    card_width = max(160, min(int(dashboard_rect.width * 0.92), content_width + 32))
-
-    card_height = max(72, 58 + (len(message_lines) * 14))
-    card = pygame.Rect(0, 0, card_width, card_height)
-    card.center = (DISPLAY_WIDTH // 2, DISPLAY_HEIGHT // 2)
-
-    pygame.draw.rect(tft_surf, WHITE, card, border_radius=14)
-    pygame.draw.rect(tft_surf, SWEET_PURPLE, card, width=2, border_radius=14)
-
-    tft_surf.blit(title_surface, title_surface.get_rect(midtop=(card.centerx, card.top + 10)))
-
-    message_top = card.top + 34
-    line_gap = 2
-    for index, message_surface in enumerate(message_surfaces):
-        line_y = message_top + index * (message_surface.get_height() + line_gap)
-        tft_surf.blit(message_surface, message_surface.get_rect(midtop=(card.centerx, line_y)))
-
-    tft_surf.blit(hint_surface, hint_surface.get_rect(midbottom=(card.centerx, card.bottom - 8)))
+def _emotion_color(name):
+    for entry in EMOTION_CATALOG:
+        if entry.get("name") == name and EMOTION_COLOR_RE.match(str(entry.get("color", ""))):
+            return pygame.Color(entry["color"])
+    return pygame.Color(EMOTION_FALLBACK_STYLE.get("color", "#9ca3af"))
 
 
 def draw_emotion_prompt_overlay():
+    """stimmung.exe: emotion buttons, 3 custom slots + "eigene...", then
+    "Ergebnisse anzeigen" / "Abbrechen" (= skip, like the title bar's x). The
+    "eigene..." keyboard replaces the grid inside the same window."""
     global EMOTION_MODAL_RECT, EMOTION_BUTTON_RECTS, EMOTION_ACTION_RECTS
     global EMOTION_CUSTOM_BUTTON_RECTS, EMOTION_KEYBOARD_RECTS
 
     if not EMOTION_PROMPT_VISIBLE:
         return
 
-    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
-    fog.fill((0, 0, 0, 170))
-    tft_surf.blit(fog, (0, 0))
-
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-    margin_x = int(dashboard_rect.width * 0.15)
-    margin_y = int(dashboard_rect.height * 0.15)
-    EMOTION_MODAL_RECT = pygame.Rect(
-        dashboard_rect.left + margin_x,
-        dashboard_rect.top + margin_y,
-        dashboard_rect.width - 2 * margin_x,
-        dashboard_rect.height - 2 * margin_y,
-    )
-
-    pygame.draw.rect(tft_surf, WHITE, EMOTION_MODAL_RECT, border_radius=16)
-    pygame.draw.rect(tft_surf, DARK_GRAY, EMOTION_MODAL_RECT, width=2, border_radius=16)
-
-    close_size = 28
-    close_rect = pygame.Rect(
-        EMOTION_MODAL_RECT.right - close_size - 10,
-        EMOTION_MODAL_RECT.top + 10,
-        close_size,
-        close_size,
-    )
-    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
-    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
-    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
-    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
-
-    title_line_1_text = "Most prevalent emotion"
-    title_line_2_text = "right now?"
-    max_title_width = close_rect.left - EMOTION_MODAL_RECT.left - 22
-    question_font = (
-        FONT_SMALL if FONT_SMALL.size(title_line_1_text)[0] <= max_title_width else FONT_TINY
-    )
-
-    title_center_x = int((EMOTION_MODAL_RECT.left + close_rect.left - 8) / 2)
-    title_line_1 = question_font.render(title_line_1_text, True, BLACK)
-    title_line_2 = question_font.render(title_line_2_text, True, BLACK)
-    title_line_1_rect = title_line_1.get_rect(midtop=(title_center_x, EMOTION_MODAL_RECT.top + 16))
-    title_line_2_rect = title_line_2.get_rect(midtop=(title_center_x, title_line_1_rect.bottom + 2))
-    tft_surf.blit(title_line_1, title_line_1_rect)
-    tft_surf.blit(title_line_2, title_line_2_rect)
-
-    inner_pad = 14
-    button_area_top = title_line_2_rect.bottom + 12
-    action_height = 44
-    button_gap = 8
-    action_y = EMOTION_MODAL_RECT.bottom - action_height - inner_pad
-    action_width = EMOTION_MODAL_RECT.width - 2 * inner_pad
-
     EMOTION_BUTTON_RECTS = []
     EMOTION_CUSTOM_BUTTON_RECTS = []
     EMOTION_KEYBOARD_RECTS = []
 
     if EMOTION_KEYBOARD_VISIBLE:
-        input_rect = pygame.Rect(
-            EMOTION_MODAL_RECT.left + inner_pad,
-            button_area_top,
-            action_width,
-            34,
-        )
+        EMOTION_MODAL_RECT = pygame.Rect(8, 150, DISPLAY_WIDTH - 16, 560)
+        inner = K.dialog(tft_surf, EMOTION_MODAL_RECT, "stimmung.exe - Eigene Stimmung", icon="heart")
+        K.t95(tft_surf, "Wie fühlst du dich? Eigenes Wort:", 16, (inner.x + 4, inner.y + 4))
         at_char_limit = len(EMOTION_KEYBOARD_TEXT) >= EMOTION_KEYBOARD_MAX_CHARS
-        pygame.draw.rect(tft_surf, (245, 245, 245), input_rect, border_radius=8)
-        pygame.draw.rect(
-            tft_surf,
-            ORANGE if at_char_limit else DARK_GRAY,
-            input_rect,
-            width=2 if at_char_limit else 1,
-            border_radius=8,
-        )
-
-        typed = EMOTION_KEYBOARD_TEXT if EMOTION_KEYBOARD_TEXT else "type custom emotion"
-        typed_color = BLACK if EMOTION_KEYBOARD_TEXT else DARK_GRAY
-        typed_text = FONT_TINY.render(typed, True, typed_color)
-        tft_surf.blit(
-            typed_text, typed_text.get_rect(midleft=(input_rect.left + 8, input_rect.centery))
-        )
-
+        field = pygame.Rect(inner.x, inner.y + 34, inner.w, 50)
+        K.textfield(tft_surf, field, EMOTION_KEYBOARD_TEXT, "eigene Stimmung", warn=at_char_limit)
         # Typing is hard-capped at EMOTION_KEYBOARD_MAX_CHARS (see _apply_emotion_keyboard_token) -
         # show the counter so hitting that cap is visible instead of keys silently doing nothing.
-        counter_text = FONT_SUPER_TINY.render(
-            f"{len(EMOTION_KEYBOARD_TEXT)}/{EMOTION_KEYBOARD_MAX_CHARS}",
-            True,
-            ORANGE if at_char_limit else DARK_GRAY,
-        )
-        tft_surf.blit(
-            counter_text, counter_text.get_rect(midright=(input_rect.right - 8, input_rect.centery))
-        )
-
-        keys_area_top = input_rect.bottom + 8
-        keys_area_bottom = action_y - 8
-        keyboard_rows = ["qwertyuiop", "asdfghjkl", "zxcvbnm"]
-        key_height = max(20, int((keys_area_bottom - keys_area_top - 5 * 6) / 4))
-
-        row_y = keys_area_top
-        for row_chars in keyboard_rows:
-            chars = list(row_chars)
-            gap = 6
-            key_width = int((action_width - (len(chars) - 1) * gap) / len(chars))
-            for idx, char in enumerate(chars):
-                key_x = EMOTION_MODAL_RECT.left + inner_pad + idx * (key_width + gap)
-                key_rect = pygame.Rect(key_x, row_y, key_width, key_height)
-                pygame.draw.rect(tft_surf, SWEET_PURPLE, key_rect, border_radius=6)
-                pygame.draw.rect(tft_surf, VIOLET, key_rect, width=1, border_radius=6)
-                key_text = FONT_TINY.render(char, True, BLACK)
-                tft_surf.blit(key_text, key_text.get_rect(center=key_rect.center))
-                EMOTION_KEYBOARD_RECTS.append({"token": char, "rect": key_rect})
-            row_y += key_height + 6
-
-        fn_tokens = ["space", "back", "clear"]
-        gap = 6
-        fn_width = int((action_width - 2 * gap) / 3)
-        for idx, token in enumerate(fn_tokens):
-            fn_x = EMOTION_MODAL_RECT.left + inner_pad + idx * (fn_width + gap)
-            fn_rect = pygame.Rect(fn_x, row_y, fn_width, key_height)
-            pygame.draw.rect(tft_surf, (230, 230, 230), fn_rect, border_radius=6)
-            pygame.draw.rect(tft_surf, DARK_GRAY, fn_rect, width=1, border_radius=6)
-            fn_text = FONT_TINY.render(token, True, BLACK)
-            tft_surf.blit(fn_text, fn_text.get_rect(center=fn_rect.center))
-            EMOTION_KEYBOARD_RECTS.append({"token": token, "rect": fn_rect})
-
-        cancel_rect = pygame.Rect(
-            EMOTION_MODAL_RECT.left + inner_pad,
-            action_y,
-            int((action_width - button_gap) / 2),
-            action_height,
-        )
-        save_rect = pygame.Rect(
-            cancel_rect.right + button_gap,
-            action_y,
-            int((action_width - button_gap) / 2),
-            action_height,
-        )
-
-        pygame.draw.rect(tft_surf, ORANGE, cancel_rect, border_radius=10)
-        pygame.draw.rect(tft_surf, DARK_GRAY, cancel_rect, width=2, border_radius=10)
-        pygame.draw.rect(tft_surf, GREEN, save_rect, border_radius=10)
-        pygame.draw.rect(tft_surf, DARK_GRAY, save_rect, width=2, border_radius=10)
-
-        cancel_text = FONT_SMALL_BOLD.render("Cancel", True, BLACK)
-        save_text = FONT_SMALL_BOLD.render("Save", True, BLACK)
-        tft_surf.blit(cancel_text, cancel_text.get_rect(center=cancel_rect.center))
-        tft_surf.blit(save_text, save_text.get_rect(center=save_rect.center))
-
+        K.t95(tft_surf, f"{len(EMOTION_KEYBOARD_TEXT)}/{EMOTION_KEYBOARD_MAX_CHARS}", 12,
+              (field.right - 8, field.centery), color=K.F_LATE if at_char_limit else K.F_DARK, bold=False, anchor="midright")
+        keys = K.keyboard95(tft_surf, pygame.Rect(inner.x, inner.y + 96, inner.w, 330),
+                            ["qwertzuiop", "asdfghjkl", "yxcvbnm"],
+                            [("Leer", "space", 0.5), ("<-", "back", 0.22), ("Löschen", "clear", 0.28)])
+        EMOTION_KEYBOARD_RECTS = [{"token": token, "rect": rect} for rect, token in keys]
+        half = (inner.w - 8) // 2
+        cancel_rect = K.button(tft_surf, pygame.Rect(inner.x, inner.bottom - 56, half, 54), "Abbrechen", size=18)
+        save_rect = K.button(tft_surf, pygame.Rect(inner.x + half + 8, inner.bottom - 56, half, 54), "Speichern", size=19)
         EMOTION_ACTION_RECTS = {
-            "close": close_rect,
+            "close": K.title_buttons(EMOTION_MODAL_RECT)["x"],
             "keyboard_cancel": cancel_rect,
             "keyboard_save": save_rect,
         }
-    else:
-        custom_row_height = 38
-        button_area_bottom = action_y - custom_row_height - 16
-        options = (
-            EMOTION_SHUFFLED_OPTIONS
-            if EMOTION_SHUFFLED_OPTIONS
-            else get_emotion_prompt_options(max_count=16)
-        )
-        columns = get_emotion_grid_columns(len(options))
-        rows = max(1, math.ceil(len(options) / columns))
+        return
 
-        button_width = int(
-            (EMOTION_MODAL_RECT.width - (2 * inner_pad) - ((columns - 1) * button_gap)) / columns
-        )
-        button_height = int(
-            (button_area_bottom - button_area_top - ((rows - 1) * button_gap)) / rows
-        )
+    EMOTION_MODAL_RECT = pygame.Rect(14, 92, DISPLAY_WIDTH - 28, 608)
+    inner = K.dialog(tft_surf, EMOTION_MODAL_RECT, "stimmung.exe", icon="heart")
+    tft_surf.blit(K.menu_icon("quiz", 44), (inner.x + 6, inner.y + 6))
+    K.t95(tft_surf, "Most prevalent emotion", 18, (inner.x + 62, inner.y + 6))
+    K.t95(tft_surf, "right now?", 18, (inner.x + 62, inner.y + 30))
 
-        for idx, emotion in enumerate(options):
-            row = idx // columns
-            col = idx % columns
-            # Center partial rows (e.g. a trailing row of 2 in a 3-column grid)
-            # instead of left-packing them, so the last row doesn't look lopsided.
-            items_in_row = min(columns, len(options) - row * columns)
-            row_width = items_in_row * button_width + (items_in_row - 1) * button_gap
-            row_left = EMOTION_MODAL_RECT.left + inner_pad + int((action_width - row_width) / 2)
-            button_x = row_left + col * (button_width + button_gap)
-            button_y = button_area_top + row * (button_height + button_gap)
-            button_rect = pygame.Rect(button_x, button_y, button_width, button_height)
-            pygame.draw.rect(tft_surf, SWEET_PURPLE, button_rect, border_radius=10)
-            pygame.draw.rect(tft_surf, VIOLET, button_rect, width=2, border_radius=10)
+    options = EMOTION_SHUFFLED_OPTIONS if EMOTION_SHUFFLED_OPTIONS else get_emotion_prompt_options(max_count=16)
+    columns = get_emotion_grid_columns(len(options))
+    rows = max(1, math.ceil(len(options) / columns))
+    gap = 8
+    grid = pygame.Rect(inner.x + 4, inner.y + 66, inner.w - 8, 4 * (72 + gap) - gap)
+    bw = (grid.w - (columns - 1) * gap) // columns
+    bh = min(72, (grid.h - (rows - 1) * gap) // rows)
+    for idx, emotion in enumerate(options):
+        row, col = divmod(idx, columns)
+        # Center partial rows (e.g. a trailing row of 2 in a 3-column grid)
+        # instead of left-packing them, so the last row doesn't look lopsided.
+        items_in_row = min(columns, len(options) - row * columns)
+        row_left = grid.x + (grid.w - (items_in_row * bw + (items_in_row - 1) * gap)) // 2
+        rect = pygame.Rect(row_left + col * (bw + gap), grid.y + row * (bh + gap), bw, bh)
+        K.button(tft_surf, rect, "")
+        swatch = pygame.Rect(rect.x + 8, rect.y + 8, 10, 10)
+        pygame.draw.rect(tft_surf, _emotion_color(emotion), swatch)
+        pygame.draw.rect(tft_surf, K.F_INK, swatch, 1)
+        K.t95(tft_surf, emotion, K.fit_size(emotion, rect.w - 10, sizes=(15, 13, 12, 11)), (rect.centerx, rect.centery + 8), anchor="center")
+        EMOTION_BUTTON_RECTS.append({"emotion": emotion, "rect": rect})
 
-            label_font = fit_emotion_label_font(emotion, button_rect.width - 12)
-            label = label_font.render(emotion, True, BLACK)
-            label_rect = label.get_rect(center=button_rect.center)
-            tft_surf.blit(label, label_rect)
-            EMOTION_BUTTON_RECTS.append({"emotion": emotion, "rect": button_rect})
+    cy = grid.bottom + 10
+    cw = (grid.w - 3 * gap) // 4
+    for idx in range(4):
+        rect = pygame.Rect(grid.x + idx * (cw + gap), cy, cw, 42)
+        if idx == 3:
+            K.button(tft_surf, rect, "eigene...", size=14)
+            EMOTION_CUSTOM_BUTTON_RECTS.append({"type": "trigger", "rect": rect})
+        elif idx < len(EMOTION_CUSTOM_SLOTS) and EMOTION_CUSTOM_SLOTS[idx]:
+            label = EMOTION_CUSTOM_SLOTS[idx]
+            K.button(tft_surf, rect, label, size=K.fit_size(label, rect.w - 8, sizes=(14, 12, 11)))
+            EMOTION_CUSTOM_BUTTON_RECTS.append({"type": "slot", "emotion": label, "rect": rect})
+        else:
+            K.bevel(tft_surf, rect, sunken=True, face=K.F_PAPER)
 
-        custom_y = action_y - custom_row_height - 8
-        custom_width = int((action_width - 3 * button_gap) / 4)
-        custom_labels = [
-            EMOTION_CUSTOM_SLOTS[0] if len(EMOTION_CUSTOM_SLOTS) > 0 else "",
-            EMOTION_CUSTOM_SLOTS[1] if len(EMOTION_CUSTOM_SLOTS) > 1 else "",
-            EMOTION_CUSTOM_SLOTS[2] if len(EMOTION_CUSTOM_SLOTS) > 2 else "",
-            EMOTION_CUSTOM_TRIGGER_LABEL,
-        ]
-
-        for idx, label in enumerate(custom_labels):
-            custom_x = EMOTION_MODAL_RECT.left + inner_pad + idx * (custom_width + button_gap)
-            custom_rect = pygame.Rect(custom_x, custom_y, custom_width, custom_row_height)
-
-            # Custom emotion slots use purple like the main emotion buttons.
-            if idx < 3:
-                if label:
-                    fill_color = SWEET_PURPLE
-                    border_color = VIOLET
-                    text_color = BLACK
-                else:
-                    fill_color = (240, 240, 240)
-                    border_color = DARK_GRAY
-                    text_color = DARK_GRAY
-            else:
-                fill_color = (236, 236, 236)
-                border_color = DARK_GRAY
-                text_color = BLACK
-
-            pygame.draw.rect(tft_surf, fill_color, custom_rect, border_radius=8)
-            pygame.draw.rect(tft_surf, border_color, custom_rect, width=2, border_radius=8)
-            display_label = label if label else ""
-            custom_font = fit_emotion_label_font(display_label, custom_rect.width - 10)
-            custom_text = custom_font.render(display_label, True, text_color)
-            tft_surf.blit(custom_text, custom_text.get_rect(center=custom_rect.center))
-
-            if idx < 3:
-                if label:
-                    EMOTION_CUSTOM_BUTTON_RECTS.append(
-                        {"type": "slot", "emotion": label, "rect": custom_rect}
-                    )
-            else:
-                EMOTION_CUSTOM_BUTTON_RECTS.append({"type": "trigger", "rect": custom_rect})
-
-        show_rect = pygame.Rect(
-            EMOTION_MODAL_RECT.left + inner_pad, action_y, action_width, action_height
-        )
-        pygame.draw.rect(tft_surf, GREEN, show_rect, border_radius=10)
-        pygame.draw.rect(tft_surf, DARK_GRAY, show_rect, width=2, border_radius=10)
-
-        show_text = FONT_SMALL_BOLD.render("Show results", True, BLACK)
-        tft_surf.blit(show_text, show_text.get_rect(center=show_rect.center))
-
-        EMOTION_ACTION_RECTS = {"close": close_rect, "show_results": show_rect}
-
-
-def handle_emolog_footer_click(mx, my):
-    """Tapping the "emolog/stats: <url>" footer text pops the same results QR
-    shown inside the emotion prompt, but standalone - see EMOLOG_FOOTER_RECT
-    and the EMOTION_RESULTS_VISIBLE auto-close check in loop()."""
-    global EMOTION_RESULTS_VISIBLE, EMOLOG_QR_OPENED_AT
-
-    # MERZ/quiz cover the footer, but this rect is only ever set when the
-    # dashboard is drawn, never cleared - without this guard it kept
-    # stealing taps at the bottom-left of those overlays (the MERZ EIER
-    # pill sits right on it: every other tap there opened the hidden QR,
-    # the next one closed it again, so the BURN combo could never land).
-    # Same while blank (incl. the cleaning-day screen): a tap there has to
-    # wake the display, not invisibly flip the QR on. And under the WiFi QR
-    # it has to close that QR, not open this one hidden behind it.
-    if DISPLAY_BLANK or dashboard_overlay_open():
-        return False
-    if not EMOLOG_FOOTER_RECT or not EMOLOG_FOOTER_RECT.collidepoint((mx, my)):
-        return False
-
-    EMOTION_RESULTS_VISIBLE = True
-    EMOLOG_QR_OPENED_AT = time.time()
-    return True
+    by = cy + 56
+    show_rect = K.button(tft_surf, pygame.Rect(inner.x + 4, by, inner.w - 136, 44), "Ergebnisse anzeigen", size=17)
+    cancel_rect = K.button(tft_surf, pygame.Rect(inner.right - 124, by, 120, 44), "Abbrechen", size=15)
+    EMOTION_ACTION_RECTS = {
+        "close": K.title_buttons(EMOTION_MODAL_RECT)["x"],
+        "cancel": cancel_rect,
+        "show_results": show_rect,
+    }
 
 
 def handle_emotion_popup_click(mx, my):
@@ -3534,10 +2925,11 @@ def handle_emotion_popup_click(mx, my):
         EMOTION_RESULTS_VISIBLE = False
         return True
 
-    close_rect = EMOTION_ACTION_RECTS.get("close")
-    if close_rect and close_rect.collidepoint((mx, my)):
-        handle_emotion_choice(skipped=True)
-        return True
+    for name in ("close", "cancel"):
+        rect = EMOTION_ACTION_RECTS.get(name)
+        if rect and rect.collidepoint((mx, my)):
+            handle_emotion_choice(skipped=True)
+            return True
 
     if EMOTION_KEYBOARD_VISIBLE:
         cancel_rect = EMOTION_ACTION_RECTS.get("keyboard_cancel")
@@ -3651,135 +3043,11 @@ def convert_timestamp(timestamp, param_string):
     return timestring
 
 
-def _apply_departure_delay(departure_time, delay_minutes):
-    try:
-        parts = departure_time.split(":")
-        if len(parts) != 2:
-            return departure_time
-
-        hours = int(parts[0])
-        minutes = int(parts[1]) + int(delay_minutes)
-
-        while minutes >= 60:
-            hours += 1
-            minutes -= 60
-        while minutes < 0:
-            hours -= 1
-            minutes += 60
-
-        hours %= 24
-        return f"{hours:02d}:{minutes:02d}"
-    except (TypeError, ValueError, IndexError):
-        return departure_time
-
-
-def _delay_to_departure_text_color(delay_minutes):
-    try:
-        delay_minutes = max(0, int(delay_minutes))
-    except (TypeError, ValueError):
-        delay_minutes = 0
-
-    if delay_minutes <= 0:
-        return ORANGE
-
-    # Fade from orange to red as the delay grows, with 8 minutes mapping to full red.
-    ratio = min(delay_minutes, 8) / 8.0
-    return (
-        int(round(ORANGE[0] + (RED[0] - ORANGE[0]) * ratio)),
-        int(round(ORANGE[1] + (RED[1] - ORANGE[1]) * ratio)),
-        int(round(ORANGE[2] + (RED[2] - ORANGE[2]) * ratio)),
-    )
-
-
-def draw_time_layer():
-    timestamp = time.time()
-
-    date_day_string = convert_timestamp(timestamp, theme["DATE_FORMAT"]["DATE"])
-    date_time_string = convert_timestamp(timestamp, theme["DATE_FORMAT"]["TIME"])
-
-    logger.debug(f"Day: {date_day_string}")
-    logger.debug(f"Time: {date_time_string}")
-
-    DrawString(time_surf, date_day_string, DATE_FONT, MAIN_FONT, 0).center(1, 0)
-    DrawString(time_surf, date_time_string, CLOCK_FONT, MAIN_FONT, 15).center(1, 0)
-
-
-def draw_wifi_button():
-    """Small "WIFI" pill right next to the clock - not the top-left corner,
-    that's one of the 4 secret-video easter-egg gesture corners and a click
-    handler there would swallow taps meant for that gesture."""
-    global WIFI_BUTTON_RECT
-
-    if not WIFI_ENABLED or QUIZ_STAGE is not None or MERZ_VISIBLE or games_open():
-        WIFI_BUTTON_RECT = None
-        return
-
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-
-    # Mirror draw_time_layer()'s own math (y=15, center(1, 0)) to find the
-    # clock row's actual on-screen box, so this can't drift out of sync with
-    # wherever the clock actually renders.
-    clock_string = convert_timestamp(time.time(), theme["DATE_FORMAT"]["TIME"])
-    clock_width, clock_height = CLOCK_FONT.size(clock_string)
-    clock_top = dashboard_rect.top + int(15 * ZOOM)
-
-    button_width, button_height = int(30 * ZOOM), int(14 * ZOOM)
-    gap = int(6 * ZOOM)
-    WIFI_BUTTON_RECT = pygame.Rect(
-        dashboard_rect.centerx + clock_width // 2 + gap,
-        clock_top + clock_height // 2 - button_height // 2,
-        button_width,
-        button_height,
-    )
-    pygame.draw.rect(tft_surf, BLUE, WIFI_BUTTON_RECT, border_radius=5)
-    pygame.draw.rect(tft_surf, DARK_GRAY, WIFI_BUTTON_RECT, width=1, border_radius=5)
-    label = FONT_SUPER_TINY.render("WIFI", True, WHITE)
-    tft_surf.blit(label, label.get_rect(center=WIFI_BUTTON_RECT.center))
-
-
-def handle_wifi_button_click(mx, my):
-    global WIFI_QR_VISIBLE, WIFI_QR_OPENED_AT
-
-    if DISPLAY_BLANK or dashboard_overlay_open():
-        # Let this tap fall through to the normal wake-display handling
-        # instead of silently swallowing it via a stale pre-blank rect.
-        return False
-    if WIFI_BUTTON_RECT and WIFI_BUTTON_RECT.collidepoint((mx, my)):
-        WIFI_QR_VISIBLE = True
-        WIFI_QR_OPENED_AT = time.time()
-        return True
-    return False
-
-
 def draw_wifi_qr_overlay():
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-
-    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
-    fog.fill((0, 0, 0, 200))
-    tft_surf.blit(fog, (0, 0))
-
-    card = dashboard_rect.inflate(
-        -int(dashboard_rect.width * 0.10), -int(dashboard_rect.height * 0.10)
-    )
-    pygame.draw.rect(tft_surf, WHITE, card, border_radius=16)
-    pygame.draw.rect(tft_surf, DARK_GRAY, card, width=2, border_radius=16)
-
-    title = FONT_SMALL_BOLD.render("WLAN verbinden", True, BLACK)
-    tft_surf.blit(title, title.get_rect(midtop=(card.centerx, card.top + 12)))
-
     # Standard WIFI: QR payload format - a phone's camera app offers to join
     # the network directly from this, no typing the password out loud.
-    wifi_qr_data = f"WIFI:T:WPA;S:{WIFI_SSID};P:{WIFI_PASSWORD};;"
-    qr_size = min(card.width - 36, card.height - 124)
-    qr_surface = get_qr_surface(wifi_qr_data, pixel_size=max(120, qr_size))
-    qr_rect = qr_surface.get_rect(center=(card.centerx, card.centery + 12))
-    tft_surf.blit(qr_surface, qr_rect)
-
-    ssid_text = FONT_TINY.render(f"SSID: {WIFI_SSID}", True, BLACK)
-    tft_surf.blit(ssid_text, ssid_text.get_rect(midbottom=(card.centerx, card.bottom - 26)))
-
-    hint_text = FONT_SUPER_TINY.render("Tap anywhere to close", True, DARK_GRAY)
-    tft_surf.blit(hint_text, hint_text.get_rect(midbottom=(card.centerx, card.bottom - 8)))
+    _draw_qr_dialog("wlan.exe", "wifi", "WLAN verbinden", f"WIFI:T:WPA;S:{WIFI_SSID};P:{WIFI_PASSWORD};;",
+                    [f"SSID: {WIFI_SSID}"])
 
 
 def handle_wifi_qr_click(mx, my):
@@ -3789,45 +3057,6 @@ def handle_wifi_qr_click(mx, my):
         return False
     WIFI_QR_VISIBLE = False
     return True
-
-
-def draw_play_button():
-    """Small "PLAY" pill directly under the WIFI button (where the MERZ pill
-    used to be), opens the games menu - computes the same clock-row geometry
-    independently so it still shows up even if WIFI is disabled. Labels are
-    plain text, never emoji: the font has no emoji glyphs."""
-    global PLAY_BUTTON_RECT
-
-    if (
-        not GAMES_ENABLED
-        or QUIZ_STAGE is not None
-        or WIFI_QR_VISIBLE
-        or MERZ_VISIBLE
-        or games_open()
-    ):
-        PLAY_BUTTON_RECT = None
-        return
-
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-    clock_string = convert_timestamp(time.time(), theme["DATE_FORMAT"]["TIME"])
-    clock_width, clock_height = CLOCK_FONT.size(clock_string)
-    clock_top = dashboard_rect.top + int(15 * ZOOM)
-
-    button_width, button_height = int(30 * ZOOM), int(14 * ZOOM)
-    gap = int(6 * ZOOM)
-    row_y = clock_top + clock_height // 2 - button_height // 2
-    if WIFI_ENABLED:
-        row_y += button_height + int(4 * ZOOM)
-    PLAY_BUTTON_RECT = pygame.Rect(
-        dashboard_rect.centerx + clock_width // 2 + gap,
-        row_y,
-        button_width,
-        button_height,
-    )
-    pygame.draw.rect(tft_surf, RED, PLAY_BUTTON_RECT, border_radius=5)
-    pygame.draw.rect(tft_surf, DARK_GRAY, PLAY_BUTTON_RECT, width=1, border_radius=5)
-    label = FONT_SUPER_TINY.render("PLAY", True, WHITE)
-    tft_surf.blit(label, label.get_rect(center=PLAY_BUTTON_RECT.center))
 
 
 def games_open():
@@ -3874,8 +3103,9 @@ def start_game(key):
         return
     game_cls = next(g for g in party_games.GAMES if g.NAME == key)
     ACTIVE_GAME = game_cls(
-        DISPLAY_WIDTH, DISPLAY_HEIGHT, FONT_PATH + FONT_MEDIUM, FONT_PATH + FONT_BOLD
+        DISPLAY_WIDTH, DISPLAY_HEIGHT - GAME_TITLE_HEIGHT, FONT_PATH + FONT_MEDIUM, FONT_PATH + FONT_BOLD
     )
+    ACTIVE_GAME.show_close = False  # the KiezOS title bar's x closes it
     ACTIVE_GAME.reset(time.time())
     GAMES_LAST_ACTIVITY_TS = time.time()
     logger.info(f"Game {key} started")
@@ -3892,58 +3122,46 @@ def update_games_timeout():
 
 
 def draw_games_menu():
-    """Fullscreen "Spiele" menu: one purple button card per game (same card
-    look as the Putzdienste list), "Schließen" at the bottom."""
-    global GAMES_MENU_RECTS, GAMES_MENU_CLOSE_RECT
+    """spiele.exe: one big button per game with its record, "Schließen"."""
+    global GAMES_MENU_RECTS, GAMES_MENU_CLOSE_RECT, GAMES_MENU_TITLE_X
 
     if not GAMES_MENU_OPEN:
         return
 
-    tft_surf.fill(BLACK)
-    margin = 16
-    title = CLEANING_FONT.render("Spiele", True, WHITE)
-    # Below the emergency-exit band, like the Putzdienste header: the menu
-    # keeps the emergency exit active (only running games turn it off).
-    y = EMERGENCY_EXIT_MAX_Y + 10
-    tft_surf.blit(title, title.get_rect(midtop=(DISPLAY_WIDTH // 2, y - title.get_height() - 30)))
-
-    close_height = 80
-    GAMES_MENU_CLOSE_RECT = pygame.Rect(
-        margin, DISPLAY_HEIGHT - margin - close_height, DISPLAY_WIDTH - 2 * margin, close_height
-    )
-    pygame.draw.rect(tft_surf, BLUE, GAMES_MENU_CLOSE_RECT, border_radius=14)
-    label = CLEANING_FONT.render("Schließen", True, WHITE)
-    tft_surf.blit(label, label.get_rect(center=GAMES_MENU_CLOSE_RECT.center))
-
-    entries = _games_menu_entries()
-    name_font, small_font = CHORE_NAME_FONTS[0], CHORE_ITEM_FONT_SMALL
-    pad, line_gap, gap = 14, 4, 16
-    card_height = 2 * pad + name_font.get_linesize() + 2 * (line_gap + small_font.get_linesize())
+    win = pygame.Rect(16, 150, DISPLAY_WIDTH - 32, 520)
+    inner = K.dialog(tft_surf, win, "spiele.exe", icon="games")
+    GAMES_MENU_TITLE_X = K.title_buttons(win)["x"]
+    K.t95(tft_surf, "Doppeltippen... ach, einmal reicht.", 13, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
+    entries = [(game.NAME, game.NAME, "stack" if game is party_games.StackGame else "bus", game) for game in party_games.GAMES]
+    entries.append(("merz", "MERZ", "merz", party_games.MerzResult))
     rects = []
-    for key, name, description in entries:
-        rect = pygame.Rect(margin, y, DISPLAY_WIDTH - 2 * margin, card_height)
-        pygame.draw.rect(tft_surf, (40, 34, 56), rect, border_radius=12)
-        pygame.draw.rect(tft_surf, SWEET_PURPLE, rect, width=2, border_radius=12)
-        text_left = rect.left + 18
-        line_y = rect.top + pad
-        tft_surf.blit(name_font.render(name, True, WHITE), (text_left, line_y))
-        line_y += name_font.get_linesize() + line_gap
-        tft_surf.blit(small_font.render(description, True, SWEET_PURPLE), (text_left, line_y))
-        line_y += small_font.get_linesize() + line_gap
-        game_cls = party_games.MerzResult if key == "merz" else next(g for g in party_games.GAMES if g.NAME == key)
-        record = party_games.record_line(game_cls)
-        tft_surf.blit(small_font.render(record, True, (150, 150, 150)), (text_left, line_y))
-        _draw_chevron((rect.right - 26, rect.centery), 14, SWEET_PURPLE)
+    y = inner.y + 28
+    for key, name, icon, game_cls in entries:
+        rect = pygame.Rect(inner.x, y, inner.w, 112)
+        K.button(tft_surf, rect, "")
+        image = K.merz_sprite(80) if icon == "merz" else K.menu_icon(icon, 80)
+        tft_surf.blit(image, image.get_rect(center=(rect.x + 54, rect.centery)))
+        K.t95(tft_surf, name, 22, (rect.x + 112, rect.y + 28))
+        K.t95(tft_surf, party_games.record_line(game_cls), 15, (rect.x + 112, rect.y + 62), color=K.F_DARK, bold=False)
         rects.append((rect, key))
-        y = rect.bottom + gap
+        y += 122
+    GAMES_MENU_CLOSE_RECT = K.button(tft_surf, pygame.Rect(inner.right - 130, inner.bottom - 40, 130, 40), "Schließen", size=16)
     GAMES_MENU_RECTS = rects
 
 
+GAME_TITLE_HEIGHT = 36
+GAME_TITLE_X = pygame.Rect(DISPLAY_WIDTH - 44, 5, 38, 26).inflate(10, 10)  # = what K.game_title() returns
+
+
 def draw_active_game():
+    """The running party game below a KiezOS title bar (its x closes it)."""
+    global GAME_TITLE_X
     if ACTIVE_GAME is None:
         return
     ACTIVE_GAME.update(time.time())
-    ACTIVE_GAME.draw(tft_surf)
+    ACTIVE_GAME.draw(tft_surf.subsurface((0, GAME_TITLE_HEIGHT, DISPLAY_WIDTH, DISPLAY_HEIGHT - GAME_TITLE_HEIGHT)))
+    icon = "stack" if isinstance(ACTIVE_GAME, party_games.StackGame) else "bus"
+    GAME_TITLE_X = K.game_title(tft_surf, ACTIVE_GAME.NAME.lower().replace(" ", "-") + ".exe", icon)
 
 
 def handle_games_menu_click(mx, my):
@@ -3951,14 +3169,15 @@ def handle_games_menu_click(mx, my):
     if not GAMES_MENU_OPEN:
         return False
     GAMES_LAST_ACTIVITY_TS = time.time()
-    if GAMES_MENU_CLOSE_RECT and GAMES_MENU_CLOSE_RECT.collidepoint((mx, my)):
-        close_games("close-button")
-        return True
+    for rect in (GAMES_MENU_CLOSE_RECT, GAMES_MENU_TITLE_X):
+        if rect and rect.collidepoint((mx, my)):
+            close_games("close-button")
+            return True
     for rect, key in GAMES_MENU_RECTS:
         if rect.collidepoint((mx, my)):
             start_game(key)
             return True
-    return True  # fullscreen: swallow every other tap
+    return True  # modal: swallow every other tap
 
 
 def handle_game_click(mx, my):
@@ -3966,7 +3185,12 @@ def handle_game_click(mx, my):
     if ACTIVE_GAME is None:
         return False
     GAMES_LAST_ACTIVITY_TS = time.time()
-    action = ACTIVE_GAME.tap(mx, my)
+    if GAME_TITLE_X and GAME_TITLE_X.collidepoint((mx, my)):
+        close_games("close-button")
+        return True
+    if my < GAME_TITLE_HEIGHT:
+        return True
+    action = ACTIVE_GAME.tap(mx, my - GAME_TITLE_HEIGHT)
     if action == "close":
         close_games("close-button")
     elif action == "menu":
@@ -4005,7 +3229,7 @@ def activate_merz_game():
     MERZ_LAST_ACTIVITY_TS = now
     MERZ_LAST_TICK = now
     MERZ_X = DISPLAY_WIDTH / 2
-    MERZ_Y = DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION
+    MERZ_Y = DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION + MERZ_TOP_OFFSET
     MERZ_WANDER_TARGET_X = None
     MERZ_WANDER_TARGET_Y = None
     MERZ_NEXT_WANDER_AT = now
@@ -4256,7 +3480,7 @@ def update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom):
             taunt = MERZ_TAUNT_BAG.pop()
             MERZ_TAUNT_TEXT = taunt["text"]
             MERZ_TAUNT_META = (
-                f"{taunt['year']} · {taunt['source']}" if "year" in taunt else None
+                f"{taunt['year']}, {taunt['source']}" if "year" in taunt else None
             )
             MERZ_TAUNT_NEXT_AT = now + MERZ_TAUNT_DISPLAY_SECONDS
 
@@ -4546,27 +3770,19 @@ def _render_reichstag(ground_y):
 
 
 def _merz_hud_rects():
-    """Hits and timer pills, side by side, centered in the top row. Fixed
-    widths (sized for the widest values) so they don't jitter while the
-    numbers change."""
-    height = MERZ_HUD_FONT.get_height() + 6
-    hits_w = MERZ_HUD_FONT.size(f"{MERZ_WIN_HITS}/{MERZ_WIN_HITS}")[0] + 20
-    time_w = MERZ_HUD_FONT.size("888.8 s")[0] + 20
-    gap = 8
-    left = DISPLAY_WIDTH // 2 - (hits_w + gap + time_w) // 2
-    hits_rect = pygame.Rect(left, 12, hits_w, height)
-    time_rect = pygame.Rect(hits_rect.right + gap, 12, time_w, height)
+    """Hits and timer, side by side under the title bar. Fixed widths so
+    they don't jitter while the numbers change."""
+    hits_rect = pygame.Rect(DISPLAY_WIDTH // 2 - 118, 44, 110, 36)
+    time_rect = pygame.Rect(DISPLAY_WIDTH // 2 + 8, 44, 110, 36)
     return hits_rect, time_rect
 
 
 def _draw_merz_hud(seconds):
-    """Same purple look as the Spiele menu cards."""
+    """Sunken KiezOS display fields, purple digits like uhr.exe."""
     hits_rect, time_rect = _merz_hud_rects()
     for rect, text in ((hits_rect, f"{MERZ_HITS}/{MERZ_WIN_HITS}"), (time_rect, f"{seconds:.1f} s")):
-        pygame.draw.rect(tft_surf, (40, 34, 56), rect, border_radius=10)
-        pygame.draw.rect(tft_surf, SWEET_PURPLE, rect, width=2, border_radius=10)
-        text_surf = MERZ_HUD_FONT.render(text, True, SWEET_PURPLE)
-        tft_surf.blit(text_surf, text_surf.get_rect(center=rect.center))
+        K.bevel(tft_surf, rect, sunken=True, face=(30, 14, 50))
+        K.t95(tft_surf, text, 20, rect.center, color=K.CLOCK_ON, anchor="center")
 
 
 def _draw_merz_sprite(expression):
@@ -4637,7 +3853,7 @@ def _draw_merz_speech_bubble():
     line_height = bubble_font.get_height()
     text_width = max(bubble_font.size(line)[0] for line in lines)
 
-    # Real quotes carry a "year · source" citation, rendered smaller below
+    # Real quotes carry a "year, source" citation, rendered smaller below
     # the quote itself (see MERZ_TAUNTS/MERZ_TAUNT_META) - plain reaction
     # lines have no metadata and skip this entirely.
     meta_height = 0
@@ -4659,7 +3875,7 @@ def _draw_merz_speech_bubble():
     sprite_top = _merz_rect().top
     bubble_left = min(max(mouth_x - bubble_width // 2, 6), DISPLAY_WIDTH - bubble_width - 6)
     bubble_bottom = sprite_top - 14
-    bubble_top = max(bubble_bottom - bubble_height, 6)  # never run off the top of the screen
+    bubble_top = max(bubble_bottom - bubble_height, MERZ_HUD_BOTTOM + 6)  # never under the title bar/HUD
     bubble_rect = pygame.Rect(bubble_left, bubble_top, bubble_width, bubble_height)
 
     pygame.draw.rect(tft_surf, WHITE, bubble_rect, border_radius=8)
@@ -4714,8 +3930,8 @@ def draw_merz_overlay():
     # UI (hit counter, close button) regardless of screen aspect ratio -
     # bounds_top isn't right at the very top edge on purpose, so he can't
     # wander up into/behind that UI.
-    bounds_top = DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION
-    bounds_bottom = DISPLAY_HEIGHT * MERZ_BOUNDS_BOTTOM_FRACTION
+    bounds_top = DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION + MERZ_TOP_OFFSET
+    bounds_bottom = DISPLAY_HEIGHT * MERZ_BOUNDS_BOTTOM_FRACTION + MERZ_TOP_OFFSET
     update_merz_game(now, bounds_left, bounds_right, bounds_top, bounds_bottom)
 
     tft_surf.fill((150, 200, 235))  # sky
@@ -4725,13 +3941,6 @@ def draw_merz_overlay():
 
     for jet in MERZ_JETS:  # behind him, background gag only
         _draw_merz_jet(jet)
-
-    close_size = 26
-    close_rect = pygame.Rect(DISPLAY_WIDTH - close_size - 10, 10, close_size, close_size)
-    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
-    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
-    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
-    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
 
     if MERZ_EXPLODED:
         seconds = MERZ_WIN_SECONDS
@@ -4743,7 +3952,7 @@ def draw_merz_overlay():
 
     if MERZ_EXPLODED:
         _draw_merz_explosion(now)
-        MERZ_ACTION_RECTS = {"close": close_rect}
+        MERZ_ACTION_RECTS = {"close": K.game_title(tft_surf, "merz.exe", "merz")}
         return
 
     expression = "neutral"
@@ -4789,53 +3998,34 @@ def draw_merz_overlay():
             # instead of a static "(0)" that gives no sense of when
             # tapping will work again.
             wait_s = math.ceil((1.0 - count) / MERZ_AMMO_REGEN_PER_SEC)
-            return f"{name} (0 · {wait_s}s)"
+            return f"{name} (0, {wait_s}s)"
         return f"{name} ({int(count)})"
 
-    egg_text = FONT_SMALL_BOLD.render(_ammo_label("EIER", "egg"), True, BLACK)
-    testicle_text = FONT_SMALL_BOLD.render(_ammo_label("KLÖTEN", "testicle"), True, BLACK)
-    egg_rect = egg_text.get_rect().inflate(26, 16)
-    testicle_rect = testicle_text.get_rect().inflate(26, 16)
-    button_gap = 10
-    total_width = egg_rect.width + button_gap + testicle_rect.width
-    row_y = DISPLAY_HEIGHT - 28
-    egg_rect.center = (DISPLAY_WIDTH // 2 - total_width // 2 + egg_rect.width // 2, row_y)
-    testicle_rect.center = (egg_rect.right + button_gap + testicle_rect.width // 2, row_y)
-    buttons_top = min(egg_rect.top, testicle_rect.top)
-    pills = [(egg_rect, egg_text, "egg"), (testicle_rect, testicle_text, "testicle")]
-    # Hidden BURN pill (see MERZ_BURN_COMBO), centered just above the
-    # EIER/KLÖTEN row once unlocked - three pills side by side don't fit the
-    # 480px-wide portrait screen with the ammo counts in the labels.
+    egg_rect = pygame.Rect(30, DISPLAY_HEIGHT - 58, 200, 50)
+    testicle_rect = pygame.Rect(DISPLAY_WIDTH - 230, DISPLAY_HEIGHT - 58, 200, 50)
+    buttons_top = egg_rect.top
+    pills = [(egg_rect, "egg"), (testicle_rect, "testicle")]
+    # Hidden BURN button (see MERZ_BURN_COMBO), centered just above the
+    # EIER/KLÖTEN row once unlocked - three side by side don't fit the 480px
+    # portrait screen with the ammo counts in the labels.
     if MERZ_BURN_UNLOCKED:
-        burn_selected = MERZ_PROJECTILE_KIND == "burn"
-        burn_text = FONT_SMALL_BOLD.render("BURN", True, WHITE if burn_selected else (180, 40, 10))
-        burn_rect = burn_text.get_rect().inflate(44, 16)
-        burn_rect.midbottom = (DISPLAY_WIDTH // 2, buttons_top - 8)
-        pills.append((burn_rect, burn_text, "burn"))
+        burn_rect = pygame.Rect(DISPLAY_WIDTH // 2 - 90, buttons_top - 62, 180, 50)
+        pills.append((burn_rect, "burn"))
         buttons_top = burn_rect.top
 
-    for rect, text_surf, kind in pills:
+    for rect, kind in pills:
+        selected = MERZ_PROJECTILE_KIND == kind
         if kind == "burn":
-            if MERZ_PROJECTILE_KIND == "burn":
-                fill, border = (200, 40, 10), YELLOW
-            else:
-                fill, border = (255, 220, 180), (180, 40, 10)
-            pygame.draw.rect(tft_surf, fill, rect, border_radius=10)
-            pygame.draw.rect(tft_surf, border, rect, width=2, border_radius=10)
-            tft_surf.blit(text_surf, text_surf.get_rect(center=rect.center))
-            _draw_merz_flame(rect.left + 12, rect.centery + 2)
-            _draw_merz_flame(rect.right - 12, rect.centery + 2)
+            K.bevel(tft_surf, rect, sunken=selected, face=(255, 196, 120) if selected else (255, 230, 200))
+            K.t95(tft_surf, "BURN", 24, rect.move(1, 1).center if selected else rect.center, color=(180, 40, 10), anchor="center")
+            for fx in (rect.x + 22, rect.right - 22):  # little pixel flames
+                cy = rect.centery
+                pygame.draw.polygon(tft_surf, (255, 120, 30), [(fx - 8, cy + 12), (fx - 6, cy - 4), (fx - 1, cy + 2), (fx + 1, cy - 14), (fx + 6, cy), (fx + 8, cy + 12)])
+                pygame.draw.polygon(tft_surf, (255, 220, 80), [(fx - 4, cy + 12), (fx - 1, cy + 2), (fx + 2, cy - 4), (fx + 4, cy + 12)])
             continue
-        empty = MERZ_AMMO[kind] < 1.0
-        if empty:
-            fill = (210, 210, 210)
-        elif MERZ_PROJECTILE_KIND == kind:
-            fill = SWEET_PURPLE
-        else:
-            fill = WHITE
-        pygame.draw.rect(tft_surf, fill, rect, border_radius=10)
-        pygame.draw.rect(tft_surf, BLACK, rect, width=2, border_radius=10)
-        tft_surf.blit(text_surf, text_surf.get_rect(center=rect.center))
+        label = _ammo_label("EIER" if kind == "egg" else "KLÖTEN", kind)
+        K.button(tft_surf, rect, label, size=K.fit_size(label, rect.w - 12, sizes=(22, 19, 16)),
+                 pressed=selected, enabled=MERZ_AMMO[kind] >= 1.0)
 
     # Lightweight hint, not a button - tapping anywhere on screen throws,
     # this just explains that once, it doesn't do anything itself.
@@ -4850,18 +4040,9 @@ def draw_merz_overlay():
     # front of (and obscure) the bubble.
     _draw_merz_speech_bubble()
 
-    MERZ_ACTION_RECTS = {"close": close_rect}
-    for rect, _, kind in pills:
+    MERZ_ACTION_RECTS = {"close": K.game_title(tft_surf, "merz.exe", "merz")}
+    for rect, kind in pills:
         MERZ_ACTION_RECTS[f"select_{kind}"] = rect
-
-
-def handle_play_button_click(mx, my):
-    if DISPLAY_BLANK or dashboard_overlay_open():
-        return False
-    if PLAY_BUTTON_RECT and PLAY_BUTTON_RECT.collidepoint((mx, my)):
-        open_games_menu()
-        return True
-    return False
 
 
 def _merz_register_pill_tap(kind, now):
@@ -4955,92 +4136,14 @@ def handle_merz_click(mx, my):
         away_y = -1 if my >= MERZ_Y else 1
         jump = random.uniform(70, 140)
         bounds_left, bounds_right = 40, DISPLAY_WIDTH - 40
-        bounds_top = DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION
-        bounds_bottom = DISPLAY_HEIGHT * MERZ_BOUNDS_BOTTOM_FRACTION
+        bounds_top = DISPLAY_HEIGHT * MERZ_BOUNDS_TOP_FRACTION + MERZ_TOP_OFFSET
+        bounds_bottom = DISPLAY_HEIGHT * MERZ_BOUNDS_BOTTOM_FRACTION + MERZ_TOP_OFFSET
         MERZ_WANDER_TARGET_X = min(max(MERZ_X + away_x * jump, bounds_left), bounds_right)
         MERZ_WANDER_TARGET_Y = min(max(MERZ_Y + away_y * jump * 0.5, bounds_top), bounds_bottom)
         MERZ_NEXT_WANDER_AT = now
         MERZ_DODGE_UNTIL = now + 0.5
 
     return True
-
-
-def draw_moon_layer(surf, y, size):
-    # based on @miyaichi's fork -> great idea :)
-    _size = 1000
-    dt = datetime.datetime.fromtimestamp(WEATHER_JSON_DATA["daily"]["data"][0]["ts"])
-    moon_age = (
-        ((dt.year - 11) % 19) * 11 + [0, 2, 0, 2, 2, 4, 5, 6, 7, 8, 9, 10][dt.month - 1] + dt.day
-    ) % 30
-
-    image = Image.new("RGBA", (_size + 2, _size + 2))
-    draw = ImageDraw.Draw(image)
-
-    radius = int(_size / 2)
-
-    # draw full moon
-    draw.ellipse([(1, 1), (_size, _size)], fill=WHITE)
-
-    # draw dark side of the moon
-    theta = moon_age / 14.765 * math.pi
-    sum_x = sum_length = 0
-
-    for _y in range(-radius, radius, 1):
-        alpha = math.acos(_y / radius)
-        x = radius * math.sin(alpha)
-        length = radius * math.cos(theta) * math.sin(alpha)
-
-        if moon_age < 15:
-            start = (radius - x, radius + _y)
-            end = (radius + length, radius + _y)
-        else:
-            start = (radius - length, radius + _y)
-            end = (radius + x, radius + _y)
-
-        draw.line((start, end), fill=DARK_GRAY)
-
-        sum_x += 2 * x
-        sum_length += end[0] - start[0]
-
-    logger.debug(
-        f"moon phase age: {moon_age} percentage: {round(100 - (sum_length / sum_x) * 100, 1)}"
-    )
-
-    image = image.resize((size, size))
-    image = pygame.image.fromstring(image.tobytes(), image.size, image.mode)
-
-    x = (SURFACE_WIDTH / 2) - (size / 2)
-
-    surf.blit(image, (x, y))
-
-
-def draw_wind_layer(surf, angle, y):
-    # center the wind direction icon and circle on surface
-    DrawImage(surf, images["circle"], y, size=20, fillcolor=WHITE).draw_middle_position_icon()
-    DrawImage(
-        surf, images["arrow"], y, size=20, fillcolor=RED, angle=-angle
-    ).draw_middle_position_icon()
-
-    logger.debug(f"wind direction: {angle}")
-
-
-def draw_statusbar():
-    global CONNECTION, READING, UPDATING
-
-    if CONNECTION:
-        DrawImage(dynamic_surf, images["wifi"], 5, size=15, fillcolor=BLUE).left()
-        if pygame.time.get_ticks() >= CONNECTION:
-            CONNECTION = None
-
-    if UPDATING:
-        DrawImage(dynamic_surf, images["refresh"], 5, size=15, fillcolor=BLUE).right(8)
-        if pygame.time.get_ticks() >= UPDATING:
-            UPDATING = None
-
-    if READING:
-        DrawImage(dynamic_surf, images["path"], 5, size=15, fillcolor=BLUE).right(-5)
-        if pygame.time.get_ticks() >= READING:
-            READING = None
 
 
 def _moabeats_scroll_offset(max_offset):
@@ -5071,114 +4174,6 @@ def _moabeats_scroll_offset(max_offset):
     return max_offset - t * scroll_speed
 
 
-def _draw_moabeats_line(prefix, content, y, x_left, max_width):
-    """Renders one WG-panel line: the "ZU TUN:"-style prefix stays fixed in
-    place, only the content after it scrolls (clipped to the remaining
-    width) instead of truncating when it's wider than the available space,
-    so nothing is ever permanently hidden - see _moabeats_scroll_offset().
-    Item names are free-text with no length limit, so this is what stands
-    between a long name and running off-screen.
-    """
-    prefix_surf = FONT_TINY.render(prefix, True, SWEET_PURPLE)
-    display_surf.blit(prefix_surf, prefix_surf.get_rect(midleft=(x_left, y)))
-
-    content_x = x_left + prefix_surf.get_width()
-    content_max_width = max_width - prefix_surf.get_width()
-
-    content_surf = FONT_TINY.render(content, True, SWEET_PURPLE)
-    if content_surf.get_width() <= content_max_width:
-        display_surf.blit(content_surf, content_surf.get_rect(midleft=(content_x, y)))
-        return
-
-    max_offset = content_surf.get_width() - content_max_width
-    offset = _moabeats_scroll_offset(max_offset)
-    clip_rect = pygame.Rect(
-        content_x,
-        y - content_surf.get_height() // 2 - 1,
-        content_max_width,
-        content_surf.get_height() + 2,
-    )
-
-    previous_clip = display_surf.get_clip()
-    display_surf.set_clip(clip_rect)
-    display_surf.blit(content_surf, content_surf.get_rect(midleft=(content_x - offset, y)))
-    display_surf.set_clip(previous_clip)
-
-
-def draw_moabeats_panel():
-    """WG status band between the BVG rows and the footer: up to 3 labeled
-    lines (ZU TUN / ZU KAUFEN / ZU BESUCH), only the non-empty ones shown,
-    stacked from the top of the slot down. Runs every frame (independent of
-    the cached bvg_surf) so it always reflects the latest poll. Draws
-    directly onto display_surf at raw post-zoom pixel coordinates, same
-    convention as the CLEANING_DAY fullscreen block, since FONT_TINY is
-    already sized with ZOOM baked in.
-    """
-    if not config.get("MOABEATS", {}).get("ENABLED", False):
-        return
-
-    with MOABEATS_STATUS_LOCK:
-        status = dict(MOABEATS_STATUS)
-
-    # Sanity caps against a pathological API response (e.g. 30 overdue chores
-    # at once) - overflow itself is handled by scrolling (_draw_moabeats_line
-    # below), these just bound the render loop.
-    todo_items = []
-    for chore in status.get("overdue_chores", [])[:10]:
-        label = chore["name"]
-        if chore.get("assigned_to"):
-            label += f" ({chore['assigned_to']})"
-        todo_items.append(label)
-
-    shopping_items = [item["name"] for item in status.get("shopping", [])]  # API already caps at 3
-
-    visit_items = []
-    for visit in status.get("visits", [])[:10]:
-        start_date = _format_visit_date(visit["start"])
-        end_date = _format_visit_date(visit["end"])
-        label = visit["guest"]
-        if visit.get("hosts"):
-            label += f" bei {visit['hosts'][0]}"
-        if visit["end"] == visit["start"]:
-            label += f" am {start_date}"
-        else:
-            label += f" von {start_date} bis {end_date}"
-        visit_items.append(label)
-
-    # Logical (pre-zoom) coordinates, same as row_y_start/footer below -
-    # a fixed SURFACE_HEIGHT-relative offset doesn't scale consistently
-    # against BVG_ROWS across different ZOOM/aspect ratios (was clashing
-    # with the last bus row on the local landscape dev display).
-    y_start = int(339 * ZOOM)
-    y_step = int(13 * ZOOM)
-    x_left = int(10 * ZOOM)  # matches DrawString.left()'s default margin
-    max_line_width = SURFACE_WIDTH - 2 * x_left
-
-    line_specs = []
-    if todo_items:
-        line_specs.append(("TUN: ", ", ".join(todo_items)))
-    if shopping_items:
-        line_specs.append(("KAUFEN: ", ", ".join(shopping_items)))
-    if visit_items:
-        line_specs.append(("BESUCH: ", ", ".join(visit_items)))
-
-    if not line_specs:
-        idle_messages = [
-            "WG läuft. Alles gut.",
-            "Nichts zu tun — schön!",
-            "Sauber, entspannt, kein Stress.",
-            "Alles erledigt. Hörmi ist stolz.",
-        ]
-        day_hash = hashlib.md5(datetime.datetime.now().strftime("%Y-%m-%d").encode()).hexdigest()
-        idle_message = idle_messages[int(day_hash, 16) % len(idle_messages)]
-        surf = FONT_TINY.render(idle_message, True, SWEET_PURPLE)
-        display_surf.blit(surf, surf.get_rect(midleft=(x_left, y_start + y_step)))
-        return
-
-    for index, (prefix, content) in enumerate(line_specs):
-        _draw_moabeats_line(prefix, content, y_start + index * y_step, x_left, max_line_width)
-
-
 def draw_cleaning_day_screen():
     """The always-on cleaning-day screensaver (shown instead of the blanked
     display) - the same "Putzdienste" screen the PUTZEN pill opens."""
@@ -5192,143 +4187,121 @@ def draw_chore_overlay():
 
 
 def draw_chore_screen():
-    """One screen for both entry points: "Putzdienste" + chore list (or the
-    detail screen), "Schließen" at the bottom, and on cleaning day an extra
-    "IT'S CLEANING DAY, YAY!" on top. Headings live in the (non-tappable)
+    """One screen for both entry points: putzdienste.exe with the chore list
+    (or the detail screen), "Schließen" at the bottom, and on cleaning day the
+    "IT'S CLEANING DAY, YAY!" WordArt on top - in the (non-tappable)
     emergency-exit band, everything tappable sits below it."""
-    global CLEANING_CHORE_ROW_RECTS, CHORE_LIST_CLOSE_RECT
+    global CLEANING_CHORE_ROW_RECTS, CHORE_LIST_CLOSE_RECT, CHORE_LIST_TITLE_X
 
-    tft_surf.fill(BLACK)
     CLEANING_CHORE_ROW_RECTS = []
+    tft_surf.blit(K.desktop(), (0, 0))
     if CHORE_DETAIL_ID is not None:
         draw_chore_detail()
         return
 
-    margin = 20
-    y = 24
-    if datetime.datetime.today().weekday() == CLEANING_DAY:
-        yay = CHORE_ITEM_FONT_BOLD.render("IT'S CLEANING DAY, YAY!", True, YELLOW)
-        tft_surf.blit(yay, yay.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
-        y += CHORE_ITEM_FONT_BOLD.get_linesize() + 10
+    cleaning_day = datetime.datetime.today().weekday() == CLEANING_DAY
+    top = 16
+    if cleaning_day:
+        for x, y in [(30, 30), (440, 40), (80, 150), (410, 150), (240, 18)]:
+            pygame.draw.line(tft_surf, K.SUN, (x - 8, y), (x + 8, y), 2)
+            pygame.draw.line(tft_surf, K.SUN, (x, y - 8), (x, y + 8), 2)
+        K.wordart(tft_surf, "IT'S CLEANING", 42, (DISPLAY_WIDTH // 2, 62))
+        K.wordart(tft_surf, "DAY, YAY!", 50, (DISPLAY_WIDTH // 2, 128))
+        top = EMERGENCY_EXIT_MAX_Y + 6
     if not config.get("MOABEATS", {}).get("ENABLED", False):
         # No MoaBeats: nothing to list - just the cleaning-day headline
-        # (only the screensaver gets here; PUTZEN isn't drawn without it).
+        # (only the screensaver gets here; Putzdienste isn't in the Start menu without it).
         CHORE_LIST_CLOSE_RECT = None
+        CHORE_LIST_TITLE_X = None
         return
-    title = CLEANING_FONT.render("Putzdienste", True, WHITE)
-    tft_surf.blit(title, title.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
-    y += CLEANING_FONT.get_linesize() + 6
+
+    with_taskbar = CHORE_LIST_OPEN and not DISPLAY_BLANK
+    win = pygame.Rect(8, top, DISPLAY_WIDTH - 16, DISPLAY_HEIGHT - top - (48 if with_taskbar else 8))
+    inner = K.window(tft_surf, win, "putzdienste.exe", icon="broom")
+    CHORE_LIST_TITLE_X = K.title_buttons(win)["x"]
     # Exactly what the API's cleaning_chores holds (moabeatstastic
     # backend/routes/display.py): Putzplan chores, not completed, due today
     # or overdue. No per-chore due date in the payload, so this describes
     # the whole list rather than marking single chores as overdue.
-    scope = CHORE_ITEM_FONT_SMALL.render("Heute fällig oder überfällig", True, SWEET_PURPLE)
-    tft_surf.blit(scope, scope.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
-    y += CHORE_ITEM_FONT_SMALL.get_linesize()
-    assert y <= EMERGENCY_EXIT_MAX_Y + 10, f"chore screen header too tall: {y}"
-
-    close_height = 80
-    CHORE_LIST_CLOSE_RECT = pygame.Rect(margin, DISPLAY_HEIGHT - margin - close_height, DISPLAY_WIDTH - 2 * margin, close_height)
-    status_top = CHORE_LIST_CLOSE_RECT.top - 8 - CHORE_ITEM_FONT_SMALL.get_linesize()
-    # Cards start below the emergency-exit band (the exit stays active on
-    # this screen, see emergency_exit_active()) and clear of the header.
-    list_top = max(y, EMERGENCY_EXIT_MAX_Y) + 14
+    K.t95(tft_surf, "Heute fällig oder überfällig", 14, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
+    CHORE_LIST_CLOSE_RECT = K.button(tft_surf, pygame.Rect(inner.right - 150, inner.bottom - 52, 150, 52), "Schließen", size=17)
+    lv = pygame.Rect(inner.x, max(inner.y + 24, EMERGENCY_EXIT_MAX_Y + 4), inner.w, 0)
+    lv.height = inner.bottom - 60 - lv.y
+    K.bevel(tft_surf, lv, sunken=True, face=K.F_PAPER)
 
     with MOABEATS_STATUS_LOCK:
         has_chores = bool(MOABEATS_STATUS.get("cleaning_chores"))
     if has_chores:
-        _draw_chore_list(list_top, status_top - 8)
+        _draw_chore_list(lv.y + 4, lv.bottom - 4)
     elif not (CHORE_LIST_OPEN and CHORE_DETAIL_REFRESHING):
-        lines = _quiz_wrap_text(CHORE_ITEM_FONT, "Nichts fällig oder überfällig", DISPLAY_WIDTH - 2 * margin)
-        msg_y = (list_top + status_top) // 2 - len(lines) * CHORE_ITEM_FONT.get_linesize() // 2
-        for line in lines:
-            msg = CHORE_ITEM_FONT.render(line, True, SWEET_PURPLE)
-            tft_surf.blit(msg, msg.get_rect(midtop=(DISPLAY_WIDTH // 2, msg_y)))
-            msg_y += CHORE_ITEM_FONT.get_linesize()
+        K.t95(tft_surf, "Nichts fällig oder überfällig", 18, lv.center, color=K.F_DARK, anchor="center")
 
-    # The list-level refetch only happens when opened via PUTZEN; the
-    # screensaver has no refresh/error state of its own.
+    # The list-level refetch only happens when opened via the Start menu;
+    # the screensaver has no refresh/error state of its own.
     status = None
     if CHORE_LIST_OPEN and CHORE_DETAIL_ERROR:
-        status, status_color = CHORE_DETAIL_ERROR, RED
+        status, status_color = CHORE_DETAIL_ERROR, K.F_LATE
     elif CHORE_LIST_OPEN and CHORE_DETAIL_REFRESHING:
-        status, status_color = "Aktualisiere…", DARK_GRAY
+        status, status_color = "Aktualisiere...", K.F_DARK
     if status:
-        surf = CHORE_ITEM_FONT_SMALL.render(status, True, status_color)
-        tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, status_top)))
+        for i, line in enumerate(K.wrap(status, 13, inner.w - 166, bold=False)[:2]):
+            K.t95(tft_surf, line, 13, (inner.x + 4, inner.bottom - 48 + i * 18), color=status_color, bold=False)
 
-    pygame.draw.rect(tft_surf, BLUE, CHORE_LIST_CLOSE_RECT, border_radius=14)
-    label = CLEANING_FONT.render("Schließen", True, WHITE)
-    tft_surf.blit(label, label.get_rect(center=CHORE_LIST_CLOSE_RECT.center))
+    if with_taskbar:
+        K.taskbar(tft_surf, datetime.datetime.now(), _weather_kind(), tasks=[("broom", "putzdienste")])
 
 
 def _draw_chevron(center, size, color):
     x, y = center
-    pygame.draw.lines(
-        tft_surf, color, False, [(x - size // 2, y - size), (x + size // 2, y), (x - size // 2, y + size)], 4
-    )
+    pygame.draw.polygon(tft_surf, color, [(x - size // 2, y - size), (x + size // 2, y), (x - size // 2, y + size)])
 
 
 def _draw_chore_list(top, bottom):
     """Chore rows from top to bottom; fills CLEANING_CHORE_ROW_RECTS. No
     done/not-done marker: cleaning_chores from the API is already filtered
-    to not-yet-completed chores only. Chores with a checklist are drawn as
-    button cards (name + assignee left, progress + bar + chevron right) and
-    open the detail screen on tap; chores without one are drawn flat (no
-    card, no chevron, dimmer) since tapping them does nothing."""
+    to not-yet-completed chores only. Chores with a checklist are raised
+    buttons (name + assignee left, progress + bar + chevron right) and open
+    the detail screen on tap; chores without one are flat since tapping them
+    does nothing."""
     with MOABEATS_STATUS_LOCK:
         cleaning_chores = list(MOABEATS_STATUS.get("cleaning_chores", []))
 
     # Sanity cap against a pathological API response, same pattern as
-    # draw_moabeats_panel()'s overdue_chores[:10] - bounds the render loop.
+    # _moabeats_wg_lines()'s overdue_chores[:10] - bounds the render loop.
     cleaning_chores = cleaning_chores[:15]
     if not cleaning_chores:
         return
 
-    margin = 20
-    more_height = CHORE_ITEM_FONT_SMALL.get_linesize()
-    # Height adapts to the chore count (76 px for a few, down to 44 px);
-    # low cards also get a tighter gap so more fit before "+N weitere".
-    gap = 10
-    card_height = (bottom - top + gap) // len(cleaning_chores) - gap
-    if card_height < 64:
-        gap = 6
-        card_height = (bottom - top + gap) // len(cleaning_chores) - gap
-    card_height = max(44, min(76, card_height))
-    compact = card_height < 64  # smaller progress text + thinner bar
-    two_line = card_height >= 70  # assignee on its own line under the name
-    right_width = 120  # progress text + bar + chevron
-    text_left = margin + 18
-    text_width = DISPLAY_WIDTH - margin - right_width - text_left
+    left, right = 20, DISPLAY_WIDTH - 20
+    more_height = 22
+    gap = 6
+    # Height adapts to the chore count (76 px for a few, down to 44 px).
+    row_h = max(44, min(76, (bottom - top + gap) // len(cleaning_chores) - gap))
+    two_line = row_h >= 64  # assignee on its own line under the name
+    right_width = 170  # progress text + bar + chevron
+    text_left = left + 50
+    text_width = right - right_width - text_left
 
     y = top
     for index, chore in enumerate(cleaning_chores):
         is_last = index == len(cleaning_chores) - 1
-        if y + card_height > bottom - (0 if is_last else more_height):
-            more = CHORE_ITEM_FONT_SMALL.render(f"+{len(cleaning_chores) - index} weitere in der App", True, DARK_GRAY)
-            tft_surf.blit(more, more.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
+        if y + row_h > bottom - (0 if is_last else more_height):
+            K.t95(tft_surf, f"+{len(cleaning_chores) - index} weitere in der App", 14, (DISPLAY_WIDTH // 2, y + 2), color=K.F_DARK, bold=False, anchor="midtop")
             break
         checklist = chore.get("checklist", [])
-        card = pygame.Rect(margin, y, DISPLAY_WIDTH - 2 * margin, card_height)
-        pygame.draw.rect(tft_surf, (40, 34, 56), card, border_radius=12)
-        pygame.draw.rect(tft_surf, SWEET_PURPLE, card, width=2, border_radius=12)
-        name_color, assignee_color = WHITE, SWEET_PURPLE
+        card = pygame.Rect(left, y, right - left, row_h)
+        if checklist:
+            K.button(tft_surf, card, "")
+        tft_surf.blit(K.menu_icon("broom", 32), (card.x + 8, card.centery - 16))
 
         name = chore["name"]
         assignee = chore.get("assigned_to") or ""
-        name_font = next((f for f in CHORE_NAME_FONTS if f.size(name)[0] <= text_width), CHORE_NAME_FONTS[-1])
         if two_line and assignee:
-            name_surf = name_font.render(name, True, name_color)
-            assignee_surf = CHORE_ITEM_FONT_SMALL.render(assignee, True, assignee_color)
-            block = name_surf.get_height() + assignee_surf.get_height()
-            text_top = card.centery - block // 2
-            tft_surf.blit(name_surf, (text_left, text_top))
-            tft_surf.blit(assignee_surf, (text_left, text_top + name_surf.get_height()))
+            K.t95(tft_surf, name, K.fit_size(name, text_width, sizes=(17, 15, 13)), (text_left, card.centery - 20))
+            K.t95(tft_surf, assignee, 14, (text_left, card.centery + 3), color=K.F_DARK, bold=False)
         else:
             label = f"{name} ({assignee})" if assignee else name
-            name_font = next((f for f in CHORE_NAME_FONTS if f.size(label)[0] <= text_width), CHORE_NAME_FONTS[-1])
-            name_surf = name_font.render(label, True, name_color)
-            tft_surf.blit(name_surf, name_surf.get_rect(midleft=(text_left, card.centery)))
+            K.t95(tft_surf, label, K.fit_size(label, text_width, sizes=(17, 15, 13, 12)), (text_left, card.centery), anchor="midleft")
 
         # Without a checklist the chore itself is the one "item": always 0/1
         # here (cleaning_chores only holds uncompleted chores), and no
@@ -5336,43 +4309,29 @@ def _draw_chore_list(top, bottom):
         if checklist:
             done = sum(1 for entry in checklist if entry["done"])
             total = len(checklist)
+            _draw_chevron((card.right - 18, card.centery), 8, K.F_INK)
         else:
             done, total = 0, 1
-        complete = done == total
-        chevron_x = card.right - 22
-        if checklist:
-            _draw_chevron((chevron_x, card.centery), 9, WHITE)
-        progress_font = CHORE_PROGRESS_FONT_SMALL if compact else CHORE_ITEM_FONT_BOLD
-        bar_height = 5 if compact else 8
-        progress = progress_font.render(f"{done}/{total}", True, GREEN if complete else WHITE)
-        # Text + bar as one block, vertically centered in the card.
-        block_top = card.centery - (progress.get_height() + 2 + bar_height) // 2
-        bar = pygame.Rect(chevron_x - 22 - 72, block_top + progress.get_height() + 2, 72, bar_height)
-        tft_surf.blit(progress, progress.get_rect(midtop=(bar.centerx, block_top)))
-        pygame.draw.rect(tft_surf, (70, 70, 70), bar, border_radius=4)
-        if done:
-            filled = bar.copy()
-            filled.width = max(8, bar.width * done // total)
-            pygame.draw.rect(tft_surf, GREEN if complete else SWEET_PURPLE, filled, border_radius=4)
+        bar = pygame.Rect(card.right - 150, card.centery + 2, 110, 18 if row_h >= 56 else 12)
+        K.t95(tft_surf, f"{done}/{total}", 15, (bar.right, bar.y - 2), anchor="bottomright")
+        K.progress95(tft_surf, bar, done, total)
         CLEANING_CHORE_ROW_RECTS.append((card, chore["id"], bool(checklist)))
-        y += card_height + gap
+        y += row_h + gap
 
 
 def _draw_check_box(rect, done, pending):
+    K.bevel(tft_surf, rect, sunken=True, face=K.F_PAPER)
     if pending:
-        pygame.draw.rect(tft_surf, YELLOW, rect, width=3, border_radius=6)
+        pygame.draw.rect(tft_surf, K.SUN, rect, 3)
         return
     if done:
-        pygame.draw.rect(tft_surf, GREEN, rect, border_radius=6)
         # Drawn tick - the bundled fonts aren't guaranteed to have a check glyph.
         points = [
             (rect.left + rect.width * 0.22, rect.top + rect.height * 0.52),
-            (rect.left + rect.width * 0.42, rect.top + rect.height * 0.72),
-            (rect.left + rect.width * 0.78, rect.top + rect.height * 0.30),
+            (rect.left + rect.width * 0.42, rect.top + rect.height * 0.74),
+            (rect.left + rect.width * 0.80, rect.top + rect.height * 0.26),
         ]
-        pygame.draw.lines(tft_surf, BLACK, False, points, 5)
-    else:
-        pygame.draw.rect(tft_surf, WHITE, rect, width=3, border_radius=6)
+        pygame.draw.lines(tft_surf, K.F_INK, False, points, 4)
 
 
 CHORE_ITEM_PAREN_URL_RE = re.compile(r"\s*\((?:siehe\s+|see\s+)?https?://[^)\s]*\)", re.IGNORECASE)
@@ -5423,104 +4382,85 @@ def _layout_chore_rows(checklist, text_width, available_height, gap):
 
 def draw_chore_detail():
     """Checklist detail screen: header (chore name + assignee + progress),
-    one big tappable row per sub-item, error/status line, "Zurück" button.
-    Rows start right under the header, inside the emergency-exit band - the
-    exit is off on this screen (emergency_exit_active())."""
-    global CHORE_DETAIL_SNAPSHOT, CHORE_DETAIL_ROW_RECTS, CHORE_DETAIL_BACK_RECT
+    one big tappable row per sub-item, error/status line, "< Zurück".
+    Rows start inside the emergency-exit band - the exit is off on this
+    screen (emergency_exit_active())."""
+    global CHORE_DETAIL_SNAPSHOT, CHORE_DETAIL_ROW_RECTS, CHORE_DETAIL_BACK_RECT, CHORE_DETAIL_TITLE_X
 
-    margin = 20
     chore = _find_cleaning_chore(CHORE_DETAIL_ID)
     if chore is not None:
         CHORE_DETAIL_SNAPSHOT = chore
     header = CHORE_DETAIL_SNAPSHOT or {}
     checklist = chore.get("checklist", []) if chore is not None else []
 
-    y = 16
+    win = pygame.Rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)
+    inner = K.window(tft_surf, win, f"putzdienste.exe - {header.get('name') or '?'}", icon="broom")
+    CHORE_DETAIL_TITLE_X = K.title_buttons(win)["x"]
+    y = inner.y + 2
     title = header.get("full_name") or header.get("name") or "?"
-    title_font = next(
-        (f for f in CHORE_TITLE_FONTS if f.size(title)[0] <= DISPLAY_WIDTH - 2 * margin), CHORE_TITLE_FONTS[-1]
-    )
-    for line in _wrap_text_hard(title_font, title, DISPLAY_WIDTH - 2 * margin):
-        surf = title_font.render(line, True, WHITE)
-        tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
-        y += title_font.get_linesize()
-    subtitle = header.get("assigned_to") or "niemand zugeteilt"
+    for line in K.wrap(title, 18, inner.w - 8)[:2]:
+        K.t95(tft_surf, line, 18, (inner.x + 4, y))
+        y += 24
+    K.t95(tft_surf, header.get("assigned_to") or "niemand zugeteilt", 14, (inner.x + 4, y + 2), color=K.F_DARK, bold=False)
+    y += 26
     if checklist:
-        subtitle += f"  ·  {_chore_progress_text(checklist)} erledigt"
-    surf = CHORE_ITEM_FONT.render(subtitle, True, SWEET_PURPLE)
-    tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, y + 4)))
-    y += 4 + CHORE_ITEM_FONT.get_linesize() + 4
-    # Completing/handing over is deliberately app-only (no button here).
-    hint_font = CHORE_ITEM_FONTS[3]
-    for line in _quiz_wrap_text(hint_font, "Dienst abhaken: in der MoaBeats-App", DISPLAY_WIDTH - 2 * margin):
-        surf = hint_font.render(line, True, DARK_GRAY)
-        tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, y)))
-        y += hint_font.get_linesize()
+        done = sum(1 for entry in checklist if entry["done"])
+        K.progress95(tft_surf, pygame.Rect(inner.x + 4, y, inner.w - 80, 22), done, len(checklist))
+        K.t95(tft_surf, _chore_progress_text(checklist), 16, (inner.right - 4, y + 2), anchor="topright")
+        y += 30
 
-    back_height = 70
-    CHORE_DETAIL_BACK_RECT = pygame.Rect(margin, DISPLAY_HEIGHT - margin - back_height, DISPLAY_WIDTH - 2 * margin, back_height)
-    # Two-line status area: the bundled font is monospace, a German error
-    # message doesn't fit one line at 480px.
-    status_line = CHORE_ITEM_FONT_SMALL.get_linesize()
-    status_top = CHORE_DETAIL_BACK_RECT.top - 8 - 2 * status_line
-    rows_top = y + 12
-    rows_bottom = status_top - 8
+    CHORE_DETAIL_BACK_RECT = K.button(tft_surf, pygame.Rect(inner.right - 130, inner.bottom - 52, 130, 52), "< Zurück", size=17)
+    lv = pygame.Rect(inner.x, y + 4, inner.w, inner.bottom - 60 - y - 4)
+    K.bevel(tft_surf, lv, sunken=True, face=K.F_PAPER)
 
     CHORE_DETAIL_ROW_RECTS = []
     if chore is None:
-        msg = CHORE_ITEM_FONT.render("Nicht mehr offen", True, WHITE)
-        tft_surf.blit(msg, msg.get_rect(center=(DISPLAY_WIDTH // 2, (rows_top + rows_bottom) // 2)))
-        hint = CHORE_ITEM_FONT_SMALL.render("(in der App erledigt?)", True, DARK_GRAY)
-        tft_surf.blit(hint, hint.get_rect(center=(DISPLAY_WIDTH // 2, (rows_top + rows_bottom) // 2 + 36)))
+        K.t95(tft_surf, "Nicht mehr offen", 20, (lv.centerx, lv.centery - 14), anchor="center")
+        K.t95(tft_surf, "(in der App erledigt?)", 14, (lv.centerx, lv.centery + 16), color=K.F_DARK, bold=False, anchor="center")
     else:
-        gap = 6
-        box_size = 36
-        text_left_offset = 14 + box_size + 16
-        text_width = DISPLAY_WIDTH - 2 * margin - text_left_offset - 12
+        gap = 4
+        box_size = 32
+        text_left_offset = 12 + box_size + 14
+        text_width = lv.w - text_left_offset - 12
+        rows_top, rows_bottom = lv.y + 4, lv.bottom - 4
         font, layout = _layout_chore_rows(checklist, text_width, rows_bottom - rows_top, gap)
-        more_height = CHORE_ITEM_FONT_SMALL.get_linesize()
+        more_height = 22
         row_y = rows_top
         shown = 0
         for index, (entry, (lines, row_height)) in enumerate(zip(checklist, layout)):
             is_last = index == len(checklist) - 1
             if row_y + row_height > rows_bottom - (0 if is_last else more_height):
                 break
-            row_rect = pygame.Rect(margin, row_y, DISPLAY_WIDTH - 2 * margin, row_height)
+            row_rect = pygame.Rect(lv.x + 4, row_y, lv.w - 8, row_height)
             pending = entry["item"] == CHORE_DETAIL_PENDING_ITEM
-            pygame.draw.rect(tft_surf, (30, 30, 30), row_rect, border_radius=10)
-            pygame.draw.rect(tft_surf, DARK_GRAY, row_rect, width=2, border_radius=10)
-            box = pygame.Rect(row_rect.left + 14, row_rect.centery - box_size // 2, box_size, box_size)
+            if pending:
+                pygame.draw.rect(tft_surf, (255, 246, 200), row_rect)
+            if index:
+                pygame.draw.line(tft_surf, (226, 218, 244), (row_rect.x + 6, row_rect.y - gap // 2), (row_rect.right - 6, row_rect.y - gap // 2))
+            box = pygame.Rect(row_rect.left + 8, row_rect.centery - box_size // 2, box_size, box_size)
             _draw_check_box(box, entry["done"], pending)
-
-            color = DARK_GRAY if entry["done"] and not pending else WHITE
+            color = K.F_DARK if entry["done"] and not pending else K.F_INK
             text_top = row_rect.centery - len(lines) * font.get_linesize() // 2
             for line_index, line in enumerate(lines):
-                surf = font.render(line, True, color)
-                tft_surf.blit(surf, (row_rect.left + text_left_offset, text_top + line_index * font.get_linesize()))
+                tft_surf.blit(font.render(line, False, color), (row_rect.left + text_left_offset, text_top + line_index * font.get_linesize()))
             CHORE_DETAIL_ROW_RECTS.append((row_rect, entry))
             row_y += row_height + gap
             shown += 1
         if shown < len(checklist):
             # Only when even the smallest font can't fit everything.
-            more = CHORE_ITEM_FONT_SMALL.render(f"+{len(checklist) - shown} weitere in der App", True, DARK_GRAY)
-            tft_surf.blit(more, more.get_rect(midtop=(DISPLAY_WIDTH // 2, row_y)))
+            K.t95(tft_surf, f"+{len(checklist) - shown} weitere in der App", 14, (lv.centerx, row_y + 2), color=K.F_DARK, bold=False, anchor="midtop")
 
     if CHORE_DETAIL_ERROR:
-        status, status_color = CHORE_DETAIL_ERROR, RED
+        status, status_color = CHORE_DETAIL_ERROR, K.F_LATE
     elif CHORE_DETAIL_PENDING_ITEM is not None:
-        status, status_color = "Speichere…", YELLOW
+        status, status_color = "Speichere...", K.F_ACCENT
     elif CHORE_DETAIL_REFRESHING:
-        status, status_color = "Aktualisiere…", DARK_GRAY
+        status, status_color = "Aktualisiere...", K.F_DARK
     else:
-        status = None
-    if status:
-        for line_index, line in enumerate(_quiz_wrap_text(CHORE_ITEM_FONT_SMALL, status, DISPLAY_WIDTH - 2 * margin)[:2]):
-            surf = CHORE_ITEM_FONT_SMALL.render(line, True, status_color)
-            tft_surf.blit(surf, surf.get_rect(midtop=(DISPLAY_WIDTH // 2, status_top + line_index * status_line)))
-
-    pygame.draw.rect(tft_surf, BLUE, CHORE_DETAIL_BACK_RECT, border_radius=14)
-    label = CLEANING_FONT.render("Zurück", True, WHITE)
-    tft_surf.blit(label, label.get_rect(center=CHORE_DETAIL_BACK_RECT.center))
+        # Completing/handing over is deliberately app-only (no button here).
+        status, status_color = "Abhaken hier, erledigen in der App", K.F_DARK
+    for i, line in enumerate(K.wrap(status, 12, inner.w - 146, bold=False)[:3]):
+        K.t95(tft_surf, line, 12, (inner.x + 4, inner.bottom - 50 + i * 16), color=status_color, bold=False)
 
 
 def handle_cleaning_chore_list_click(mx, my):
@@ -5536,7 +4476,7 @@ def handle_cleaning_chore_list_click(mx, my):
     on_cleaning_screen = DISPLAY_BLANK and datetime.datetime.today().weekday() == CLEANING_DAY
     if not (CHORE_LIST_OPEN or on_cleaning_screen):
         return False
-    if CHORE_LIST_CLOSE_RECT and CHORE_LIST_CLOSE_RECT.collidepoint((mx, my)):
+    if any(rect and rect.collidepoint((mx, my)) for rect in (CHORE_LIST_CLOSE_RECT, CHORE_LIST_TITLE_X)):
         if CHORE_LIST_OPEN:
             close_chore_list("close")
         else:
@@ -5552,49 +4492,6 @@ def handle_cleaning_chore_list_click(mx, my):
     return CHORE_LIST_OPEN
 
 
-def draw_chore_button():
-    """Small "PUTZEN" pill, bottom-right, directly left of the "AFM" pill."""
-    global CHORE_BUTTON_RECT
-
-    if (
-        not config.get("MOABEATS", {}).get("ENABLED", False)
-        or QUIZ_STAGE is not None
-        or MERZ_VISIBLE
-        or games_open()
-        or WIFI_QR_VISIBLE
-        or CHORE_LIST_OPEN
-    ):
-        CHORE_BUTTON_RECT = None
-        return
-
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-    button_width, button_height = int(40 * ZOOM), int(12 * ZOOM)
-    right = QUIZ_BUTTON_RECT.left - int(4 * ZOOM) if QUIZ_BUTTON_RECT else dashboard_rect.right - int(2 * ZOOM)
-    CHORE_BUTTON_RECT = pygame.Rect(
-        right - button_width,
-        dashboard_rect.bottom - button_height - int(2 * ZOOM),
-        button_width,
-        button_height,
-    )
-    pygame.draw.rect(tft_surf, SWEET_PURPLE, CHORE_BUTTON_RECT, border_radius=5)
-    pygame.draw.rect(tft_surf, DARK_GRAY, CHORE_BUTTON_RECT, width=1, border_radius=5)
-    label = FONT_SUPER_TINY.render("PUTZEN", True, BLACK)
-    tft_surf.blit(label, label.get_rect(center=CHORE_BUTTON_RECT.center))
-
-
-def handle_chore_button_click(mx, my):
-    if DISPLAY_BLANK or CHORE_LIST_OPEN:
-        # Let this tap fall through to the normal wake-display handling
-        # instead of silently swallowing it via a stale pre-blank rect.
-        return False
-    if dashboard_overlay_open():
-        return False
-    if CHORE_BUTTON_RECT and CHORE_BUTTON_RECT.collidepoint((mx, my)):
-        open_chore_list()
-        return True
-    return False
-
-
 def handle_chore_detail_click(mx, my):
     """Swallows every tap while the detail screen is open (a stray tap must
     not wake the dashboard behind it). One PATCH in flight at a time."""
@@ -5603,7 +4500,7 @@ def handle_chore_detail_click(mx, my):
     if CHORE_DETAIL_ID is None:
         return False
     CHORE_DETAIL_LAST_ACTIVITY_TS = time.time()
-    if CHORE_DETAIL_BACK_RECT and CHORE_DETAIL_BACK_RECT.collidepoint((mx, my)):
+    if any(rect and rect.collidepoint((mx, my)) for rect in (CHORE_DETAIL_BACK_RECT, CHORE_DETAIL_TITLE_X)):
         close_chore_detail("back")
         return True
     if CHORE_DETAIL_PENDING_ITEM is not None:
@@ -5815,134 +4712,34 @@ def dismiss_quiz(reason):
     logger.info(f"Quiz dismissed ({reason})")
 
 
-def draw_quiz_button():
-    """Small "AFM" pill, bottom-right corner - first-pass placement (the
-    footer/BVG-status area right above it is already tightly packed), likely
-    needs a live nudge once seen on the real touchscreen, same as the WG
-    panel and footer positions were tuned earlier."""
-    global QUIZ_BUTTON_RECT
-
-    if not QUIZ_ENABLED or QUIZ_STAGE is not None or MERZ_VISIBLE or games_open():
-        QUIZ_BUTTON_RECT = None
-        return
-
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-    button_width, button_height = int(26 * ZOOM), int(12 * ZOOM)
-    QUIZ_BUTTON_RECT = pygame.Rect(
-        dashboard_rect.right - button_width - int(2 * ZOOM),
-        dashboard_rect.bottom - button_height - int(2 * ZOOM),
-        button_width,
-        button_height,
-    )
-    pygame.draw.rect(tft_surf, GREEN, QUIZ_BUTTON_RECT, border_radius=5)
-    pygame.draw.rect(tft_surf, DARK_GRAY, QUIZ_BUTTON_RECT, width=1, border_radius=5)
-    label = FONT_SUPER_TINY.render("AFM", True, BLACK)
-    tft_surf.blit(label, label.get_rect(center=QUIZ_BUTTON_RECT.center))
-
-
-def handle_quiz_button_click(mx, my):
-    if DISPLAY_BLANK:
-        # Let this tap fall through to the normal wake-display handling
-        # instead of silently swallowing it via a stale pre-blank rect.
-        return False
-    if dashboard_overlay_open():
-        # E.g. the AFM pill under the WiFi QR's fog: this runs before the
-        # QR's tap-to-close handler and used to open the quiz under it.
-        return False
-    if QUIZ_BUTTON_RECT and QUIZ_BUTTON_RECT.collidepoint((mx, my)):
-        activate_quiz()
-        return True
-    return False
-
-
 def draw_quiz_name_stage(card):
     global QUIZ_NAME_RECTS, QUIZ_NAME_ACTION_RECTS
 
-    inner_pad = 14
-    close_size = 26
-    close_rect = pygame.Rect(card.right - close_size - 10, card.top + 10, close_size, close_size)
-    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
-    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
-    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
-    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
+    K.t95(tft_surf, "Wer bist du?", 24, (card.x + 4, card.y + 4))
+    K.t95(tft_surf, "Der AFM-Test: atzig, fotzig oder mausig?", 14, (card.x + 4, card.y + 40), color=K.F_DARK, bold=False)
+    K.textfield(tft_surf, pygame.Rect(card.x, card.y + 76, card.w, 50), QUIZ_NAME_TEXT, "Name eintippen")
+    keys = K.keyboard95(tft_surf, pygame.Rect(card.x, card.y + 140, card.w, 300),
+                        ["qwertzuiop", "asdfghjkl", "yxcvbnm"],
+                        [("Leer", "space", 0.5), ("<-", "back", 0.22), ("Löschen", "clear", 0.28)])
+    QUIZ_NAME_RECTS = [{"token": token, "rect": rect} for rect, token in keys]
 
-    title = FONT_SMALL_BOLD.render("Wer bist du?", True, BLACK)
-    title_rect = title.get_rect(midtop=(card.centerx, card.top + 14))
-    tft_surf.blit(title, title_rect)
-
-    # Skip taking the quiz entirely and just look at the results triangle -
-    # a small link rather than a full button, tap target padded out for
-    # touch even though the text itself is tiny. Positioned off title_rect's
-    # actual measured bottom (not a hardcoded offset) so it can't clash with
-    # the title regardless of font metrics/rendering differences.
-    results_link_text = FONT_SUPER_TINY.render("Nur Ergebnisse anzeigen", True, VIOLET)
-    results_link_rect = results_link_text.get_rect(midtop=(card.centerx, title_rect.bottom + 8))
-    tft_surf.blit(results_link_text, results_link_rect)
-    results_link_hitbox = results_link_rect.inflate(20, 16)
-
-    action_width = card.width - 2 * inner_pad
-    input_rect = pygame.Rect(card.left + inner_pad, results_link_hitbox.bottom + 6, action_width, 32)
-    pygame.draw.rect(tft_surf, (245, 245, 245), input_rect, border_radius=8)
-    pygame.draw.rect(tft_surf, DARK_GRAY, input_rect, width=1, border_radius=8)
-    typed = QUIZ_NAME_TEXT if QUIZ_NAME_TEXT else "Name eintippen"
-    typed_color = BLACK if QUIZ_NAME_TEXT else DARK_GRAY
-    typed_text = FONT_TINY.render(typed, True, typed_color)
-    tft_surf.blit(
-        typed_text, typed_text.get_rect(midleft=(input_rect.left + 8, input_rect.centery))
-    )
-
-    action_height = 36
-    action_y = card.bottom - action_height - inner_pad
-    keys_area_top = input_rect.bottom + 8
-    keys_area_bottom = action_y - 8
-
-    QUIZ_NAME_RECTS = []
-    keyboard_rows = ["qwertzuiop", "asdfghjkl", "yxcvbnm"]
-    key_height = max(18, int((keys_area_bottom - keys_area_top - 3 * 6) / 4))
-    row_y = keys_area_top
-    for row_chars in keyboard_rows:
-        chars = list(row_chars)
-        gap = 4
-        key_width = int((action_width - (len(chars) - 1) * gap) / len(chars))
-        for idx, char in enumerate(chars):
-            key_x = card.left + inner_pad + idx * (key_width + gap)
-            key_rect = pygame.Rect(key_x, row_y, key_width, key_height)
-            pygame.draw.rect(tft_surf, SWEET_PURPLE, key_rect, border_radius=5)
-            pygame.draw.rect(tft_surf, VIOLET, key_rect, width=1, border_radius=5)
-            key_text = FONT_SUPER_TINY.render(char, True, BLACK)
-            tft_surf.blit(key_text, key_text.get_rect(center=key_rect.center))
-            QUIZ_NAME_RECTS.append({"token": char, "rect": key_rect})
-        row_y += key_height + 6
-
-    fn_tokens = ["space", "back", "clear"]
-    gap = 6
-    fn_width = int((action_width - 2 * gap) / 3)
-    for idx, token in enumerate(fn_tokens):
-        fn_x = card.left + inner_pad + idx * (fn_width + gap)
-        fn_rect = pygame.Rect(fn_x, row_y, fn_width, key_height)
-        pygame.draw.rect(tft_surf, (230, 230, 230), fn_rect, border_radius=5)
-        pygame.draw.rect(tft_surf, DARK_GRAY, fn_rect, width=1, border_radius=5)
-        fn_text = FONT_SUPER_TINY.render(token, True, BLACK)
-        tft_surf.blit(fn_text, fn_text.get_rect(center=fn_rect.center))
-        QUIZ_NAME_RECTS.append({"token": token, "rect": fn_rect})
-
-    start_rect = pygame.Rect(card.left + inner_pad, action_y, action_width, action_height)
     # >1, not >0 - single-character names like "q" are too likely to collide
     # with someone else's (or a future guest's) real name, and since retakes
     # under an identical name now merge into one averaged entry (see
     # quiz_store.submit_quiz_result), a collision would silently blend two
     # different people's results together.
     start_enabled = len(QUIZ_NAME_TEXT.strip()) > 1
-    start_color = GREEN if start_enabled else (200, 200, 200)
-    pygame.draw.rect(tft_surf, start_color, start_rect, border_radius=10)
-    pygame.draw.rect(tft_surf, DARK_GRAY, start_rect, width=2, border_radius=10)
-    start_text = FONT_SMALL_BOLD.render("Los geht's", True, BLACK)
-    tft_surf.blit(start_text, start_text.get_rect(center=start_rect.center))
+    start_rect = K.button(tft_surf, pygame.Rect(card.x, card.y + 460, card.w, 56), "Los geht's  >", size=20, enabled=start_enabled)
+
+    # Skip taking the quiz entirely and just look at the results triangle -
+    # a link rather than a button, tap target padded out for touch.
+    link = K.t95(tft_surf, "Nur Ergebnisse anzeigen", 15, (card.x + 4, card.y + 540), color=(60, 40, 200), bold=False)
+    pygame.draw.line(tft_surf, (60, 40, 200), (link.left, link.bottom + 1), (link.right, link.bottom + 1), 1)
 
     QUIZ_NAME_ACTION_RECTS = {
-        "close": close_rect,
+        "close": QUIZ_TITLE_X,
         "start": start_rect if start_enabled else None,
-        "results_only": results_link_hitbox,
+        "results_only": link.inflate(24, 24),
     }
 
 
@@ -5987,7 +4784,7 @@ def draw_quiz_scan_stage():
         QUIZ_SCAN_HELD_SECONDS = min(QUIZ_SCAN_SECONDS, QUIZ_SCAN_HELD_SECONDS + dt)
 
     tft_surf.fill(BLACK)
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
+    dashboard_rect = pygame.Rect(0, 36, DISPLAY_WIDTH, DISPLAY_HEIGHT - 36)  # below the title bar
 
     if QUIZ_MATRIX_FONT is None:
         QUIZ_MATRIX_FONT = pygame.font.SysFont("monospace", max(8, int(12 * ZOOM)))
@@ -6115,50 +4912,33 @@ def draw_quiz_question_stage(card):
         return
 
     question = QUIZ_QUESTIONS[QUIZ_QUESTION_INDEX]
-    inner_pad = 14
-    action_width = card.width - 2 * inner_pad
+    K.progress95(tft_surf, pygame.Rect(card.x, card.y, card.w, 22), QUIZ_QUESTION_INDEX + 1, len(QUIZ_QUESTIONS))
+    K.t95(tft_surf, f"zufällig aus {len(QUIZ_QUESTION_BANK)} Fragen ausgewählt", 12, (card.x + 2, card.y + 30), color=K.F_DARK, bold=False)
 
-    progress = (
-        f"Frage {QUIZ_QUESTION_INDEX + 1}/{len(QUIZ_QUESTIONS)}"
-        f" - zufällig aus {len(QUIZ_QUESTION_BANK)} Fragen ausgewählt"
-    )
-    progress_surf = FONT_SUPER_TINY.render(progress, True, DARK_GRAY)
-    progress_rect = progress_surf.get_rect(midtop=(card.centerx, card.top + 8))
-    tft_surf.blit(progress_surf, progress_rect)
+    size = 21
+    lines = K.wrap(question["text"], size, card.w - 8)
+    while len(lines) > 4 and size > 15:
+        size -= 2
+        lines = K.wrap(question["text"], size, card.w - 8)
+    y = card.y + 56
+    for line in lines:
+        K.t95(tft_surf, line, size, (card.x + 4, y))
+        y += size + 9
 
-    question_font = FONT_SMALL_BOLD
-    question_lines = _quiz_wrap_text(question_font, question["text"], action_width)
-    question_line_h = question_font.get_height()
-    question_top = progress_rect.bottom + 6
-    for i, line in enumerate(question_lines):
-        line_surf = question_font.render(line, True, BLACK)
-        tft_surf.blit(
-            line_surf, line_surf.get_rect(midtop=(card.centerx, question_top + i * question_line_h))
-        )
-    question_bottom = question_top + len(question_lines) * question_line_h
-
-    button_area_top = question_bottom + 10
-    button_gap = 8
-    button_height = int((card.bottom - inner_pad - button_area_top - 2 * button_gap) / 3)
-    answer_font = FONT_SMALL
-    answer_line_h = answer_font.get_height()
-
+    top = max(card.y + 140, y + 10)
+    gap = 14
+    button_h = (card.bottom - top - 2 * gap) // 3
     QUIZ_ANSWER_RECTS = []
     for idx, option in enumerate(question["options"]):
-        button_rect = pygame.Rect(
-            card.left + inner_pad,
-            button_area_top + idx * (button_height + button_gap),
-            action_width,
-            button_height,
-        )
-        pygame.draw.rect(tft_surf, SWEET_PURPLE, button_rect, border_radius=10)
-        pygame.draw.rect(tft_surf, VIOLET, button_rect, width=2, border_radius=10)
-
+        rect = pygame.Rect(card.x, top + idx * (button_h + gap), card.w, button_h)
+        K.button(tft_surf, rect, "")
+        radio = (rect.x + 28, rect.centery)
+        pygame.draw.circle(tft_surf, K.F_DARK, radio, 12)
+        pygame.draw.circle(tft_surf, K.F_PAPER, radio, 10)
         if "icons" in option:
-            icon_px = min(button_rect.height - 12, 40)
+            icon_px = min(rect.height - 16, 48)
             icon_gap = 14
-            total_w = len(option["icons"]) * icon_px + (len(option["icons"]) - 1) * icon_gap
-            start_x = button_rect.centerx - total_w / 2
+            start_x = rect.x + 54
             for i, icon_key in enumerate(option["icons"]):
                 # Prefer a local-only iOS-style override (gitignored,
                 # proprietary Apple artwork - never committed) over the
@@ -6166,54 +4946,41 @@ def draw_quiz_question_stage(card):
                 icon_img = images.get(f"{icon_key}_ios") or images.get(icon_key)
                 if icon_img is None:
                     continue
-                icon_x = start_x + i * (icon_px + icon_gap)
-                icon_y = button_rect.centery - icon_px / 2
                 DrawImage(tft_surf, icon_img, size=icon_px / ZOOM).draw_absolut_position(
-                    (icon_x, icon_y)
+                    (start_x + i * (icon_px + icon_gap), rect.centery - icon_px / 2)
                 )
         else:
-            label_lines = _quiz_wrap_text(answer_font, option["label"], action_width - 16)
-            total_text_h = len(label_lines) * answer_line_h
-            text_top = button_rect.centery - total_text_h / 2
+            label_size = 17
+            label_lines = K.wrap(option["label"], label_size, rect.w - 70)
+            while len(label_lines) * (label_size + 6) > rect.h - 10 and label_size > 12:
+                label_size -= 1
+                label_lines = K.wrap(option["label"], label_size, rect.w - 70)
+            text_top = rect.centery - len(label_lines) * (label_size + 6) // 2
             for i, line in enumerate(label_lines):
-                line_surf = answer_font.render(line, True, BLACK)
-                tft_surf.blit(
-                    line_surf,
-                    line_surf.get_rect(midtop=(button_rect.centerx, text_top + i * answer_line_h)),
-                )
-
-        QUIZ_ANSWER_RECTS.append({"axis": option["axis"], "rect": button_rect})
+                K.t95(tft_surf, line, label_size, (rect.x + 54, text_top + i * (label_size + 6)))
+        QUIZ_ANSWER_RECTS.append({"axis": option["axis"], "rect": rect})
 
 
 def draw_quiz_results_stage(card):
     global QUIZ_RESULTS_ACTION_RECTS
 
     inner_pad = 10
-    close_size = 26
-    close_rect = pygame.Rect(card.right - close_size - 10, card.top + 10, close_size, close_size)
-    pygame.draw.rect(tft_surf, ORANGE, close_rect, border_radius=8)
-    pygame.draw.rect(tft_surf, YELLOW, close_rect, width=2, border_radius=8)
-    close_text = FONT_SMALL_BOLD.render("x", True, BLACK)
-    tft_surf.blit(close_text, close_text.get_rect(center=close_rect.center))
-    QUIZ_RESULTS_ACTION_RECTS = {"close": close_rect}
-
-    title_font = FONT_SMALL_BOLD
-    # Centered, so it has to clear the close button on *both* sides - it
-    # used to only reserve the right-hand side and still ran into the X.
-    title_max_width = card.width - 2 * (close_size + 10 + inner_pad)
-    title_lines = _quiz_wrap_text(title_font, "Dein Ergebnis im AFM Test", title_max_width)
-    title_line_h = title_font.get_height()
-    for i, line in enumerate(title_lines):
-        line_surf = title_font.render(line, True, BLACK)
-        tft_surf.blit(
-            line_surf, line_surf.get_rect(midtop=(card.centerx, card.top + 8 + i * title_line_h))
-        )
-    title_rect = pygame.Rect(card.left, card.top + 8, card.width, len(title_lines) * title_line_h)
+    # Bottom button row (+, -, Schließen) under the plot; the window's title
+    # bar x closes too (handle_quiz_click). Zoom buttons are bottom-left,
+    # far from the top-left emergency-exit corner (off in the quiz anyway).
+    buttons_y = card.bottom - 44
+    QUIZ_RESULTS_ACTION_RECTS = {
+        "close_button": K.button(tft_surf, pygame.Rect(card.right - 150, buttons_y, 150, 44), "Schließen", size=17)
+    }
+    K.t95(tft_surf, "Dein Ergebnis im AFM Test", 20, (card.x + 4, card.y + 2))
+    title_rect = pygame.Rect(card.left, card.top + 2, card.width, 30)
+    K.bevel(tft_surf, pygame.Rect(card.x, title_rect.bottom + 2, card.w, buttons_y - 34 - title_rect.bottom), sunken=True, face=K.F_PAPER)
+    card = pygame.Rect(card.x, card.y, card.w, buttons_y - 8 - card.y)
 
     hint_font = FONT_SUPER_TINY
     hint_lines = _quiz_wrap_text(
         hint_font,
-        "+/- zoomt, Ziehen verschiebt - Punkt halten zeigt Namen",
+        "+/- zoomt, Ziehen verschiebt, Punkt halten zeigt Namen",
         card.width - 2 * inner_pad,
     )
     hint_line_h = hint_font.get_height()
@@ -6418,20 +5185,12 @@ def draw_quiz_results_stage(card):
     # corner (EMERGENCY_EXIT_MAX_X/Y), and tapping "+" 5 times quit the app.
     # "+" zooms around the current view center, "-" steps back out. Big
     # enough to hit reliably on the touchscreen.
-    zoom_size = 44
-    zoom_in_rect = pygame.Rect(plot_rect.right - 6 - zoom_size, plot_rect.top + 4, zoom_size, zoom_size)
-    zoom_out_rect = pygame.Rect(zoom_in_rect.left, zoom_in_rect.bottom + 6, zoom_size, zoom_size)
-    for rect, symbol, enabled in (
-        (zoom_in_rect, "+", zoom < QUIZ_RESULTS_ZOOM_MAX),
-        (zoom_out_rect, "-", zoom > 1.0),
-    ):
-        pygame.draw.rect(tft_surf, SWEET_PURPLE if enabled else (210, 210, 210), rect, border_radius=8)
-        pygame.draw.rect(tft_surf, VIOLET, rect, width=2, border_radius=8)
-        symbol_surf = FONT_BIG_BOLD.render(symbol, True, BLACK)
-        tft_surf.blit(symbol_surf, symbol_surf.get_rect(center=rect.center))
+    zoom_in_rect = pygame.Rect(card.left, buttons_y, 52, 44)
+    zoom_out_rect = pygame.Rect(zoom_in_rect.right + 8, buttons_y, 52, 44)
+    K.button(tft_surf, zoom_in_rect, "+", size=22, enabled=zoom < QUIZ_RESULTS_ZOOM_MAX)
+    K.button(tft_surf, zoom_out_rect, "-", size=22, enabled=zoom > 1.0)
     if zoom > 1.0:
-        zoom_label = FONT_SUPER_TINY.render(f"{zoom:g}x", True, DARK_GRAY)
-        tft_surf.blit(zoom_label, zoom_label.get_rect(midtop=(zoom_out_rect.centerx, zoom_out_rect.bottom + 3)))
+        K.t95(tft_surf, f"{zoom:g}x", 15, (zoom_out_rect.right + 10, zoom_out_rect.centery), color=K.F_DARK, anchor="midleft")
     QUIZ_RESULTS_ACTION_RECTS["zoom_in"] = zoom_in_rect
     QUIZ_RESULTS_ACTION_RECTS["zoom_out"] = zoom_out_rect
 
@@ -6442,29 +5201,32 @@ def draw_quiz_results_stage(card):
         )
 
 
+QUIZ_TITLE_X = None
+
+
 def draw_quiz_overlay():
+    """afm-test.exe: name / question / results in a fullscreen KiezOS window;
+    the scan stage keeps its matrix look, below a title bar."""
+    global QUIZ_TITLE_X
     if QUIZ_STAGE is None:
         return
 
     if QUIZ_STAGE == "scan":
         draw_quiz_scan_stage()
+        QUIZ_TITLE_X = K.game_title(tft_surf, "afm-test.exe - Biometrischer Scan", "quiz")
         return
 
-    fog = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT), pygame.SRCALPHA)
-    fog.fill((0, 0, 0, 170))
-    tft_surf.blit(fog, (0, 0))
-
-    dashboard_rect = pygame.Rect(FIT_SCREEN[0], FIT_SCREEN[1], SURFACE_WIDTH, SURFACE_HEIGHT)
-    margin_x = int(dashboard_rect.width * 0.08)
-    margin_y = int(dashboard_rect.height * 0.06)
-    card = pygame.Rect(
-        dashboard_rect.left + margin_x,
-        dashboard_rect.top + margin_y,
-        dashboard_rect.width - 2 * margin_x,
-        dashboard_rect.height - 2 * margin_y,
-    )
-    pygame.draw.rect(tft_surf, WHITE, card, border_radius=16)
-    pygame.draw.rect(tft_surf, DARK_GRAY, card, width=2, border_radius=16)
+    tft_surf.blit(K.desktop(), (0, 0))
+    frame = pygame.Rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT - 40)
+    if QUIZ_STAGE == "name":
+        title = "afm-test.exe - Wer bist du?"
+    elif QUIZ_STAGE == "question":
+        title = f"afm-test.exe - Frage {min(QUIZ_QUESTION_INDEX + 1, len(QUIZ_QUESTIONS))}/{len(QUIZ_QUESTIONS)}"
+    else:
+        title = "afm-test.exe - Ergebnis"
+    card = K.window(tft_surf, frame, title, icon="quiz")
+    QUIZ_TITLE_X = K.title_buttons(frame)["x"]
+    K.taskbar(tft_surf, datetime.datetime.now(), _weather_kind(), tasks=[("quiz", "afm-test.exe")])
 
     if QUIZ_STAGE == "name":
         draw_quiz_name_stage(card)
@@ -6482,6 +5244,10 @@ def handle_quiz_click(mx, my):
 
     QUIZ_LAST_ACTIVITY_TS = time.time()
 
+    if QUIZ_TITLE_X and QUIZ_TITLE_X.collidepoint((mx, my)):
+        dismiss_quiz("close-button")
+        return True
+
     if QUIZ_STAGE == "scan":
         if QUIZ_SCAN_THUMB_CENTER is not None:
             cx, cy = QUIZ_SCAN_THUMB_CENTER
@@ -6490,7 +5256,7 @@ def handle_quiz_click(mx, my):
         return True  # swallow all other taps - not skippable, only holdable
 
     if QUIZ_STAGE == "results":
-        close_rect = QUIZ_RESULTS_ACTION_RECTS.get("close")
+        close_rect = QUIZ_RESULTS_ACTION_RECTS.get("close_button")
         if close_rect and close_rect.collidepoint((mx, my)):
             dismiss_quiz("close-button")
             return True
@@ -6551,12 +5317,871 @@ def handle_quiz_click(mx, my):
     return True
 
 
+# ---------------------------------------------------------------- KiezOS 161 home
+# The awake dashboard is a purple 90s desktop (drawing helpers in kiezos.py):
+# uhr.exe, wetter.exe, bvg.exe and wg.txt windows, a taskbar with a Start
+# menu that holds everything else (games, AFM quiz, Putzdienste, WLAN QR,
+# Stimmung & Stats, the Herunterfahren gag). The windows' x / o / _ title
+# buttons do dadaist things; o (or a double-tap on the title bar) opens the
+# window's detail view.
+
+WIN_UHR = pygame.Rect(8, 8, 464, 176)
+WIN_WETTER = pygame.Rect(8, 190, 464, 156)
+WIN_BVG = pygame.Rect(8, 352, 464, 296)
+WIN_WG = pygame.Rect(8, 654, 464, 100)
+HOME_WINDOWS = {"uhr": WIN_UHR, "wetter": WIN_WETTER, "bvg": WIN_BVG, "wg": WIN_WG}
+HOME_WINDOW_TITLES = {"uhr": "uhr.exe", "wetter": "wetter.exe", "bvg": "bvg.exe", "wg": "wg.txt"}
+HOME_WINDOW_ICONS = {"uhr": "clock", "wetter": "weather", "bvg": "bus", "wg": "note"}
+
+START_MENU_OPEN = False
+START_SUBMENU_OPEN = False
+START_MENU_RECTS = []  # [(rect, action)] from the last draw, submenu entries first
+START_BUTTON_RECT = None
+HOME_RECTS = {}  # "mehr", "karte" -> rect from the last home draw
+HOME_WINDOW = None  # fullscreen detail view: "wetter" | "karte" | "clock"
+HOME_WINDOW_RECTS = {}  # "back", "x", "o", "_" of the open detail view
+HOME_WINDOW_LAST_ACTIVITY_TS = 0.0
+HOME_WINDOW_IDLE_TIMEOUT_SECONDS = 60
+DADA = None  # {"kind": ..., "opened_at": ts} - a title-button x message box
+DADA_BUTTON_RECTS = []  # [(rect, label)]
+DADA_AUTO_CLOSE_SECONDS = 20
+SEV_UNTIL = 0.0  # bvg.exe's x: sev.exe replaces the window until then
+SEV_SECONDS = 4.0
+MINIMIZED = {}  # window -> ts it pops back up ("_": "Bin gleich wieder da.")
+MINIMIZED_SECONDS = 3.0
+TITLE_TAP = (None, 0.0)  # (window, ts) of the last single title-bar tap
+TITLE_DOUBLE_TAP_SECONDS = 0.6
+SHUTDOWN_VISIBLE = False
+SHUTDOWN_OPENED_AT = 0.0
+SHUTDOWN_AUTO_CLOSE_SECONDS = 15
+HOME_CACHE = None  # the static part of the home screen, rebuilt every 2 s
+HOME_CACHE_KEY = None
+
+# Rain forecast for "Regen ab ..." + the 12 h chart: Open-Meteo's hourly
+# precipitation_probability (free, no key) - Weatherbit's free tier has no
+# hourly forecast within its daily call budget.
+RAIN_FORECAST = None  # {"time": ["YYYY-MM-DDTHH:MM", ...], "prob": [...], "fetched_at": ts}
+RAIN_REFRESH_SECONDS = 20 * 60
+
+# PIR-wake surprises: 1 in EGGS_ONE_IN motion wakes shows one of these
+# (never the same twice in a row) instead of the plain dashboard; a tap or
+# EGG_SECONDS closes it and the emotion prompt (if due) comes after.
+EGGS_CONFIG = config.get("EGGS", {})
+EGGS_ENABLED = EGGS_CONFIG.get("ENABLED", False)
+EGGS_ONE_IN = max(1, int(EGGS_CONFIG.get("ONE_IN", 15)))
+EGG_SECONDS = 10.0
+EGG_KINDS = ["assistant", "peek", "bluescreen0", "bluescreen1", "bluescreen2", "update"]
+EGG = None
+EGG_LAST = None
+EGG_UNTIL = 0.0
+EGG_RECTS = {}
+
+BLUESCREENS = [
+    ["Ein schwerwiegender Ausnahme-", "fehler 0E ist bei 0028:C0FFEE", "im Kühlschrank aufgetreten.", "",
+     "* Einmal tippen, um den", "  Joghurt zu entsorgen.", "* Zweimal tippen, um die", "  WG neu zu starten."],
+    ["SPUELMASCHINE.SYS hat einen", "Fehler verursacht: Geschirr", "seit 3 Tagen nicht ausgeräumt.", "",
+     "* Tippen, um es jemand anderem", "  zuzuschieben.", "* Oder einfach selbst machen", "  (nicht empfohlen)."],
+    ["MERZ.EXE reagiert nicht.", "", "Das Programm ist es einfach", "leid und hat sich beendet.", "",
+     "* Tippen zum Wegtreten.", "* Nörgeln wird protokolliert."],
+]
+
+DADA_BOXES = {
+    "x_uhr": ("uhr.exe", "clock", ["Wollen Sie die Zeit", "wirklich beenden?"], ["Ja", "Auch ja"], False),
+    "x_uhr_2": ("uhr.exe", "clock", ["Die Zeit läuft weiter."], ["OK"], False),
+    "x_wetter": ("wetter.exe", "weather", ["Das Wetter kann nicht", "geschlossen werden.", "", "Bitte öffnen Sie ein Fenster."], ["OK"], False),
+    "x_wg": ("wg.txt", "note", ["Willst du die WG", "wirklich beenden? :(("], ["Ja, ich zieh aus", "Nein!"], True),
+    "x_wg_2": ("wg.txt", "note", ["Kündigungsfrist: 3 Monate.", "Der Putzplan gilt bis dahin", "weiter."], ["Mist"], False),
+}
+# message box -> {button label: next message box (None = close)}
+DADA_NEXT = {
+    "x_uhr": {"Ja": "x_uhr_2", "Auch ja": "x_uhr_2"},
+    "x_wg": {"Ja, ich zieh aus": "x_wg_2"},
+}
+
+
+def _update_rain_forecast(lat, lon):
+    global RAIN_FORECAST
+    try:
+        response = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "timezone": "auto",
+                "hourly": "precipitation_probability",
+                "forecast_hours": 14,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        hourly = response.json()["hourly"]
+        RAIN_FORECAST = {
+            "time": hourly["time"],
+            "prob": [p or 0 for p in hourly["precipitation_probability"]],
+            "fetched_at": time.time(),
+        }
+        logger.info("Open-Meteo rain forecast updated")
+    except (requests.RequestException, KeyError, ValueError) as rain_ex:
+        logger.warning(f"Open-Meteo rain forecast failed: {rain_ex}")
+
+
+def _rain_view(now):
+    """(hours, probs) for the next 12 full hours from the current one."""
+    if not RAIN_FORECAST:
+        return [], []
+    this_hour = now.replace(minute=0, second=0, microsecond=0)
+    hours, probs = [], []
+    for stamp, prob in zip(RAIN_FORECAST["time"], RAIN_FORECAST["prob"]):
+        if datetime.datetime.fromisoformat(stamp) >= this_hour:
+            hours.append(int(stamp[11:13]))
+            probs.append(prob)
+    return hours[:12], probs[:12]
+
+
+def _weather_now():
+    """(current, daily) from the last Weatherbit data, or (None, [])."""
+    if not WEATHER_JSON_DATA:
+        return None, []
+    return WEATHER_JSON_DATA["current"]["data"][0], WEATHER_JSON_DATA["daily"]["data"]
+
+
+def _weather_kind():
+    current, _ = _weather_now()
+    if current is None:
+        return None
+    return K.kind_of(current["weather"]["code"], current.get("pod", "d"))
+
+
+def _bvg_rows_view(now):
+    """One dict per configured BVG row: line, icon, label, landmark and the
+    next 3 departures as minutes from now (delay included) + their delays."""
+    info = BVG_STOP_INFORMATION
+    rows = []
+    for spec in BVG_ROWS:
+        deps = []
+        if isinstance(info, pd.DataFrame) and len(info) and "row_id" in info.columns:
+            for _, dep in info[info["row_id"] == spec["id"]].iterrows():
+                if dep.get("cancelled", False):
+                    continue
+                hh, mm = map(int, dep["departure"].split(":"))
+                planned = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                if (planned - now).total_seconds() > 12 * 3600:  # across midnight
+                    planned -= datetime.timedelta(days=1)
+                elif (now - planned).total_seconds() > 12 * 3600:
+                    planned += datetime.timedelta(days=1)
+                delay = int(dep["delay"])
+                mins = math.floor((planned + datetime.timedelta(minutes=delay) - now).total_seconds() / 60)
+                if mins >= 0:
+                    deps.append((mins, delay))
+        deps = sorted(deps)[:3]
+        rows.append({
+            "id": spec["id"],
+            "line": spec["line"],
+            "icon": spec.get("icon", "up"),
+            "label": spec.get("label", spec["line"]),
+            "landmark": spec.get("landmark", "bus"),
+            "mins": [m for m, _ in deps],
+            "delays": [d for _, d in deps],
+        })
+    return rows
+
+
+def _moabeats_wg_lines():
+    """wg.txt lines: [(prefix, content)] for TUN / KAUFEN / BESUCH (only the
+    non-empty ones), or [("", idle message)] when there's nothing."""
+    if not config.get("MOABEATS", {}).get("ENABLED", False):
+        return [("", "Ju likes you. Have a nice day!")]
+
+    with MOABEATS_STATUS_LOCK:
+        status = dict(MOABEATS_STATUS)
+
+    # Sanity caps against a pathological API response (e.g. 30 overdue chores
+    # at once) - overflow itself is handled by scrolling (_draw_wg_line).
+    todo_items = []
+    for chore in status.get("overdue_chores", [])[:10]:
+        label = chore["name"]
+        if chore.get("assigned_to"):
+            label += f" ({chore['assigned_to']})"
+        todo_items.append(label)
+
+    shopping_items = [item["name"] for item in status.get("shopping", [])]  # API already caps at 3
+
+    visit_items = []
+    for visit in status.get("visits", [])[:10]:
+        start_date = _format_visit_date(visit["start"])
+        end_date = _format_visit_date(visit["end"])
+        label = visit["guest"]
+        if visit.get("hosts"):
+            label += f" bei {visit['hosts'][0]}"
+        if visit["end"] == visit["start"]:
+            label += f" am {start_date}"
+        else:
+            label += f" von {start_date} bis {end_date}"
+        visit_items.append(label)
+
+    lines = []
+    if todo_items:
+        lines.append(("TUN: ", ", ".join(todo_items)))
+    if shopping_items:
+        lines.append(("KAUFEN: ", ", ".join(shopping_items)))
+    if visit_items:
+        lines.append(("BESUCH: ", ", ".join(visit_items)))
+    if lines:
+        return lines
+
+    idle_messages = [
+        "WG läuft. Alles gut.",
+        "Nichts zu tun, schön!",
+        "Sauber, entspannt, kein Stress.",
+        "Alles erledigt. Hörmi ist stolz.",
+    ]
+    day_hash = hashlib.md5(datetime.datetime.now().strftime("%Y-%m-%d").encode()).hexdigest()
+    return [("", idle_messages[int(day_hash, 16) % len(idle_messages)])]
+
+
+def _draw_wg_line(prefix, content, y, x_left, max_width):
+    """One wg.txt line: the "TUN: "-style prefix stays put, only the content
+    after it scrolls (clipped) when it's wider than the window, so nothing is
+    ever permanently hidden - see _moabeats_scroll_offset()."""
+    f = K.font(14, False)
+    prefix_rect = K.t95(tft_surf, prefix, 14, (x_left, y), bold=False) if prefix else pygame.Rect(x_left, y, 0, 0)
+    content_x = x_left + prefix_rect.width
+    content_max_width = max_width - prefix_rect.width
+    content_width = f.size(content)[0]
+    if content_width <= content_max_width:
+        K.t95(tft_surf, content, 14, (content_x, y), bold=False)
+        return
+    offset = _moabeats_scroll_offset(content_width - content_max_width)
+    previous_clip = tft_surf.get_clip()
+    tft_surf.set_clip(pygame.Rect(content_x, y - 2, content_max_width, 22))
+    K.t95(tft_surf, content, 14, (content_x - offset, y), bold=False)
+    tft_surf.set_clip(previous_clip)
+
+
+def _home_tasks():
+    return [(HOME_WINDOW_ICONS[name], HOME_WINDOW_TITLES[name]) for name in MINIMIZED]
+
+
+def _draw_home_static(surf, now):
+    """Everything on the home screen except the clock colon and the wg.txt
+    lines (those change every frame); also fills HOME_RECTS."""
+    global HOME_RECTS, START_BUTTON_RECT
+    surf.blit(K.desktop(), (0, 0))
+    rects = {}
+
+    if "uhr" not in MINIMIZED:
+        inner = K.window(surf, WIN_UHR, f"uhr.exe - {K.WD_SHORT[now.weekday()]} {now.strftime('%d.%m.%Y')}", icon="clock")
+        K.bevel(surf, inner, sunken=True, face=(16, 6, 24))
+        x0 = inner.x + 26
+        for i, ch in enumerate(now.strftime("%H%M")):
+            K.seven_seg(surf, ch, x0 + i * 100 + (30 if i >= 2 else 0), inner.y + 14, 70, inner.h - 28)
+
+    if "wetter" not in MINIMIZED:
+        inner = K.window(surf, WIN_WETTER, "wetter.exe", icon="weather")
+        current, daily = _weather_now()
+        if current is None:
+            K.t95(surf, "Wetter lädt...", 18, (inner.x + 8, inner.y + 8))
+        else:
+            kind = _weather_kind()
+            unit = "°C" if METRIC else "°F"
+            surf.blit(K.weather_icon(kind, 96), (inner.x + 2, inner.y + 4))
+            K.t95(surf, f"{round(current['temp'])}{unit}", 40, (inner.x + 108, inner.y - 2))
+            K.t95(surf, K.QUIRKY_DESC[kind], 15, (inner.x + 110, inner.y + 50), bold=False)
+            today = daily[0]
+            K.t95(surf, f"{round(today['min_temp'])}° bis {round(today['max_temp'])}°", 15, (inner.x + 110, inner.y + 72), color=K.F_DARK, bold=False)
+        hours, probs = _rain_view(now)
+        graph = pygame.Rect(inner.right - 160, inner.y + 2, 158, 78)
+        K.rain_chart(surf, graph, hours, probs)
+        K.t95(surf, "Regen 12h", 12, (graph.x + 6, graph.y + 3), color=K.F_DARK, bold=False)
+        msg, wet = K.rain_summary(hours, probs)
+        K.t95(surf, msg, 15, (inner.x + 4, inner.bottom - 22), color=K.F_ACCENT if wet else K.F_INK)
+        rects["mehr"] = K.button(surf, pygame.Rect(inner.right - 110, inner.bottom - 30, 108, 30), "Mehr...")
+
+    if "bvg" not in MINIMIZED:
+        if time.time() < SEV_UNTIL:
+            _draw_sev(surf, WIN_BVG)
+        else:
+            rects.update(_draw_bvg_window(surf, now))
+
+    if "wg" not in MINIMIZED:
+        inner = K.window(surf, WIN_WG, "wg.txt - Editor", icon="note")
+        K.bevel(surf, inner, sunken=True, face=K.F_PAPER)
+
+    for name in MINIMIZED:
+        _draw_minimized_note(surf, HOME_WINDOWS[name])
+
+    START_BUTTON_RECT = K.taskbar(surf, now, _weather_kind(), start_pressed=START_MENU_OPEN, tasks=_home_tasks())
+    HOME_RECTS = rects
+
+
+def _draw_bvg_window(surf, now):
+    inner = K.window(surf, WIN_BVG, "bvg.exe", icon="bus")
+    lv = pygame.Rect(inner.x, inner.y, inner.w, inner.h - 38)
+    K.bevel(surf, lv, sunken=True, face=K.F_PAPER)
+    hx = [lv.x + 2, lv.x + 120, lv.x + 300, lv.right - 2]
+    for i, label in enumerate(["Linie", "Richtung", "Abfahrt"]):
+        b = pygame.Rect(hx[i], lv.y + 2, hx[i + 1] - hx[i], 22)
+        K.bevel(surf, b)
+        K.t95(surf, label, 13, (b.x + 6, b.y + 3))
+    rows = _bvg_rows_view(now)
+    row_h = min(46, (lv.h - 28) // max(1, len(rows)))
+    soonest = min(range(len(rows)), key=lambda i: rows[i]["mins"][0] if rows[i]["mins"] else 999) if rows else None
+    y = lv.y + 26
+    for i, row in enumerate(rows):
+        rr = pygame.Rect(lv.x + 2, y, lv.w - 4, row_h)
+        if i == soonest and row["mins"]:  # "selected" row = next bus overall
+            pygame.draw.rect(surf, (226, 214, 250), rr)
+            pygame.draw.rect(surf, K.F_SEL, rr, 1)
+        surf.blit(K.arrow_icon(row["icon"], 22, (120, 70, 200)), (rr.x + 4, rr.centery - 11))
+        K.line_badge(surf, row["line"], (rr.x + 34, rr.centery - 13), size=16)
+        surf.blit(K.landmark_icon(row["landmark"], 42), (hx[1] + 2, rr.centery - 21))
+        K.t95(surf, row["label"], K.fit_size(row["label"], hx[2] - hx[1] - 54, sizes=(16, 14, 12)), (hx[1] + 50, rr.centery - 10))
+        first, rest = K.mins_text(row["mins"])
+        color = K.due_color(row["delays"][0]) if row["mins"] else K.F_DARK
+        K.t95(surf, first, 18, (hx[2] + 6, rr.y + 3), color=color)
+        if rest:
+            K.t95(surf, f"dann {rest}", 13, (hx[2] + 6, rr.y + 26), color=K.F_DARK, bold=False)
+        y += row_h
+    status = pygame.Rect(inner.x, inner.bottom - 32, 250, 30)
+    K.bevel(surf, status, sunken=True)
+    if UPDATED_BVG_TIME:
+        stand = f"Stand {convert_timestamp(UPDATED_BVG_TIME, '%H:%M:%S')}"
+    else:
+        stand = "Keine Verbindung zur BVG"
+    K.t95(surf, stand, 13, (status.x + 8, status.centery), color=K.F_DARK, bold=False, anchor="midleft")
+    rects = {}
+    if BVG_MAP:
+        kb = pygame.Rect(inner.right - 126, inner.bottom - 32, 126, 32)
+        K.bevel(surf, kb)
+        surf.blit(K.menu_icon("map", 20), (kb.x + 8, kb.y + 6))
+        K.t95(surf, "Karte...", 15, (kb.x + 34, kb.centery), anchor="midleft")
+        rects["karte"] = kb
+    return rects
+
+
+def _draw_sev(surf, rect):
+    """bvg.exe's x: the window gets replaced by sev.exe for a few seconds."""
+    inner = K.window(surf, rect, "sev.exe", icon="bus")
+    K.t95(surf, "bvg.exe wurde durch", 17, (inner.x + 8, inner.y + 10))
+    K.t95(surf, "Schienenersatzverkehr", 17, (inner.x + 8, inner.y + 34), color=K.F_ACCENT)
+    K.t95(surf, "ersetzt.", 17, (inner.x + 8, inner.y + 58))
+    K.t95(surf, "Ersatzbusse werden gesucht...", 14, (inner.x + 8, inner.y + 110), color=K.F_DARK, bold=False)
+    done = min(10, int((time.time() - (SEV_UNTIL - SEV_SECONDS)) / SEV_SECONDS * 10) + 1)
+    K.progress95(surf, pygame.Rect(inner.x + 8, inner.y + 134, inner.w - 16, 24), done, 12)
+    K.t95(surf, "Verbleibende Zeit: ca. 2 Jahre", 14, (inner.x + 8, inner.y + 170), color=K.F_DARK, bold=False)
+    surf.blit(K.menu_icon("bus", 64), (inner.right - 74, inner.y + 8))
+
+
+def _draw_minimized_note(surf, rect):
+    """A window's _: it drops into the taskbar and leaves a note until it pops back."""
+    surf.blit(K.desktop(), rect, rect)
+    note = pygame.Rect(rect.centerx - 110, rect.y + min(20, max(4, (rect.h - 110) // 2)), 220, min(110, rect.h - 8))
+    pygame.draw.rect(surf, K.SHADOW, note.move(5, 5))
+    pygame.draw.rect(surf, (255, 236, 120), note)
+    pygame.draw.polygon(surf, (230, 205, 80), [(note.right - 24, note.bottom), (note.right, note.bottom - 24), (note.right, note.bottom)])
+    pygame.draw.rect(surf, K.PINK, (note.centerx - 30, note.y - 6, 60, 14))  # tape
+    K.t95(surf, "Bin gleich", 22, (note.centerx, note.centery - 14), anchor="center")
+    K.t95(surf, "wieder da.", 22, (note.centerx, note.centery + 16), anchor="center")
+
+
+def _kiez_fullscreen_open():
+    """Something that covers the whole home screen is open, so there's no
+    point drawing the home screen underneath it."""
+    return (
+        MERZ_VISIBLE
+        or ACTIVE_GAME is not None
+        or QUIZ_STAGE is not None
+        or CHORE_LIST_OPEN
+        or SHUTDOWN_VISIBLE
+        or HOME_WINDOW is not None
+        or (EGG is not None and EGG not in ("assistant", "peek", "hilfe"))
+    )
+
+
+def draw_home():
+    """The awake KiezOS desktop: cached static part (rebuilt every 2 s or
+    when its layout changes), then the blinking clock colon and the
+    (scrolling) wg.txt lines, then the Start menu and dada message boxes.
+    Fullscreen views (wetter/karte/clock detail) replace it entirely."""
+    global HOME_CACHE, HOME_CACHE_KEY
+    now = datetime.datetime.now()
+    if HOME_WINDOW is not None:
+        draw_home_window(now)
+        return
+    if _kiez_fullscreen_open():
+        return
+
+    key = (int(time.time() // 2), tuple(MINIMIZED), time.time() < SEV_UNTIL, START_MENU_OPEN)
+    if HOME_CACHE is None or key != HOME_CACHE_KEY:
+        if HOME_CACHE is None:
+            HOME_CACHE = pygame.Surface((DISPLAY_WIDTH, DISPLAY_HEIGHT))
+        _draw_home_static(HOME_CACHE, now)
+        HOME_CACHE_KEY = key
+    tft_surf.blit(HOME_CACHE, (0, 0))
+
+    if "uhr" not in MINIMIZED:
+        # 1 Hz blinking colon, like an old LED alarm clock
+        colon_on = int(time.time() * 2) % 2 == 0
+        inner = pygame.Rect(WIN_UHR.x + 8, WIN_UHR.y + 36, WIN_UHR.w - 16, WIN_UHR.h - 42)
+        cx = inner.x + 26 + 2 * 100 + 4
+        for cy in (inner.y + inner.h // 3, inner.y + 2 * inner.h // 3):
+            pygame.draw.rect(tft_surf, K.CLOCK_ON if colon_on else K.CLOCK_OFF, (cx, cy - 5, 10, 10))
+
+    if "wg" not in MINIMIZED:
+        inner = pygame.Rect(WIN_WG.x + 8, WIN_WG.y + 36, WIN_WG.w - 16, WIN_WG.h - 42)
+        previous_clip = tft_surf.get_clip()
+        tft_surf.set_clip(inner.inflate(-4, -4))
+        for index, (prefix, content) in enumerate(_moabeats_wg_lines()[:3]):
+            _draw_wg_line(prefix, content, inner.y + 3 + index * 18, inner.x + 8, inner.w - 16)
+        tft_surf.set_clip(previous_clip)
+
+    if START_MENU_OPEN:
+        draw_start_menu()
+    if DADA is not None:
+        draw_dada()
+
+
+def _start_menu_items():
+    items = []
+    if GAMES_ENABLED:
+        items.append(("games", "Spiele", "games_sub"))
+    if QUIZ_ENABLED:
+        items.append(("quiz", "AFM-Quiz", "quiz"))
+    if config.get("MOABEATS", {}).get("ENABLED", False):
+        items.append(("broom", "Putzdienste", "putz"))
+    if WIFI_ENABLED:
+        items.append(("wifi", "WLAN-Zugang", "wifi"))
+    items.append(("stats", "Stimmung & Stats", "stats"))
+    items.append((None, None, None))
+    items.append(("power", "Herunterfahren...", "shutdown"))
+    return items
+
+
+def draw_start_menu():
+    global START_MENU_RECTS
+    items = _start_menu_items()
+    height = 12 + sum(9 if icon is None else 46 for icon, _, _ in items)
+    menu = pygame.Rect(4, DISPLAY_HEIGHT - 38 - height, 254, height)
+    K.bevel(tft_surf, menu)
+    side = pygame.Rect(menu.x + 3, menu.y + 3, 30, menu.h - 6)
+    for i in range(side.h):  # vertical gradient banner
+        t = i / side.h
+        pygame.draw.line(tft_surf, (int(150 - 90 * t), int(80 - 56 * t), int(210 - 90 * t)), (side.x, side.y + i), (side.right - 1, side.y + i))
+    vt = pygame.transform.rotate(K.font(18).render("KiezOS 161", False, (255, 255, 255)), 90)
+    tft_surf.blit(vt, vt.get_rect(midbottom=(side.centerx, side.bottom - 8)))
+
+    rects = []
+    games_row = None
+    iy = menu.y + 6
+    for icon, label, action in items:
+        if icon is None:
+            pygame.draw.line(tft_surf, K.F_DARK, (side.right + 6, iy + 3), (menu.right - 6, iy + 3))
+            pygame.draw.line(tft_surf, K.F_LIGHT, (side.right + 6, iy + 4), (menu.right - 6, iy + 4))
+            iy += 9
+            continue
+        r = pygame.Rect(side.right + 4, iy, menu.right - side.right - 9, 44)
+        selected = action == "games_sub" and START_SUBMENU_OPEN
+        if selected:
+            pygame.draw.rect(tft_surf, K.F_SEL, r)
+            games_row = r
+        tft_surf.blit(K.menu_icon(icon, 32), (r.x + 4, r.y + 6))
+        color = (255, 255, 255) if selected else K.F_INK
+        K.t95(tft_surf, label, 16, (r.x + 44, r.y + 12), color=color)
+        if action == "games_sub":
+            pygame.draw.polygon(tft_surf, color, [(r.right - 14, r.y + 15), (r.right - 7, r.y + 22), (r.right - 14, r.y + 29)])
+        rects.append((r.inflate(0, 2), action))
+        iy += 46
+
+    submenu = []
+    if START_SUBMENU_OPEN and games_row is not None:
+        entries = [(game.NAME, "stack" if game is party_games.StackGame else "bus", game.NAME) for game in party_games.GAMES]
+        entries.append(("merz", "merz", "MERZ"))
+        sm = pygame.Rect(menu.right - 4, games_row.y - 4, 216, len(entries) * 46 + 10)
+        K.bevel(tft_surf, sm)
+        for j, (key, icon, label) in enumerate(entries):
+            r = pygame.Rect(sm.x + 4, sm.y + 5 + j * 46, sm.w - 8, 44)
+            tft_surf.blit(K.menu_icon(icon, 32), (r.x + 4, r.y + 6))
+            K.t95(tft_surf, label, 16, (r.x + 44, r.y + 12))
+            submenu.append((r, f"game:{key}"))
+    START_MENU_RECTS = submenu + rects
+
+
+def close_start_menu():
+    global START_MENU_OPEN, START_SUBMENU_OPEN, START_MENU_RECTS
+    START_MENU_OPEN = False
+    START_SUBMENU_OPEN = False
+    START_MENU_RECTS = []
+
+
+def _start_menu_action(action):
+    global START_SUBMENU_OPEN, WIFI_QR_VISIBLE, WIFI_QR_OPENED_AT
+    global EMOTION_RESULTS_VISIBLE, EMOLOG_QR_OPENED_AT, SHUTDOWN_VISIBLE, SHUTDOWN_OPENED_AT
+    logger.info(f"Start menu: {action}")
+    if action == "games_sub":
+        START_SUBMENU_OPEN = not START_SUBMENU_OPEN
+        return
+    close_start_menu()
+    if action.startswith("game:"):
+        start_game(action[len("game:"):])
+    elif action == "quiz":
+        activate_quiz()
+    elif action == "putz":
+        open_chore_list()
+    elif action == "wifi":
+        WIFI_QR_VISIBLE = True
+        WIFI_QR_OPENED_AT = time.time()
+    elif action == "stats":
+        EMOTION_RESULTS_VISIBLE = True
+        EMOLOG_QR_OPENED_AT = time.time()
+    elif action == "shutdown":
+        SHUTDOWN_VISIBLE = True
+        SHUTDOWN_OPENED_AT = time.time()
+
+
+def open_home_window(name):
+    global HOME_WINDOW, HOME_WINDOW_LAST_ACTIVITY_TS
+    if name == "karte" and not BVG_MAP:
+        return
+    HOME_WINDOW = name
+    HOME_WINDOW_LAST_ACTIVITY_TS = time.time()
+    logger.info(f"Home window opened: {name}")
+
+
+def close_home_window(reason):
+    global HOME_WINDOW, HOME_WINDOW_RECTS
+    if HOME_WINDOW is None:
+        return
+    logger.info(f"Home window {HOME_WINDOW} closed ({reason})")
+    HOME_WINDOW = None
+    HOME_WINDOW_RECTS = {}
+
+
+def draw_home_window(now):
+    """Fullscreen detail views: wetter.exe - Details, karte.exe, uhr.exe maximised."""
+    global HOME_WINDOW_RECTS
+    tft_surf.blit(K.desktop(), (0, 0))
+    frame = pygame.Rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT - 40)
+    rects = dict(K.title_buttons(frame))
+    if HOME_WINDOW == "wetter":
+        inner = K.window(tft_surf, frame, "wetter.exe - Details", icon="weather")
+        _draw_weather_details(inner, now)
+        rects["back"] = K.button(tft_surf, pygame.Rect(inner.right - 122, inner.bottom - 36, 122, 36), "< Zurück", size=16)
+        K.t95(tft_surf, "Quelle: Weatherbit + Open-Meteo", 11, (inner.x + 4, inner.bottom - 18), color=K.F_DARK, bold=False, anchor="midleft")
+        tasks = [("weather", "wetter.exe")]
+    elif HOME_WINDOW == "karte":
+        inner = K.window(tft_surf, frame, "karte.exe - Kiez", icon="map")
+        mb = pygame.Rect(inner.x, inner.y - 2, inner.w, 22)
+        for item, x in zip(["Datei", "Ansicht", "Busse", "?"], [0, 56, 130, 192]):
+            K.t95(tft_surf, item, 14, (mb.x + 6 + x, mb.y + 2), bold=False)
+        area = pygame.Rect(inner.x, mb.bottom + 2, inner.w, inner.h - 60)
+        K.draw_map(tft_surf, area, BVG_MAP, {row["id"]: row for row in _bvg_rows_view(now)})
+        status = pygame.Rect(inner.x, inner.bottom - 34, inner.w - 130, 32)
+        K.bevel(tft_surf, status, sunken=True)
+        stand = f"Stand {convert_timestamp(UPDATED_BVG_TIME, '%H:%M:%S')}" if UPDATED_BVG_TIME else "Keine Verbindung zur BVG"
+        K.t95(tft_surf, stand, 13, (status.x + 8, status.centery), color=K.F_DARK, bold=False, anchor="midleft")
+        rects["back"] = K.button(tft_surf, pygame.Rect(inner.right - 122, inner.bottom - 34, 122, 34), "< Zurück", size=16)
+        tasks = [("map", "karte.exe")]
+    else:  # "clock": hours over minutes, tap anywhere to restore
+        inner = K.window(tft_surf, frame, f"uhr.exe - {K.WEEKDAYS[now.weekday()]}, {now.strftime('%d.%m.%Y')}", icon="clock")
+        K.bevel(tft_surf, inner, sunken=True, face=(16, 6, 24))
+        hhmm = now.strftime("%H%M")
+        dw, dh, gap = 190, 300, 30
+        x0 = inner.centerx - dw - gap // 2
+        for row in range(2):
+            for col in range(2):
+                K.seven_seg(tft_surf, hhmm[row * 2 + col], x0 + col * (dw + gap), inner.y + 30 + row * (dh + 50), dw, dh)
+        colon_on = int(time.time() * 2) % 2 == 0
+        for cx in (inner.centerx - 60, inner.centerx + 60):  # the colon, lying down between hours and minutes
+            pygame.draw.rect(tft_surf, K.CLOCK_ON if colon_on else K.CLOCK_OFF, (cx - 8, inner.y + 30 + dh + 17, 16, 16))
+        rects["back"] = frame
+        tasks = [("clock", "uhr.exe")]
+    K.taskbar(tft_surf, now, _weather_kind(), tasks=tasks)
+    HOME_WINDOW_RECTS = rects
+
+
+def _draw_weather_details(inner, now):
+    current, daily = _weather_now()
+    if current is None:
+        K.t95(tft_surf, "Wetter lädt...", 20, (inner.x + 8, inner.y + 12))
+        return
+    kind = _weather_kind()
+    unit = "°C" if METRIC else "°F"
+    wind = current["wind_spd"] * 3.6 if METRIC else current["wind_spd"]
+    wind_unit = "km/h" if METRIC else "mph"
+
+    g = pygame.Rect(inner.x + 4, inner.y + 12, inner.w - 8, 146)
+    K.groupbox(tft_surf, g, "Jetzt")
+    tft_surf.blit(K.weather_icon(kind, 112), (g.x + 8, g.y + 18))
+    K.t95(tft_surf, f"{round(current['temp'])}{unit}", 44, (g.x + 132, g.y + 10))
+    K.t95(tft_surf, K.QUIRKY_DESC[kind], 16, (g.x + 134, g.y + 66))
+    K.t95(tft_surf, f"gefühlt {round(current['app_temp'])}°", 14, (g.x + 134, g.y + 90), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, f"Wind {round(wind)} {wind_unit} {current['wind_cdir']}", 14, (g.x + 134, g.y + 110), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, f"Luft {round(current['rh'])}%", 14, (g.right - 12, g.y + 90), color=K.F_DARK, bold=False, anchor="topright")
+    K.t95(tft_surf, f"UV {round(current['uv'])}", 14, (g.right - 12, g.y + 110), color=K.F_DARK, bold=False, anchor="topright")
+
+    g = pygame.Rect(inner.x + 4, g.bottom + 18, inner.w - 8, 196)
+    K.groupbox(tft_surf, g, "Regen, nächste 12 Stunden")
+    hours, probs = _rain_view(now)
+    msg, wet = K.rain_summary(hours, probs)
+    K.t95(tft_surf, msg, 17, (g.x + 12, g.y + 14), color=K.F_ACCENT if wet else K.F_INK)
+    K.rain_chart(tft_surf, pygame.Rect(g.x + 10, g.y + 42, g.w - 20, g.h - 52), hours, probs, labels=True)
+
+    g = pygame.Rect(inner.x + 4, g.bottom + 18, inner.w - 8, 96)
+    K.groupbox(tft_surf, g, "Sonne & Mond")
+    today = daily[0]
+    rise = convert_timestamp(today["sunrise_ts"], theme["DATE_FORMAT"]["SUNRISE_SUNSET"])
+    sunset = convert_timestamp(today["sunset_ts"], theme["DATE_FORMAT"]["SUNRISE_SUNSET"])
+    tft_surf.blit(K.sunrise_icon(48), (g.x + 10, g.y + 22))
+    K.t95(tft_surf, rise, 20, (g.x + 62, g.y + 24))
+    K.t95(tft_surf, "auf", 13, (g.x + 62, g.y + 50), color=K.F_DARK, bold=False)
+    tft_surf.blit(K.sunrise_icon(48), (g.x + 152, g.y + 22))
+    K.t95(tft_surf, sunset, 20, (g.x + 204, g.y + 24))
+    K.t95(tft_surf, "unter", 13, (g.x + 204, g.y + 50), color=K.F_DARK, bold=False)
+    lunation = float(today.get("moon_phase_lunation", 0.5))
+    tft_surf.blit(K.moon_phase(lunation, 48), (g.x + 300, g.y + 22))
+    K.t95(tft_surf, K.moon_name(lunation), 14, (g.x + 354, g.y + 36), bold=False)
+
+    g = pygame.Rect(inner.x + 4, g.bottom + 18, inner.w - 8, 176)
+    K.groupbox(tft_surf, g, "Nächste Tage")
+    cw = (g.w - 20 - 2 * 8) // 3
+    for i, day in enumerate(daily[1:4]):
+        c = pygame.Rect(g.x + 10 + i * (cw + 8), g.y + 16, cw, g.h - 26)
+        K.bevel(tft_surf, c, sunken=True, face=K.F_PAPER)
+        dt = datetime.datetime.strptime(day["valid_date"], "%Y-%m-%d")
+        K.t95(tft_surf, K.WEEKDAYS[dt.weekday()], 15, (c.centerx, c.y + 8), anchor="midtop")
+        tft_surf.blit(K.weather_icon(K.kind_of(day["weather"]["code"]), 64), (c.centerx - 32, c.y + 28))
+        K.t95(tft_surf, f"{round(day['max_temp'])}° / {round(day['min_temp'])}°", 15, (c.centerx, c.y + 96), anchor="midtop")
+        K.t95(tft_surf, f"Regen {day['pop']}%", 13, (c.centerx, c.y + 118), color=K.F_DARK, bold=False, anchor="midtop")
+
+
+def draw_dada():
+    global DADA_BUTTON_RECTS
+    title, icon, lines, buttons, wide = DADA_BOXES[DADA["kind"]]
+    DADA_BUTTON_RECTS = K.msgbox(tft_surf, title, icon, lines, buttons, wide=wide)
+
+
+def open_dada(kind):
+    global DADA
+    DADA = {"kind": kind, "opened_at": time.time()}
+
+
+def _home_title_action(window_name, glyph):
+    """The x / o / _ of a home window. o opens its detail view, x and _ are
+    dadaist (see DADA_BOXES, sev.exe, the "Bin gleich wieder da." note)."""
+    global SEV_UNTIL
+    logger.info(f"Home window {window_name}: title button {glyph}")
+    if glyph == "_":
+        MINIMIZED[window_name] = time.time() + MINIMIZED_SECONDS
+    elif glyph == "o":
+        if window_name == "uhr":
+            open_home_window("clock")
+        elif window_name == "wetter":
+            open_home_window("wetter")
+        elif window_name == "bvg":
+            open_home_window("karte")
+        elif config.get("MOABEATS", {}).get("ENABLED", False):
+            open_chore_list()
+    elif window_name == "bvg":
+        SEV_UNTIL = time.time() + SEV_SECONDS
+    else:
+        open_dada({"uhr": "x_uhr", "wetter": "x_wetter", "wg": "x_wg"}[window_name])
+
+
+def handle_home_click(mx, my):
+    """Taps on the awake KiezOS desktop (Start menu, dada boxes, the home
+    windows and their detail views). Runs last in handle_tap()."""
+    global HOME_WINDOW_LAST_ACTIVITY_TS, START_MENU_OPEN, TITLE_TAP, DADA
+    if DISPLAY_BLANK or dashboard_overlay_open():
+        return False
+
+    if HOME_WINDOW is not None:
+        HOME_WINDOW_LAST_ACTIVITY_TS = time.time()
+        for name in ("back", "x", "_"):
+            rect = HOME_WINDOW_RECTS.get(name)
+            if rect and rect.collidepoint((mx, my)):
+                close_home_window(name)
+                return True
+        return True
+
+    if DADA is not None:
+        for rect, label in DADA_BUTTON_RECTS:
+            if rect.collidepoint((mx, my)):
+                follow = DADA_NEXT.get(DADA["kind"], {}).get(label)
+                if follow:
+                    open_dada(follow)
+                else:
+                    DADA = None
+                return True
+        return True
+
+    if START_MENU_OPEN:
+        for rect, action in START_MENU_RECTS:
+            if rect.collidepoint((mx, my)):
+                _start_menu_action(action)
+                return True
+        close_start_menu()  # tap outside closes it
+        return True
+
+    if START_BUTTON_RECT and START_BUTTON_RECT.collidepoint((mx, my)):
+        START_MENU_OPEN = True
+        return True
+
+    for name, win in HOME_WINDOWS.items():
+        if name in MINIMIZED or (name == "bvg" and time.time() < SEV_UNTIL):
+            continue
+        buttons = K.title_buttons(win)
+        for glyph in ("x", "o", "_"):
+            if buttons[glyph].collidepoint((mx, my)):
+                _home_title_action(name, glyph)
+                return True
+        # Double-tap on the title bar = o, like Win95. Not inside the
+        # emergency-exit corner, where taps count towards quitting.
+        if buttons["bar"].inflate(0, 8).collidepoint((mx, my)) and mx >= EMERGENCY_EXIT_MAX_X:
+            last_window, last_ts = TITLE_TAP
+            if last_window == name and time.time() - last_ts < TITLE_DOUBLE_TAP_SECONDS:
+                TITLE_TAP = (None, 0.0)
+                _home_title_action(name, "o")
+            else:
+                TITLE_TAP = (name, time.time())
+            return True
+
+    if HOME_RECTS.get("mehr") and HOME_RECTS["mehr"].collidepoint((mx, my)):
+        open_home_window("wetter")
+        return True
+    if HOME_RECTS.get("karte") and HOME_RECTS["karte"].collidepoint((mx, my)):
+        open_home_window("karte")
+        return True
+    return False
+
+
+def update_kiez_timeouts():
+    """Called every frame: auto-close/expire the KiezOS bits."""
+    global DADA, SHUTDOWN_VISIBLE, EGG
+    now = time.time()
+    for name, until in list(MINIMIZED.items()):
+        if now >= until:
+            del MINIMIZED[name]
+    if DISPLAY_BLANK:
+        close_start_menu()
+        close_home_window("display-blank")
+        DADA = None
+        SHUTDOWN_VISIBLE = False
+        EGG = None
+        return
+    if HOME_WINDOW is not None and now - HOME_WINDOW_LAST_ACTIVITY_TS > HOME_WINDOW_IDLE_TIMEOUT_SECONDS:
+        close_home_window("idle-timeout")
+    if DADA is not None and now - DADA["opened_at"] > DADA_AUTO_CLOSE_SECONDS:
+        DADA = None
+    if SHUTDOWN_VISIBLE and now - SHUTDOWN_OPENED_AT > SHUTDOWN_AUTO_CLOSE_SECONDS:
+        SHUTDOWN_VISIBLE = False
+    if EGG is not None and now > EGG_UNTIL:
+        logger.info(f"Egg {EGG} timed out")
+        EGG = None
+
+
+def draw_shutdown():
+    if not SHUTDOWN_VISIBLE:
+        return
+    tft_surf.fill((8, 4, 14))
+    w = DISPLAY_WIDTH
+    y = 280
+    for line in ("Sie können KiezOS 161", "jetzt NICHT", "ausschalten."):
+        K.t95(tft_surf, line, 24, (w // 2, y), color=(255, 160, 70), anchor="midtop")
+        y += 36
+    K.t95(tft_surf, "Merz hat es verboten.", 16, (w // 2, y + 24), color=(200, 170, 255), bold=False, anchor="midtop")
+    K.heart(tft_surf, (w // 2 - 70, y + 82), 3, K.PINK)
+    K.t95(tft_surf, "Ju likes you", 16, (w // 2 - 50, y + 72), color=(200, 170, 255), bold=False)
+    K.t95(tft_surf, "(tippen zum Zurückkehren)", 12, (w // 2, DISPLAY_HEIGHT - 40), color=(110, 90, 140), bold=False, anchor="midtop")
+
+
+def handle_shutdown_click(mx, my):
+    global SHUTDOWN_VISIBLE
+    if not SHUTDOWN_VISIBLE:
+        return False
+    SHUTDOWN_VISIBLE = False
+    return True
+
+
+# ---------------------------------------------------------------- PIR-wake surprises
+
+def maybe_start_egg():
+    """Called on a motion wake: 1 in EGGS_ONE_IN chance of a surprise."""
+    global EGG, EGG_LAST, EGG_UNTIL
+    if not EGGS_ENABLED or random.randrange(EGGS_ONE_IN) != 0:
+        return
+    EGG = random.choice([kind for kind in EGG_KINDS if kind != EGG_LAST])
+    EGG_LAST = EGG
+    EGG_UNTIL = time.time() + EGG_SECONDS
+    logger.info(f"Egg: {EGG}")
+
+
+def draw_egg():
+    global EGG_RECTS
+    if EGG is None:
+        return
+    EGG_RECTS = {}
+    w, h = DISPLAY_WIDTH, DISPLAY_HEIGHT
+    if EGG in ("assistant", "hilfe"):
+        if EGG == "assistant":
+            K.speech(tft_surf, pygame.Rect(226, 420, 246, 160),
+                     ["Es sieht so aus, als", "wolltest du Bus fahren.", "Nimm lieber einen", "Privatjet."], (414, 650))
+            EGG_RECTS["hilfe"] = K.button(tft_surf, pygame.Rect(358, 538, 102, 30), "Hilfe!", size=14).inflate(8, 14)
+            K.button(tft_surf, pygame.Rect(238, 538, 112, 30), "Wegtreten", size=14)
+        else:
+            K.speech(tft_surf, pygame.Rect(226, 450, 246, 120), ["Hilfe gibt es nur", "für Unternehmen."], (414, 650), size=16)
+            K.button(tft_surf, pygame.Rect(238, 528, 112, 30), "Wegtreten", size=14)
+        merz = K.merz_sprite(152)  # 4 px per cell
+        tft_surf.blit(merz, (w - merz.get_width() - 4, h - 40 - merz.get_height()))
+    elif EGG == "peek":
+        merz = K.merz_sprite(190)  # peeks in from the right edge
+        tft_surf.blit(merz, (w - int(merz.get_width() * 0.62), 400))
+        K.speech(tft_surf, pygame.Rect(196, 352, 180, 40), ["Psst... Merz!"], (w - int(merz.get_width() * 0.5), 462))
+    elif EGG.startswith("bluescreen"):
+        tft_surf.fill((60, 20, 120))
+        title = pygame.Rect(w // 2 - 80, 200, 160, 28)
+        pygame.draw.rect(tft_surf, K.F_FACE, title)
+        K.t95(tft_surf, "KiezOS 161", 18, title.center, color=(60, 20, 120), anchor="center")
+        for i, line in enumerate(BLUESCREENS[int(EGG[-1])]):
+            K.t95(tft_surf, line, 17, (28, 260 + i * 28), color=(255, 255, 255), bold=False)
+        cursor = "_" if int(time.time() * 2) % 2 == 0 else " "
+        K.t95(tft_surf, f"Tippen zum Fortfahren {cursor}", 17, (w // 2, 560), color=(255, 255, 255), anchor="midtop")
+    elif EGG == "update":
+        tft_surf.blit(K.desktop(), (0, 0))
+        inner = K.dialog(tft_surf, pygame.Rect(30, 250, w - 60, 250), "KiezOS 161 Update", icon="power")
+        K.t95(tft_surf, "Update 3 von 69 wird installiert...", 16, (inner.x + 8, inner.y + 10))
+        K.t95(tft_surf, "Bitte den Kühlschrank nicht öffnen", 14, (inner.x + 8, inner.y + 40), bold=False)
+        K.t95(tft_surf, "und den Pi nicht ausschalten.", 14, (inner.x + 8, inner.y + 60), bold=False)
+        bar = pygame.Rect(inner.x + 8, inner.y + 100, inner.w - 16, 30)
+        K.bevel(tft_surf, bar, sunken=True, face=K.F_PAPER)
+        blocks = 6 + int((EGG_SECONDS - (EGG_UNTIL - time.time())) / 2)  # creeps, never finishes
+        for i in range(min(blocks, (bar.w - 8) // 16)):
+            pygame.draw.rect(tft_surf, K.F_SEL, (bar.x + 4 + i * 16, bar.y + 4, 13, bar.h - 8))
+        K.t95(tft_surf, "Verbleibend: ca. 4 Legislaturperioden", 13, (inner.x + 8, inner.y + 144), color=K.F_DARK, bold=False)
+        K.button(tft_surf, pygame.Rect(inner.right - 110, inner.bottom - 34, 110, 32), "Abbrechen", size=14)
+        K.taskbar(tft_surf, datetime.datetime.now(), _weather_kind())
+
+
+def handle_egg_click(mx, my):
+    """Any tap closes a surprise; the Merz assistant's Hilfe! answers first."""
+    global EGG, EGG_UNTIL
+    if EGG is None:
+        return False
+    if EGG == "assistant" and EGG_RECTS.get("hilfe") and EGG_RECTS["hilfe"].collidepoint((mx, my)):
+        EGG = "hilfe"
+        EGG_UNTIL = time.time() + EGG_SECONDS
+        return True
+    logger.info(f"Egg {EGG} closed (tap)")
+    EGG = None
+    return True
+
+
+def draw_fps():
+    K.t95(tft_surf, str(int(clock.get_fps())), 16, (DISPLAY_WIDTH - 140, DISPLAY_HEIGHT - 32), color=K.F_LATE)
+
+
 def dashboard_overlay_open():
-    """Any popup/fullscreen overlay on the awake dashboard. The small pills
-    (and the emolog footer) stay drawn, fogged, underneath some of these,
-    and some pill handlers run before the overlay's own handler in
-    handle_tap() - so every pill handler must check this, or a tap on the
-    dimmed pill opens its feature over (or under) the open overlay."""
+    """Any popup/fullscreen overlay above the KiezOS home screen (whose own
+    Start menu, detail views and dada boxes are handled by handle_home_click)."""
     return (
         EMOTION_PROMPT_VISIBLE
         or EMOTION_RESULTS_VISIBLE
@@ -6566,6 +6191,8 @@ def dashboard_overlay_open():
         or MERZ_VISIBLE
         or games_open()
         or CHORE_LIST_OPEN
+        or SHUTDOWN_VISIBLE
+        or EGG is not None
     )
 
 
@@ -6574,22 +6201,20 @@ def handle_tap(mx, my):
     one of them consumed the tap (otherwise loop() wakes a blank display).
     Overlay handlers swallow every tap while their overlay is open."""
     # Cleaning-day fullscreen (display "blank"): chore rows open the
-    # checklist detail screen instead of waking the dashboard. First, so
+    # checklist detail screen instead of waking the dashboard. Early, so
     # stale rects of the hidden dashboard can't steal these taps.
     return (
-        handle_chore_detail_click(mx, my)
+        handle_egg_click(mx, my)
+        or handle_shutdown_click(mx, my)
+        or handle_chore_detail_click(mx, my)
         or handle_cleaning_chore_list_click(mx, my)
-        or handle_chore_button_click(mx, my)
         or handle_emotion_popup_click(mx, my)
-        or handle_emolog_footer_click(mx, my)
         or handle_quiz_click(mx, my)
-        or handle_quiz_button_click(mx, my)
         or handle_wifi_qr_click(mx, my)
-        or handle_wifi_button_click(mx, my)
         or handle_merz_click(mx, my)
         or handle_game_click(mx, my)
         or handle_games_menu_click(mx, my)
-        or handle_play_button_click(mx, my)
+        or handle_home_click(mx, my)
     )
 
 
@@ -6611,18 +6236,7 @@ def emergency_exit_active():
 
 
 def draw_dashboard_overlays():
-    """Pills and popups on top of the awake dashboard, see the ordering note."""
-    # All small dashboard pills first, every overlay after them -
-    # otherwise a pill drawn later sits bright on top of an earlier
-    # overlay's fog (e.g. WIFI/MERZ/PUTZEN/AFM over the emotion
-    # prompt), looking tappable while the overlay swallows the tap.
-    # draw_chore_button() goes after draw_quiz_button(): it's
-    # positioned off QUIZ_BUTTON_RECT.
-    draw_quiz_button()
-    draw_wifi_button()
-    draw_play_button()
-    draw_chore_button()
-
+    """Popups and fullscreen views on top of the KiezOS home screen."""
     draw_emotion_prompt_overlay()
     draw_emotion_confirmation_overlay()
     if EMOTION_RESULTS_VISIBLE:
@@ -6635,35 +6249,8 @@ def draw_dashboard_overlays():
     draw_games_menu()
     draw_active_game()
     draw_chore_overlay()
-
-
-def draw_fps():
-    DrawString(dynamic_surf, str(int(clock.get_fps())), FONT_SMALL_BOLD, RED, 20).left()
-
-
-# TODO: make this useful for touch events
-def draw_event(color=RED):
-
-    pos = pygame.mouse.get_pos()
-
-    size = 20
-    radius = int(size / 2)
-    new_pos = (
-        int(pos[0] - FIT_SCREEN[0] - (radius * ZOOM)),
-        int(pos[1] - FIT_SCREEN[1] - (radius * ZOOM)),
-    )
-    DrawImage(mouse_surf, images["circle"], size=size, fillcolor=color).draw_absolut_position(
-        new_pos
-    )
-
-
-def create_scaled_surf(surf, aa=False):
-    if aa:
-        scaled_surf = pygame.transform.smoothscale(surf, (SURFACE_WIDTH, SURFACE_HEIGHT))
-    else:
-        scaled_surf = pygame.transform.scale(surf, (SURFACE_WIDTH, SURFACE_HEIGHT))
-
-    return scaled_surf
+    draw_shutdown()
+    draw_egg()
 
 
 def loop():
@@ -6787,6 +6374,7 @@ def loop():
             dismiss_merz_game("display-blank" if DISPLAY_BLANK else "idle-timeout")
         update_chore_screen_timeout()
         update_games_timeout()
+        update_kiez_timeouts()
         if DISPLAY_BLANK and EMOTION_PROMPT_VISIBLE:
             dismiss_emotion_prompt("display-blank")
         elif EMOTION_PROMPT_VISIBLE:
@@ -6797,59 +6385,10 @@ def loop():
                 dismiss_emotion_prompt("timeout")
 
         if not DISPLAY_BLANK:
-
-            tft_surf.fill(BACKGROUND)
-
-            # fill the actual main surface
-            display_surf.fill(BACKGROUND)
-
-            # blit the image/weather
-            display_surf.blit(weather_surf, (0, 0))
-            # blit BVG layer on top
-            display_surf.blit(bvg_surf, (0, 0))
-
-            # pygame.draw.line(tft_surf, ORANGE, (0, 299), (240, 299), 1) # Doesn't scale well
-
-            # fill the dynamic layer, make it transparent and use draw functions
-            #  that write to that surface; then also blit it on top
-            dynamic_surf.fill(BACKGROUND)
-            dynamic_surf.set_colorkey(BACKGROUND)
-
-            draw_statusbar()
-
+            draw_home()
+            draw_dashboard_overlays()
             if SHOW_FPS:
                 draw_fps()
-
-            if ANIMATION:
-                my_particles.move(dynamic_surf, my_particles_list)
-
-            # finally take the dynamic surface and blit it to the main surface
-            display_surf.blit(dynamic_surf, (0, 0))
-
-            # now do the same for the time layer so it did not interfere with the other layers
-            # fill the layer and make it transparent as well
-            time_surf.fill(BACKGROUND)
-            time_surf.set_colorkey(BACKGROUND)
-
-            # draw the time to the main layer
-            draw_time_layer()
-            display_surf.blit(time_surf, (0, 0))
-
-            draw_moabeats_panel()
-
-            # # draw the mouse events
-            # mouse_surf.fill(BACKGROUND)
-            # mouse_surf.set_colorkey(BACKGROUND)
-            # draw_event(WHITE)
-
-            # display_surf.blit(mouse_surf, (0, 0))
-
-            # finally take the main surface and blit it to the tft surface
-            tft_surf.blit(create_scaled_surf(display_surf, aa=AA), FIT_SCREEN)
-
-            draw_dashboard_overlays()
-
-            # update the display with all surfaces merged into the main one
             pygame.display.update()
 
         elif datetime.datetime.today().weekday() == CLEANING_DAY:
@@ -6917,13 +6456,6 @@ def loop():
                     logger.info("Going from idle to active.")
                     wake_display("touch", reason="screen_touch")
 
-                # Maybe need to use "stats": "calls_count": "28", "calls_remaining": 27,
-                #  answer from API here to decide whether to do new weather
-                #  call right away (because there is only 50 calls in a day...)
-                # (BVG is no problem, free 100 calls per minute :))
-
-                if pygame.MOUSEBUTTONDOWN:
-                    draw_event()
 
             elif event.type == pygame.MOUSEBUTTONUP:
                 # Only meaningful during two quiz stages: "scan" (lifting
@@ -6953,7 +6485,7 @@ def loop():
 
                 elif event.key == pygame.K_SPACE:
                     shot_time = convert_timestamp(time.time(), "%Y-%m-%d %H-%M-%S")
-                    pygame.image.save(display_surf, f"screenshot-{shot_time}.png")
+                    pygame.image.save(tft_surf, f"screenshot-{shot_time}.png")
                     logger.info(f"Screenshot created at {shot_time}")
 
         if not DISPLAY_BLANK and time.time() - LAST_TOUCH_TIME > DISPLAY_BLANK_AFTER:
@@ -6980,10 +6512,6 @@ def loop():
 if __name__ == "__main__":
 
     try:
-
-        if ANIMATION:
-            my_particles = Particles()
-            my_particles_list = my_particles.create_particle_list()
 
         images = image_factory(ICON_PATH)
 

@@ -42,13 +42,10 @@ def test_merz_burn():
     P.draw_merz_overlay()
     assert "select_burn" not in P.MERZ_ACTION_RECTS
 
-    # Regression: the dashboard's emolog footer hit zone (never cleared,
-    # bottom-left) overlaps the EIER pill and used to swallow taps there.
-    P.EMOLOG_FOOTER_RECT = P.MERZ_ACTION_RECTS["select_egg"].copy()
-    assert not P.handle_emolog_footer_click(*P.MERZ_ACTION_RECTS["select_egg"].center)
-    P.QUIZ_STAGE = "results"
-    assert not P.handle_emolog_footer_click(*P.MERZ_ACTION_RECTS["select_egg"].center)
-    P.QUIZ_STAGE = None
+    # Regression: stale desktop hit rects (the Start button sits bottom-left,
+    # right where EIER is) must not swallow taps meant for MERZ.
+    P.START_BUTTON_RECT = P.MERZ_ACTION_RECTS["select_egg"].copy()
+    assert P.handle_tap(*P.MERZ_ACTION_RECTS["select_egg"].center) and not P.START_MENU_OPEN
 
     # Too slow: one gap over the limit must not unlock.
     combo = P.MERZ_BURN_COMBO
@@ -114,9 +111,9 @@ def test_merz_burn():
     # Longest taunt with Merz at the top of his range: bubble stays on screen.
     longest = max((t for t in P.MERZ_TAUNTS if "year" in t), key=lambda t: len(t["text"]))
     P.MERZ_TAUNT_TEXT = longest["text"]
-    P.MERZ_TAUNT_META = f"{longest['year']} · {longest['source']}"
+    P.MERZ_TAUNT_META = f"{longest['year']}, {longest['source']}"
     P.MERZ_TAUNT_SHOWN_AT = time.time()
-    P.MERZ_Y = P.DISPLAY_HEIGHT * P.MERZ_BOUNDS_TOP_FRACTION
+    P.MERZ_Y = P.DISPLAY_HEIGHT * P.MERZ_BOUNDS_TOP_FRACTION + P.MERZ_TOP_OFFSET
     P.MERZ_WANDER_TARGET_X, P.MERZ_WANDER_TARGET_Y = P.MERZ_X, P.MERZ_Y
     P.MERZ_NEXT_WANDER_AT = time.time() + 10
     P.MERZ_TAUNT_NEXT_AT = time.time() + 60

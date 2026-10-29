@@ -106,6 +106,7 @@ class _Game:
         self.height = height
         self.fonts = _Fonts(regular_font_path, bold_font_path)
         self.close_rect = pygame.Rect(width - 54, 10, 44, 44)
+        self.show_close = True  # False when the host draws its own close button (KiezOS title bar)
         self.reset(0.0)
 
     def reset(self, now):
@@ -122,7 +123,7 @@ class _Game:
 
     def tap(self, x, y):
         """Returns "close", "menu" or None (tap used by the game)."""
-        if self.close_rect.collidepoint((x, y)):
+        if self.show_close and self.close_rect.collidepoint((x, y)):
             return "close"
         if self.state == "over":
             if self.last_tick - self.over_at < GAME_OVER_TAP_DELAY_SECONDS:
@@ -228,9 +229,10 @@ class _Game:
         if self.state != "ready":
             self._draw_outlined(surf, str(self.score), 64, WHITE, midtop=(self.width // 2, 60))
         self._draw_outlined(surf, record_line(type(self), short=True), 18, WHITE, topleft=(12, 14))
-        pygame.draw.rect(surf, CLOSE_ORANGE, self.close_rect, border_radius=10)
-        pygame.draw.rect(surf, BVG_YELLOW, self.close_rect, width=2, border_radius=10)
-        self._text(surf, "x", 28, BLACK, center=self.close_rect.center)
+        if self.show_close:
+            pygame.draw.rect(surf, CLOSE_ORANGE, self.close_rect, border_radius=10)
+            pygame.draw.rect(surf, BVG_YELLOW, self.close_rect, width=2, border_radius=10)
+            self._text(surf, "x", 28, BLACK, center=self.close_rect.center)
 
     def _draw_ready(self, surf):
         self._draw_outlined(surf, self.NAME, 44, WHITE, center=(self.width // 2, int(self.height * 0.22)))

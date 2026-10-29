@@ -63,50 +63,63 @@ def run_frames(game, now, seconds, on_frame=None):
 def test_menu():
     P.DISPLAY_BLANK = False
     P.GAMES_ENABLED = True
-    P.tft_surf.fill(P.BLACK)
-    P.draw_dashboard_overlays()
-    assert P.PLAY_BUTTON_RECT is not None
-    assert P.handle_tap(*P.PLAY_BUTTON_RECT.center)
-    assert P.GAMES_MENU_OPEN
+    exit_zone = pygame.Rect(0, 0, P.EMERGENCY_EXIT_MAX_X, P.EMERGENCY_EXIT_MAX_Y)
+    # Start -> Spiele opens the submenu with all three games.
+    P.close_start_menu()
+    P.draw_home()
+    assert P.handle_tap(*P.START_BUTTON_RECT.center) and P.START_MENU_OPEN
+    P.draw_home()
+    assert P.handle_tap(*next(r for r, a in P.START_MENU_RECTS if a == "games_sub").center)
+    P.draw_home()
+    shot("00_start_spiele.png")
+    sub = [a for _, a in P.START_MENU_RECTS if a.startswith("game:")]
+    assert sub == ["game:STAPEL-TURM", "game:FLAPPY BVG", "game:merz"], sub
+    for rect, action in P.START_MENU_RECTS:
+        assert not rect.colliderect(exit_zone), f"{action} in the emergency-exit zone"
+    assert P.handle_tap(*next(r for r, a in P.START_MENU_RECTS if a == "game:merz").center)
+    assert P.MERZ_VISIBLE and not P.START_MENU_OPEN
+    P.dismiss_merz_game("test")
+
+    # spiele.exe (where a game's MENÜ button leads)
+    P.open_games_menu()
     assert P.emergency_exit_active(), "emergency exit must stay on in the menu"
+    P.draw_home()
     P.draw_dashboard_overlays()
     shot("01_menu.png")
     keys = [key for _, key in P.GAMES_MENU_RECTS]
-    assert keys == ["merz", "STAPEL-TURM", "FLAPPY BVG"], keys
-    exit_zone = pygame.Rect(0, 0, P.EMERGENCY_EXIT_MAX_X, P.EMERGENCY_EXIT_MAX_Y)
+    assert keys == ["STAPEL-TURM", "FLAPPY BVG", "merz"], keys
     for rect, key in P.GAMES_MENU_RECTS:
         assert not rect.colliderect(exit_zone), f"menu card {key} in the emergency-exit zone"
         assert not rect.colliderect(P.GAMES_MENU_CLOSE_RECT), f"menu card {key} overlaps Schließen"
         assert 0 <= rect.left and rect.right <= P.DISPLAY_WIDTH
-    # Descriptions must end before the chevron (it sits ~40 px from the right).
-    for key, name, description in P._games_menu_entries():
-        text_right = P.GAMES_MENU_RECTS[0][0].left + 18 + P.CHORE_ITEM_FONT_SMALL.size(description)[0]
-        assert text_right < P.GAMES_MENU_RECTS[0][0].right - 45, f"{key} description runs into the chevron"
-        assert P.CHORE_NAME_FONTS[0].size(name)[0] < P.GAMES_MENU_RECTS[0][0].width - 80, f"{key} name too long"
-    assert P.PLAY_BUTTON_RECT is None, "PLAY pill drawn over its own menu"
+    # Names and record lines fit the card (text starts 112 px in).
+    for game_cls in list(party_games.GAMES) + [party_games.MerzResult]:
+        card = P.GAMES_MENU_RECTS[0][0]
+        assert 112 + P.K.font(22).size(game_cls.NAME)[0] < card.width - 8, f"{game_cls.NAME} name too long"
+        assert 112 + P.K.font(15, False).size(party_games.record_line(game_cls))[0] < card.width - 8
 
     # Taps on empty menu space are swallowed, not passed to the dashboard.
     assert P.handle_tap(P.DISPLAY_WIDTH // 2, P.GAMES_MENU_CLOSE_RECT.top - 4)
     assert P.GAMES_MENU_OPEN
 
     # MERZ card: closes the menu, opens MERZ.
-    merz_rect = P.GAMES_MENU_RECTS[0][0]
+    merz_rect = next(r for r, key in P.GAMES_MENU_RECTS if key == "merz")
     assert P.handle_tap(*merz_rect.center)
     assert P.MERZ_VISIBLE and not P.games_open()
     P.dismiss_merz_game("test")
 
-    # Schließen.
-    P.open_games_menu()
-    P.draw_games_menu()
-    assert P.handle_tap(*P.GAMES_MENU_CLOSE_RECT.center)
-    assert not P.games_open()
+    # Schließen and the title bar's x.
+    for close in ("GAMES_MENU_CLOSE_RECT", "GAMES_MENU_TITLE_X"):
+        P.open_games_menu()
+        P.draw_games_menu()
+        assert P.handle_tap(*getattr(P, close).center)
+        assert not P.games_open(), close
 
-    # GAMES disabled: no PLAY pill (MERZ included, one flag for all games).
+    # GAMES disabled: no Spiele in the Start menu (MERZ included, one flag for all games).
     P.GAMES_ENABLED = False
-    P.draw_play_button()
-    assert P.PLAY_BUTTON_RECT is None
+    assert "games_sub" not in [a for _, _, a in P._start_menu_items()]
     P.GAMES_ENABLED = True
-    print("MENU: PLAY -> menu -> MERZ/close ok, config gating ok", flush=True)
+    print("MENU: Start -> Spiele -> MERZ, spiele.exe -> MERZ/close ok, config gating ok", flush=True)
 
 
 def press(game, token):
@@ -206,7 +219,7 @@ def test_stack():
     assert game.state == "over"
     now = run_frames(game, now, 1.0)
     game.draw(P.tft_surf)
-    assert P.handle_tap(*game.buttons["menu"].center)
+    assert P.handle_tap(*game.buttons["menu"].move(0, P.GAME_TITLE_HEIGHT).center)
     assert P.GAMES_MENU_OPEN and P.ACTIVE_GAME is None
     P.draw_games_menu()
     shot("05_menu_with_record.png")
@@ -264,7 +277,7 @@ def test_highscores():
     game.score = 99
     game.game_over("test")
     assert game.name_entry
-    assert P.handle_tap(*game.close_rect.center) and not P.games_open()
+    assert P.handle_tap(*P.GAME_TITLE_X.center) and not P.games_open()
     assert party_games.best(name)["name"] == "ANONYM" and party_games.best(name)["score"] == 99
 
     # Menu card shows the all-time record.
@@ -310,24 +323,24 @@ def test_merz_hud():
     P.MERZ_TIMER_STARTED_AT -= 12.3
     P.MERZ_HITS = 23
     longest = max((t for t in P.MERZ_TAUNTS if "year" in t), key=lambda t: len(t["text"]))
-    P.MERZ_TAUNT_TEXT, P.MERZ_TAUNT_META = longest["text"], f"{longest['year']} · {longest['source']}"
+    P.MERZ_TAUNT_TEXT, P.MERZ_TAUNT_META = longest["text"], f"{longest['year']}, {longest['source']}"
     P.MERZ_TAUNT_SHOWN_AT = P.time.time()
     P.MERZ_TAUNT_NEXT_AT = P.time.time() + 60
-    P.MERZ_Y = P.DISPLAY_HEIGHT * P.MERZ_BOUNDS_TOP_FRACTION
+    P.MERZ_Y = P.DISPLAY_HEIGHT * P.MERZ_BOUNDS_TOP_FRACTION + P.MERZ_TOP_OFFSET
     P.MERZ_WANDER_TARGET_X, P.MERZ_WANDER_TARGET_Y = P.MERZ_X, P.MERZ_Y
     P.MERZ_NEXT_WANDER_AT = P.time.time() + 10
     P.draw_merz_overlay()
     P.MERZ_SCALE = P.MERZ_SCALE_MAX  # biggest sprite = least room above him
     P.draw_merz_overlay()
-    shot("10b_merz_hud_long_quote.png")  # may cover the hits/timer row, never him
+    shot("10b_merz_hud_long_quote.png")  # never covers him or the hits/timer row
     for taunt in P.MERZ_TAUNTS:
         lines = P._quiz_wrap_text(P.FONT_TINY, taunt["text"], int(P.DISPLAY_WIDTH * 0.62))
         bubble_h = len(lines) * P.FONT_TINY.get_height() + 16
         if "year" in taunt:
             bubble_h += P.FONT_SUPER_TINY.get_height() + 4
-        assert P._merz_rect().top - 14 - bubble_h >= 6, f"bubble covers Merz at the top: {taunt['text'][:30]}"
-    P.MERZ_TAUNT_TEXT, P.MERZ_TAUNT_META = "„Der Bundestag ist ja nun kein Zirkuszelt.“", "2025 · maischberger"
-    P.MERZ_Y = P.DISPLAY_HEIGHT * P.MERZ_BOUNDS_BOTTOM_FRACTION
+        assert P._merz_rect().top - 14 - bubble_h >= P.MERZ_HUD_BOTTOM + 6, f"bubble covers Merz or the HUD: {taunt['text'][:30]}"
+    P.MERZ_TAUNT_TEXT, P.MERZ_TAUNT_META = "„Der Bundestag ist ja nun kein Zirkuszelt.“", "2025, maischberger"
+    P.MERZ_Y = P.DISPLAY_HEIGHT * P.MERZ_BOUNDS_BOTTOM_FRACTION + P.MERZ_TOP_OFFSET
     P.MERZ_WANDER_TARGET_X, P.MERZ_WANDER_TARGET_Y = P.MERZ_X, P.MERZ_Y
     P.draw_merz_overlay()
     shot("10c_merz_hud_short_quote.png")
@@ -443,7 +456,7 @@ def test_flappy():
 
     # x closes everything; tapping the top-left corner inside the game is a
     # flap, not an emergency-exit click.
-    assert P.handle_tap(*game.close_rect.center)
+    assert P.handle_tap(*P.GAME_TITLE_X.center)
     assert not P.games_open()
     print("FLAPPY: hover/fall/bot/close ok", flush=True)
 

@@ -16,6 +16,10 @@ No test suite or linter/build step exists in this repo. `dev/test_pir_sensor.py`
 with `python3` when touching PIR sensor or LLM-classification code.
 `dev/test_merz_burn_and_quiz_zoom.py`, `dev/test_moabeats_checklist.py` and `dev/test_party_games.py` are headless
 (`SDL_VIDEODRIVER=dummy`) assert-based checks of the overlays — run them when touching that code.
+`dev/test_kiezos_loop.py` runs the real `loop()` headless and drives it with posted touch events (Start
+menu, games, detail views, blank/wake, PIR surprise -> emotion prompt); `dev/render_dashboard.py <dir>`
+saves a screenshot of every screen (`--fake` renders the README's home screen with made-up data).
+Run both after any UI change and look at the screenshots.
 
 Setup:
 ```bash
@@ -84,8 +88,17 @@ Two independent long-running Python processes, both reading the same `config.jso
 through the JSON files in `logs/`:
 
 - **`PiDashboard.py`** — the pygame kiosk app. One large `while running` loop in `loop()` at the
-  bottom of the file: builds up layered `pygame.Surface`s (weather, BVG, dynamic/particles, time,
-  emotion overlays) each frame, composites them onto `tft_surf`, and blits to the display. Touch
+  bottom of the file: each frame `draw_home()` draws the "KiezOS 161" desktop (a purple 90s-OS look:
+  `uhr.exe`, `wetter.exe`, `bvg.exe`, `wg.txt` windows + a taskbar whose Start menu holds every other
+  feature) straight onto `tft_surf` (static part cached, rebuilt every 2 s), then
+  `draw_dashboard_overlays()` draws whatever popup/fullscreen view is open. All drawing helpers
+  (bevels, windows, buttons, the self-drawn pixel icons, 7-segment clock, bus map) live in
+  **`kiezos.py`**; its palette comes from `themes/kiezos.json`'s `KIEZOS` block. The windows' x/o/_
+  title buttons do dadaist things (message boxes, `sev.exe`, a "Bin gleich wieder da." note); o or a
+  title-bar double-tap opens the detail views (`HOME_WINDOW`: wetter details, `karte.exe`, big clock).
+  `karte.exe` is drawn from `config.json["BVG"]["MAP"]` (gitignored on purpose: it shows where the WG
+  is); each BVG row also carries `label`/`landmark`. PIR wakes can show a surprise (`EGGS` config,
+  1 in `ONE_IN`), the emotion prompt waits until it's closed. Touch
   input, PIR-sensor motion (via `RPi.GPIO`, optional — falls back gracefully off-Pi), display
   blank/wake (via `xset`), and the emotion-prompt state machine are all handled inline in that
   same loop via module-level globals (no class/state-object — this file is a single flat script,
@@ -108,13 +121,13 @@ through the JSON files in `logs/`:
   scrolling instead of truncation for overflowing content) and one "Putzdienste" screen
   (`draw_chore_screen()`) listing `cleaning_chores` (Putzplan, not completed, due today or
   overdue). That screen is both the `CLEANING_DAY` screensaver (plus "IT'S CLEANING DAY, YAY!")
-  and an overlay opened any day via the "PUTZEN" pill (bottom right, next to "AFM"). Chores with
+  and an overlay opened any day via Start -> Putzdienste. Chores with
   a checklist show `done/total` and open a detail screen on tap (`draw_chore_detail()`), which
   ticks/unticks sub-items via `PATCH /api/display/chores/{id}/checklist` — tick only, completing
   a chore stays in the app on purpose. `dev/test_moabeats_checklist.py` tests it headless against
   `dev/fake_moabeats_server.py`, which also runs standalone for a local look (point
   `MOABEATS.API_URL` at it; never test ticking against the real instance).
-- **PLAY menu** — the "PLAY" pill under WIFI opens a "Spiele" menu: MERZ plus the tap-only
+- **Spiele** — Start -> Spiele opens a submenu (and a game's MENÜ button the `spiele.exe` window): MERZ plus the tap-only
   party games in `party_games.py` (STAPEL-TURM, FLAPPY BVG), all behind one `GAMES` config section.
   Each game is a self-contained object (`update(now)`, `draw(surf)`, `tap(x, y)`) that
   `PiDashboard.py` only drives; an all-time top 5 per game (MERZ too, by time, via `party_games.MerzResult`) is persisted via `highscore_store.py`
