@@ -33,7 +33,7 @@ BVG_BUS = (149, 39, 110)  # BVG's bus-line badge purple
 # UI palette, overridable from the theme's "KIEZOS" block (see configure())
 F_FACE = (206, 196, 228)
 F_LIGHT = (250, 246, 255)
-F_DARK = (88, 70, 116)
+F_DARK = (66, 50, 92)
 F_INK = (20, 10, 30)
 F_SEL = (90, 40, 150)
 F_TIP = (255, 255, 214)
@@ -135,9 +135,9 @@ def button(surf, rect, label, size=15, pressed=False, bold=True, enabled=True, f
 def groupbox(surf, rect, title):
     pygame.draw.rect(surf, F_DARK, rect, 1)
     pygame.draw.rect(surf, F_LIGHT, pygame.Rect(rect).move(1, 1), 1)
-    img = font(14).render(title, False, F_INK)
-    pygame.draw.rect(surf, F_FACE, (rect.x + 8, rect.y - 8, img.get_width() + 8, 16))
-    surf.blit(img, (rect.x + 12, rect.y - 9))
+    img = font(16).render(title, False, F_INK)
+    pygame.draw.rect(surf, F_FACE, (rect.x + 8, rect.y - 10, img.get_width() + 8, 20))
+    surf.blit(img, (rect.x + 12, rect.y - 11))
 
 
 def tooltip(surf, rect):
@@ -145,7 +145,7 @@ def tooltip(surf, rect):
     pygame.draw.rect(surf, F_INK, rect, 2)
 
 
-def speech(surf, rect, lines, tail_to, size=14):
+def speech(surf, rect, lines, tail_to, size=16):
     """Comic/assistant balloon with a tail to a point."""
     pygame.draw.rect(surf, F_TIP, rect, border_radius=8)
     base = min(max(tail_to[0], rect.x + 16), rect.right - 32)
@@ -181,8 +181,8 @@ def _title_gradient(width, height=26):
 
 
 def title_buttons(rect):
-    """Hitboxes of a window's x / o / _ title buttons (drawn 20x20, tapped
-    generously - real touchscreen taps land a few px off)."""
+    """Hitboxes of a home window's x / o / _ title buttons (drawn 20x20,
+    tapped generously - real touchscreen taps land a few px off)."""
     bar = pygame.Rect(rect.x + 4, rect.y + 4, rect.w - 8, 26)
     out = {}
     for i, glyph in enumerate(["x", "o", "_"]):
@@ -192,9 +192,20 @@ def title_buttons(rect):
     return out
 
 
-def window(surf, rect, title, icon=None, buttons=True):
-    """Win95-style window: bevelled frame, gradient title bar. Returns the
-    client area."""
+def _close_button(rect):
+    bar = pygame.Rect(rect.x + 4, rect.y + 4, rect.w - 8, 26)
+    return pygame.Rect(bar.right - 32, bar.y + 1, 30, 24)
+
+
+def close_box(rect):
+    """Hitbox of a popup window's single x (see window(buttons="x"))."""
+    return _close_button(pygame.Rect(rect)).inflate(16, 16)
+
+
+def window(surf, rect, title, icon=None, buttons="x"):
+    """Win95-style window: bevelled frame, gradient title bar. buttons: "x"
+    (popups: one x, hitbox close_box()), "xo_" (the home windows, hitboxes
+    title_buttons()) or None. Returns the client area."""
     rect = pygame.Rect(rect)
     bevel(surf, rect)
     bar = pygame.Rect(rect.x + 4, rect.y + 4, rect.w - 8, 26)
@@ -203,15 +214,17 @@ def window(surf, rect, title, icon=None, buttons=True):
     if icon:
         surf.blit(menu_icon(icon, 20), (bar.x + 4, bar.y + 3))
         tx += 22
-    max_w = bar.w - (tx - bar.x) - (72 if buttons else 6)
-    t95(surf, title, fit_size(title, max_w, sizes=(15, 14, 13, 12)), (tx, bar.y + 4), color=(255, 255, 255))
-    if buttons:
+    max_w = bar.w - (tx - bar.x) - {"xo_": 72, "x": 38}.get(buttons, 6)
+    t95(surf, title, fit_size(title, max_w, sizes=(16, 15, 14, 13)), (tx, bar.y + 13), color=(255, 255, 255), anchor="midleft")
+    if buttons == "xo_":
         for i, glyph in enumerate(["x", "o", "_"]):
-            button(surf, pygame.Rect(bar.right - 23 - i * 23, bar.y + 3, 20, 20), glyph, size=13)
+            button(surf, pygame.Rect(bar.right - 23 - i * 23, bar.y + 3, 20, 20), glyph, size=14)
+    elif buttons == "x":
+        button(surf, _close_button(rect), "x", size=16)
     return pygame.Rect(rect.x + 8, bar.bottom + 6, rect.w - 16, rect.bottom - bar.bottom - 12)
 
 
-def dialog(surf, rect, title, icon=None, buttons=True):
+def dialog(surf, rect, title, icon=None, buttons="x"):
     """A window with a drop shadow, for popups over the desktop."""
     pygame.draw.rect(surf, SHADOW, pygame.Rect(rect).move(6, 6))
     return window(surf, rect, title, icon=icon, buttons=buttons)
@@ -257,14 +270,14 @@ def taskbar(surf, now, weather_kind, start_pressed=False, tasks=()):
         b = pygame.Rect(x, bar.y + 5, 140, 31)
         bevel(surf, b, sunken=True, face=(226, 218, 244))
         surf.blit(menu_icon(icon, 20), (b.x + 6, b.y + 5))
-        t95(surf, label, fit_size(label, 104, sizes=(14, 13, 12)), (b.x + 30, b.y + 7))
+        t95(surf, label, fit_size(label, 104, sizes=(15, 14, 13)), (b.x + 30, b.y + 7))
         x = b.right + 4
     tray = pygame.Rect(W - 116, bar.y + 5, 112, 31)
     bevel(surf, tray, sunken=True)
     if weather_kind:
         surf.blit(weather_icon(weather_kind, 22), (tray.x + 6, tray.y + 4))
     heart(surf, (tray.x + 44, tray.centery), 2, PINK)
-    t95(surf, now.strftime("%H:%M"), 15, (tray.right - 8, tray.y + 7), anchor="topright")
+    t95(surf, now.strftime("%H:%M"), 17, (tray.right - 8, tray.y + 6), anchor="topright")
     return start.inflate(4, 8)
 
 
@@ -335,7 +348,7 @@ def qr95(data, size):
 
 def msgbox(surf, title, icon, lines, buttons, wide=False):
     """Win95 message box with a pixel "!" triangle, centred on screen.
-    Returns [(rect, label)] of its buttons."""
+    Returns [(rect, label)] of its buttons, then (close_box, "x")."""
     h = 150 + 24 * len(lines)
     win = pygame.Rect(30, (H - h) // 2 - 20, W - 60, h)
     inner = dialog(surf, win, title, icon=icon)
@@ -354,6 +367,7 @@ def msgbox(surf, title, icon, lines, buttons, wide=False):
         r = pygame.Rect(inner.centerx - total // 2 + i * (bw + 12), inner.bottom - 46, bw, 42)
         button(surf, r, label, size=16)
         out.append((r, label))
+    out.append((close_box(win), "x"))
     return out
 
 
@@ -453,8 +467,8 @@ def rain_chart(surf, rect, hours, probs, labels=False):
     n = len(probs)
     if not n:
         return
-    pad_l = 34 if labels else 8
-    pad_b = 20 if labels else 8
+    pad_l = 42 if labels else 8
+    pad_b = 22 if labels else 8
     top = rect.y + (10 if labels else 18)
     plot_h = rect.bottom - pad_b - top
     bw = (rect.w - pad_l - 8) / n
@@ -462,13 +476,13 @@ def rain_chart(surf, rect, hours, probs, labels=False):
         for pct in (0, 50, 100):
             y = rect.bottom - pad_b - int(pct / 100 * plot_h)
             pygame.draw.line(surf, (226, 218, 244), (rect.x + pad_l, y), (rect.right - 6, y))
-            t95(surf, f"{pct}%", 11, (rect.x + pad_l - 4, y), color=F_DARK, bold=False, anchor="midright")
+            t95(surf, f"{pct}%", 13, (rect.x + pad_l - 4, y), color=F_DARK, bold=False, anchor="midright")
     for i, (h, p) in enumerate(zip(hours, probs)):
         bh = max(2, int(p / 100 * plot_h))
         x = int(rect.x + pad_l + i * bw)
         pygame.draw.rect(surf, (60, 80, 200) if p >= 40 else (140, 150, 230), (x + 1, rect.bottom - pad_b - bh, max(1, int(bw) - 3), bh))
         if labels and i % 2 == 0:
-            t95(surf, f"{h}h", 11, (x + bw / 2, rect.bottom - pad_b + 3), color=F_DARK, bold=False, anchor="midtop")
+            t95(surf, f"{h}h", 13, (x + bw / 2, rect.bottom - pad_b + 3), color=F_DARK, bold=False, anchor="midtop")
 
 
 def due_color(delay):
@@ -579,11 +593,11 @@ def draw_map(surf, area, m, rows):
         pygame.draw.line(surf, F_INK, lm["leader"][0], lm["leader"][1], 2)
         tooltip(surf, rect)
         b = line_badge(surf, row["line"], (rect.x + 8, rect.y + 6), h=24, size=16)
-        t95(surf, row["label"], fit_size(row["label"], rect.right - b.right - 14, sizes=(17, 15, 13)), (b.right + 8, rect.y + 8))
+        t95(surf, row["label"], fit_size(row["label"], rect.right - b.right - 14, sizes=(18, 17, 15)), (b.right + 8, rect.y + 8))
         first, rest = mins_text(row["mins"])
         r1 = t95(surf, first, 18, (rect.x + 10, rect.y + 34), color=due_color(row["delays"][0]) if row["mins"] else F_DARK)
         if rest:
-            t95(surf, f"dann {rest}", 15, (r1.right + 8, rect.y + 37), color=F_DARK, bold=False)
+            t95(surf, f"dann {rest}", 16, (r1.right + 8, rect.y + 37), color=F_DARK, bold=False)
 
     home = m.get("HOME")
     if home:

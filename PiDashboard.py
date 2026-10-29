@@ -2764,11 +2764,13 @@ def get_qr_surface(url, pixel_size=210):
 
 
 def draw_results_overlay():
-    """Stimmungs-Stats: QR code to the web dashboard (from the emotion
-    prompt's "Ergebnisse anzeigen" or Start -> Stimmung & Stats). Any tap closes."""
+    """Mood stats: QR code to the web dashboard (from the emotion prompt's
+    "Show results" or Start -> Stimmung & Stats). Any tap closes. mood.exe
+    is English on purpose: the emotion names are English (they're the
+    stored data), so its text matches them."""
     url = get_results_url()
-    _draw_qr_dialog("stimmung.exe - Ergebnisse", "stats", "Stimmungs-Stats", url,
-                    [url, "Alle Stimmungen & Uptime im Browser"])
+    _draw_qr_dialog("mood.exe - Results", "stats", "Mood stats", url,
+                    [url, "All moods & uptime in your browser"])
 
 
 def _draw_qr_dialog(title, icon, heading, data, lines):
@@ -2779,7 +2781,7 @@ def _draw_qr_dialog(title, icon, heading, data, lines):
     K.bevel(tft_surf, box, sunken=True, face=K.F_PAPER)
     tft_surf.blit(K.qr95(data, 244), (box.x + 8, box.y + 8))
     for i, line in enumerate(lines):
-        size = K.fit_size(line, inner.w - 8, sizes=(15, 13, 12, 11))
+        size = K.fit_size(line, inner.w - 8, sizes=(17, 16, 15, 14, 13))
         K.t95(tft_surf, line, size, (inner.centerx, box.bottom + 14 + i * 24), anchor="midtop", bold=i == 0)
     K.button(tft_surf, pygame.Rect(inner.centerx - 60, inner.bottom - 44, 120, 42), "OK", size=17)
 
@@ -2792,21 +2794,21 @@ def draw_emotion_confirmation_overlay():
     logged = re.fullmatch(r"Emotion '(.+)' logged", EMOTION_CONFIRMATION_TEXT)
     height = 200 if logged else 170 + 24 * len(lines)
     win = pygame.Rect(50, (DISPLAY_HEIGHT - height) // 2, DISPLAY_WIDTH - 100, height)
-    inner = K.dialog(tft_surf, win, "stimmung.exe", icon="heart")
+    inner = K.dialog(tft_surf, win, "mood.exe", icon="heart")
     tft_surf.blit(K.menu_icon("ok", 48), (inner.x + 6, inner.y + 10))
     text_w = inner.w - 72
     if logged:
-        K.t95(tft_surf, "Danke! Gespeichert:", 17, (inner.x + 66, inner.y + 10))
+        K.t95(tft_surf, "Thanks! Logged:", 17, (inner.x + 66, inner.y + 10))
         name = logged.group(1)
         K.t95(tft_surf, name, K.fit_size(name, text_w, sizes=(22, 18, 15, 13)), (inner.x + 66, inner.y + 36), color=K.F_ACCENT)
         y = inner.y + 70
     else:
         y = inner.y + 10
         for line in lines:
-            K.t95(tft_surf, line, K.fit_size(line, text_w, sizes=(16, 14, 12)), (inner.x + 66, y))
+            K.t95(tft_surf, line, K.fit_size(line, text_w, sizes=(17, 16, 15, 14)), (inner.x + 66, y))
             y += 24
         y += 6
-    K.t95(tft_surf, "Ju likes you.", 14, (inner.x + 66, y), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, "Ju likes you.", 16, (inner.x + 66, y), color=K.F_DARK, bold=False)
     K.button(tft_surf, pygame.Rect(inner.right - 100, inner.bottom - 40, 100, 38), "OK", size=16)
 
 
@@ -2818,9 +2820,9 @@ def _emotion_color(name):
 
 
 def draw_emotion_prompt_overlay():
-    """stimmung.exe: emotion buttons, 3 custom slots + "eigene...", then
-    "Ergebnisse anzeigen" / "Abbrechen" (= skip, like the title bar's x). The
-    "eigene..." keyboard replaces the grid inside the same window."""
+    """mood.exe: emotion buttons, 3 custom slots + "custom...", then
+    "Show results" / "Cancel" (= skip, like the title bar's x). The
+    "custom..." keyboard replaces the grid inside the same window."""
     global EMOTION_MODAL_RECT, EMOTION_BUTTON_RECTS, EMOTION_ACTION_RECTS
     global EMOTION_CUSTOM_BUTTON_RECTS, EMOTION_KEYBOARD_RECTS
 
@@ -2833,31 +2835,31 @@ def draw_emotion_prompt_overlay():
 
     if EMOTION_KEYBOARD_VISIBLE:
         EMOTION_MODAL_RECT = pygame.Rect(8, 150, DISPLAY_WIDTH - 16, 560)
-        inner = K.dialog(tft_surf, EMOTION_MODAL_RECT, "stimmung.exe - Eigene Stimmung", icon="heart")
-        K.t95(tft_surf, "Wie fühlst du dich? Eigenes Wort:", 16, (inner.x + 4, inner.y + 4))
+        inner = K.dialog(tft_surf, EMOTION_MODAL_RECT, "mood.exe - Custom mood", icon="heart")
+        K.t95(tft_surf, "How do you feel? Your own word:", 16, (inner.x + 4, inner.y + 4))
         at_char_limit = len(EMOTION_KEYBOARD_TEXT) >= EMOTION_KEYBOARD_MAX_CHARS
         field = pygame.Rect(inner.x, inner.y + 34, inner.w, 50)
-        K.textfield(tft_surf, field, EMOTION_KEYBOARD_TEXT, "eigene Stimmung", warn=at_char_limit)
+        K.textfield(tft_surf, field, EMOTION_KEYBOARD_TEXT, "custom mood", warn=at_char_limit)
         # Typing is hard-capped at EMOTION_KEYBOARD_MAX_CHARS (see _apply_emotion_keyboard_token) -
         # show the counter so hitting that cap is visible instead of keys silently doing nothing.
-        K.t95(tft_surf, f"{len(EMOTION_KEYBOARD_TEXT)}/{EMOTION_KEYBOARD_MAX_CHARS}", 12,
+        K.t95(tft_surf, f"{len(EMOTION_KEYBOARD_TEXT)}/{EMOTION_KEYBOARD_MAX_CHARS}", 15,
               (field.right - 8, field.centery), color=K.F_LATE if at_char_limit else K.F_DARK, bold=False, anchor="midright")
         keys = K.keyboard95(tft_surf, pygame.Rect(inner.x, inner.y + 96, inner.w, 330),
                             ["qwertzuiop", "asdfghjkl", "yxcvbnm"],
-                            [("Leer", "space", 0.5), ("<-", "back", 0.22), ("Löschen", "clear", 0.28)])
+                            [("Space", "space", 0.5), ("<-", "back", 0.22), ("Clear", "clear", 0.28)])
         EMOTION_KEYBOARD_RECTS = [{"token": token, "rect": rect} for rect, token in keys]
         half = (inner.w - 8) // 2
-        cancel_rect = K.button(tft_surf, pygame.Rect(inner.x, inner.bottom - 56, half, 54), "Abbrechen", size=18)
-        save_rect = K.button(tft_surf, pygame.Rect(inner.x + half + 8, inner.bottom - 56, half, 54), "Speichern", size=19)
+        cancel_rect = K.button(tft_surf, pygame.Rect(inner.x, inner.bottom - 56, half, 54), "Cancel", size=18)
+        save_rect = K.button(tft_surf, pygame.Rect(inner.x + half + 8, inner.bottom - 56, half, 54), "Save", size=19)
         EMOTION_ACTION_RECTS = {
-            "close": K.title_buttons(EMOTION_MODAL_RECT)["x"],
+            "close": K.close_box(EMOTION_MODAL_RECT),
             "keyboard_cancel": cancel_rect,
             "keyboard_save": save_rect,
         }
         return
 
-    EMOTION_MODAL_RECT = pygame.Rect(14, 92, DISPLAY_WIDTH - 28, 608)
-    inner = K.dialog(tft_surf, EMOTION_MODAL_RECT, "stimmung.exe", icon="heart")
+    EMOTION_MODAL_RECT = pygame.Rect(14, 120, DISPLAY_WIDTH - 28, 540)
+    inner = K.dialog(tft_surf, EMOTION_MODAL_RECT, "mood.exe", icon="heart")
     tft_surf.blit(K.menu_icon("quiz", 44), (inner.x + 6, inner.y + 6))
     K.t95(tft_surf, "Most prevalent emotion", 18, (inner.x + 62, inner.y + 6))
     K.t95(tft_surf, "right now?", 18, (inner.x + 62, inner.y + 30))
@@ -2880,7 +2882,7 @@ def draw_emotion_prompt_overlay():
         swatch = pygame.Rect(rect.x + 8, rect.y + 8, 10, 10)
         pygame.draw.rect(tft_surf, _emotion_color(emotion), swatch)
         pygame.draw.rect(tft_surf, K.F_INK, swatch, 1)
-        K.t95(tft_surf, emotion, K.fit_size(emotion, rect.w - 10, sizes=(15, 13, 12, 11)), (rect.centerx, rect.centery + 8), anchor="center")
+        K.t95(tft_surf, emotion, K.fit_size(emotion, rect.w - 10, sizes=(18, 17, 16, 15, 14)), (rect.centerx, rect.centery + 8), anchor="center")
         EMOTION_BUTTON_RECTS.append({"emotion": emotion, "rect": rect})
 
     cy = grid.bottom + 10
@@ -2888,20 +2890,20 @@ def draw_emotion_prompt_overlay():
     for idx in range(4):
         rect = pygame.Rect(grid.x + idx * (cw + gap), cy, cw, 42)
         if idx == 3:
-            K.button(tft_surf, rect, "eigene...", size=14)
+            K.button(tft_surf, rect, "custom...", size=16)
             EMOTION_CUSTOM_BUTTON_RECTS.append({"type": "trigger", "rect": rect})
         elif idx < len(EMOTION_CUSTOM_SLOTS) and EMOTION_CUSTOM_SLOTS[idx]:
             label = EMOTION_CUSTOM_SLOTS[idx]
-            K.button(tft_surf, rect, label, size=K.fit_size(label, rect.w - 8, sizes=(14, 12, 11)))
+            K.button(tft_surf, rect, label, size=K.fit_size(label, rect.w - 8, sizes=(16, 15, 14, 13)))
             EMOTION_CUSTOM_BUTTON_RECTS.append({"type": "slot", "emotion": label, "rect": rect})
         else:
             K.bevel(tft_surf, rect, sunken=True, face=K.F_PAPER)
 
     by = cy + 56
-    show_rect = K.button(tft_surf, pygame.Rect(inner.x + 4, by, inner.w - 136, 44), "Ergebnisse anzeigen", size=17)
-    cancel_rect = K.button(tft_surf, pygame.Rect(inner.right - 124, by, 120, 44), "Abbrechen", size=15)
+    show_rect = K.button(tft_surf, pygame.Rect(inner.x + 4, by, inner.w - 136, 44), "Show results", size=17)
+    cancel_rect = K.button(tft_surf, pygame.Rect(inner.right - 124, by, 120, 44), "Cancel", size=17)
     EMOTION_ACTION_RECTS = {
-        "close": K.title_buttons(EMOTION_MODAL_RECT)["x"],
+        "close": K.close_box(EMOTION_MODAL_RECT),
         "cancel": cancel_rect,
         "show_results": show_rect,
     }
@@ -3130,8 +3132,8 @@ def draw_games_menu():
 
     win = pygame.Rect(16, 150, DISPLAY_WIDTH - 32, 520)
     inner = K.dialog(tft_surf, win, "spiele.exe", icon="games")
-    GAMES_MENU_TITLE_X = K.title_buttons(win)["x"]
-    K.t95(tft_surf, "Doppeltippen... ach, einmal reicht.", 13, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
+    GAMES_MENU_TITLE_X = K.close_box(win)
+    K.t95(tft_surf, "Doppeltippen... ach, einmal reicht.", 15, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
     entries = [(game.NAME, game.NAME, "stack" if game is party_games.StackGame else "bus", game) for game in party_games.GAMES]
     entries.append(("merz", "MERZ", "merz", party_games.MerzResult))
     rects = []
@@ -3142,7 +3144,7 @@ def draw_games_menu():
         image = K.merz_sprite(80) if icon == "merz" else K.menu_icon(icon, 80)
         tft_surf.blit(image, image.get_rect(center=(rect.x + 54, rect.centery)))
         K.t95(tft_surf, name, 22, (rect.x + 112, rect.y + 28))
-        K.t95(tft_surf, party_games.record_line(game_cls), 15, (rect.x + 112, rect.y + 62), color=K.F_DARK, bold=False)
+        K.t95(tft_surf, party_games.record_line(game_cls), 16, (rect.x + 112, rect.y + 62), color=K.F_DARK, bold=False)
         rects.append((rect, key))
         y += 122
     GAMES_MENU_CLOSE_RECT = K.button(tft_surf, pygame.Rect(inner.right - 130, inner.bottom - 40, 130, 40), "Schließen", size=16)
@@ -4218,12 +4220,12 @@ def draw_chore_screen():
     with_taskbar = CHORE_LIST_OPEN and not DISPLAY_BLANK
     win = pygame.Rect(8, top, DISPLAY_WIDTH - 16, DISPLAY_HEIGHT - top - (48 if with_taskbar else 8))
     inner = K.window(tft_surf, win, "putzdienste.exe", icon="broom")
-    CHORE_LIST_TITLE_X = K.title_buttons(win)["x"]
+    CHORE_LIST_TITLE_X = K.close_box(win)
     # Exactly what the API's cleaning_chores holds (moabeatstastic
     # backend/routes/display.py): Putzplan chores, not completed, due today
     # or overdue. No per-chore due date in the payload, so this describes
     # the whole list rather than marking single chores as overdue.
-    K.t95(tft_surf, "Heute fällig oder überfällig", 14, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, "Heute fällig oder überfällig", 16, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
     CHORE_LIST_CLOSE_RECT = K.button(tft_surf, pygame.Rect(inner.right - 150, inner.bottom - 52, 150, 52), "Schließen", size=17)
     lv = pygame.Rect(inner.x, max(inner.y + 24, EMERGENCY_EXIT_MAX_Y + 4), inner.w, 0)
     lv.height = inner.bottom - 60 - lv.y
@@ -4244,8 +4246,8 @@ def draw_chore_screen():
     elif CHORE_LIST_OPEN and CHORE_DETAIL_REFRESHING:
         status, status_color = "Aktualisiere...", K.F_DARK
     if status:
-        for i, line in enumerate(K.wrap(status, 13, inner.w - 166, bold=False)[:2]):
-            K.t95(tft_surf, line, 13, (inner.x + 4, inner.bottom - 48 + i * 18), color=status_color, bold=False)
+        for i, line in enumerate(K.wrap(status, 15, inner.w - 166, bold=False)[:2]):
+            K.t95(tft_surf, line, 15, (inner.x + 4, inner.bottom - 50 + i * 20), color=status_color, bold=False)
 
     if with_taskbar:
         K.taskbar(tft_surf, datetime.datetime.now(), _weather_kind(), tasks=[("broom", "putzdienste")])
@@ -4286,7 +4288,7 @@ def _draw_chore_list(top, bottom):
     for index, chore in enumerate(cleaning_chores):
         is_last = index == len(cleaning_chores) - 1
         if y + row_h > bottom - (0 if is_last else more_height):
-            K.t95(tft_surf, f"+{len(cleaning_chores) - index} weitere in der App", 14, (DISPLAY_WIDTH // 2, y + 2), color=K.F_DARK, bold=False, anchor="midtop")
+            K.t95(tft_surf, f"+{len(cleaning_chores) - index} weitere in der App", 16, (DISPLAY_WIDTH // 2, y + 2), color=K.F_DARK, bold=False, anchor="midtop")
             break
         checklist = chore.get("checklist", [])
         card = pygame.Rect(left, y, right - left, row_h)
@@ -4297,11 +4299,11 @@ def _draw_chore_list(top, bottom):
         name = chore["name"]
         assignee = chore.get("assigned_to") or ""
         if two_line and assignee:
-            K.t95(tft_surf, name, K.fit_size(name, text_width, sizes=(17, 15, 13)), (text_left, card.centery - 20))
-            K.t95(tft_surf, assignee, 14, (text_left, card.centery + 3), color=K.F_DARK, bold=False)
+            K.t95(tft_surf, name, K.fit_size(name, text_width, sizes=(19, 17, 15)), (text_left, card.centery - 20))
+            K.t95(tft_surf, assignee, 16, (text_left, card.centery + 3), color=K.F_DARK, bold=False)
         else:
             label = f"{name} ({assignee})" if assignee else name
-            K.t95(tft_surf, label, K.fit_size(label, text_width, sizes=(17, 15, 13, 12)), (text_left, card.centery), anchor="midleft")
+            K.t95(tft_surf, label, K.fit_size(label, text_width, sizes=(19, 17, 15, 14)), (text_left, card.centery), anchor="midleft")
 
         # Without a checklist the chore itself is the one "item": always 0/1
         # here (cleaning_chores only holds uncompleted chores), and no
@@ -4368,14 +4370,18 @@ def _layout_chore_rows(checklist, text_width, available_height, gap):
     [(lines, row_height)]). If even the smallest size overflows, the caller
     shows as many rows as fit plus "+N weitere"."""
     min_row_height = 52
-    base_height = max(min_row_height, min(84, available_height // max(1, len(checklist)) - gap))
+    max_row_height = 84
     for font in CHORE_ITEM_FONTS:
         layout = []
         for entry in checklist:
             lines = _wrap_text_hard(font, _chore_item_display_text(entry["item"]), text_width)
-            layout.append((lines, max(base_height, len(lines) * font.get_linesize() + 16)))
-        if sum(height for _, height in layout) + gap * (len(layout) - 1) <= available_height:
-            return font, layout
+            layout.append((lines, max(min_row_height, len(lines) * font.get_linesize() + 16)))
+        spare = available_height - sum(height for _, height in layout) - gap * (len(layout) - 1)
+        if spare >= 0:
+            # Short items get tall rows only out of space that's left over, so
+            # they never force the long ones down to a smaller font.
+            extra = spare // max(1, len(layout))
+            return font, [(lines, max(height, min(max_row_height, height + extra))) for lines, height in layout]
     # Nothing fits: smallest font, minimum row height, caller truncates rows.
     return font, [(lines, max(min_row_height, len(lines) * font.get_linesize() + 16)) for lines, _ in layout]
 
@@ -4395,13 +4401,13 @@ def draw_chore_detail():
 
     win = pygame.Rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT)
     inner = K.window(tft_surf, win, f"putzdienste.exe - {header.get('name') or '?'}", icon="broom")
-    CHORE_DETAIL_TITLE_X = K.title_buttons(win)["x"]
+    CHORE_DETAIL_TITLE_X = K.close_box(win)
     y = inner.y + 2
     title = header.get("full_name") or header.get("name") or "?"
     for line in K.wrap(title, 18, inner.w - 8)[:2]:
         K.t95(tft_surf, line, 18, (inner.x + 4, y))
         y += 24
-    K.t95(tft_surf, header.get("assigned_to") or "niemand zugeteilt", 14, (inner.x + 4, y + 2), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, header.get("assigned_to") or "niemand zugeteilt", 16, (inner.x + 4, y + 2), color=K.F_DARK, bold=False)
     y += 26
     if checklist:
         done = sum(1 for entry in checklist if entry["done"])
@@ -4416,7 +4422,7 @@ def draw_chore_detail():
     CHORE_DETAIL_ROW_RECTS = []
     if chore is None:
         K.t95(tft_surf, "Nicht mehr offen", 20, (lv.centerx, lv.centery - 14), anchor="center")
-        K.t95(tft_surf, "(in der App erledigt?)", 14, (lv.centerx, lv.centery + 16), color=K.F_DARK, bold=False, anchor="center")
+        K.t95(tft_surf, "(in der App erledigt?)", 16, (lv.centerx, lv.centery + 16), color=K.F_DARK, bold=False, anchor="center")
     else:
         gap = 4
         box_size = 32
@@ -4448,7 +4454,7 @@ def draw_chore_detail():
             shown += 1
         if shown < len(checklist):
             # Only when even the smallest font can't fit everything.
-            K.t95(tft_surf, f"+{len(checklist) - shown} weitere in der App", 14, (lv.centerx, row_y + 2), color=K.F_DARK, bold=False, anchor="midtop")
+            K.t95(tft_surf, f"+{len(checklist) - shown} weitere in der App", 16, (lv.centerx, row_y + 2), color=K.F_DARK, bold=False, anchor="midtop")
 
     if CHORE_DETAIL_ERROR:
         status, status_color = CHORE_DETAIL_ERROR, K.F_LATE
@@ -4458,9 +4464,9 @@ def draw_chore_detail():
         status, status_color = "Aktualisiere...", K.F_DARK
     else:
         # Completing/handing over is deliberately app-only (no button here).
-        status, status_color = "Abhaken hier, erledigen in der App", K.F_DARK
-    for i, line in enumerate(K.wrap(status, 12, inner.w - 146, bold=False)[:3]):
-        K.t95(tft_surf, line, 12, (inner.x + 4, inner.bottom - 50 + i * 16), color=status_color, bold=False)
+        status, status_color = "Hier abhaken, erledigen in App", K.F_DARK
+    for i, line in enumerate(K.wrap(status, 16, inner.w - 146, bold=False)[:2]):
+        K.t95(tft_surf, line, 16, (inner.x + 4, inner.bottom - 48 + i * 22), color=status_color, bold=False)
 
 
 def handle_cleaning_chore_list_click(mx, my):
@@ -4716,7 +4722,7 @@ def draw_quiz_name_stage(card):
     global QUIZ_NAME_RECTS, QUIZ_NAME_ACTION_RECTS
 
     K.t95(tft_surf, "Wer bist du?", 24, (card.x + 4, card.y + 4))
-    K.t95(tft_surf, "Der AFM-Test: atzig, fotzig oder mausig?", 14, (card.x + 4, card.y + 40), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, "Der AFM-Test: atzig, fotzig oder mausig?", 16, (card.x + 4, card.y + 40), color=K.F_DARK, bold=False)
     K.textfield(tft_surf, pygame.Rect(card.x, card.y + 76, card.w, 50), QUIZ_NAME_TEXT, "Name eintippen")
     keys = K.keyboard95(tft_surf, pygame.Rect(card.x, card.y + 140, card.w, 300),
                         ["qwertzuiop", "asdfghjkl", "yxcvbnm"],
@@ -4733,7 +4739,7 @@ def draw_quiz_name_stage(card):
 
     # Skip taking the quiz entirely and just look at the results triangle -
     # a link rather than a button, tap target padded out for touch.
-    link = K.t95(tft_surf, "Nur Ergebnisse anzeigen", 15, (card.x + 4, card.y + 540), color=(60, 40, 200), bold=False)
+    link = K.t95(tft_surf, "Nur Ergebnisse anzeigen", 17, (card.x + 4, card.y + 540), color=(60, 40, 200), bold=False)
     pygame.draw.line(tft_surf, (60, 40, 200), (link.left, link.bottom + 1), (link.right, link.bottom + 1), 1)
 
     QUIZ_NAME_ACTION_RECTS = {
@@ -4913,7 +4919,7 @@ def draw_quiz_question_stage(card):
 
     question = QUIZ_QUESTIONS[QUIZ_QUESTION_INDEX]
     K.progress95(tft_surf, pygame.Rect(card.x, card.y, card.w, 22), QUIZ_QUESTION_INDEX + 1, len(QUIZ_QUESTIONS))
-    K.t95(tft_surf, f"zufällig aus {len(QUIZ_QUESTION_BANK)} Fragen ausgewählt", 12, (card.x + 2, card.y + 30), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, f"zufällig aus {len(QUIZ_QUESTION_BANK)} Fragen ausgewählt", 14, (card.x + 2, card.y + 30), color=K.F_DARK, bold=False)
 
     size = 21
     lines = K.wrap(question["text"], size, card.w - 8)
@@ -5225,7 +5231,7 @@ def draw_quiz_overlay():
     else:
         title = "afm-test.exe - Ergebnis"
     card = K.window(tft_surf, frame, title, icon="quiz")
-    QUIZ_TITLE_X = K.title_buttons(frame)["x"]
+    QUIZ_TITLE_X = K.close_box(frame)
     K.taskbar(tft_surf, datetime.datetime.now(), _weather_kind(), tasks=[("quiz", "afm-test.exe")])
 
     if QUIZ_STAGE == "name":
@@ -5325,10 +5331,10 @@ def handle_quiz_click(mx, my):
 # buttons do dadaist things; o (or a double-tap on the title bar) opens the
 # window's detail view.
 
-WIN_UHR = pygame.Rect(8, 8, 464, 176)
-WIN_WETTER = pygame.Rect(8, 190, 464, 156)
-WIN_BVG = pygame.Rect(8, 352, 464, 296)
-WIN_WG = pygame.Rect(8, 654, 464, 100)
+WIN_UHR = pygame.Rect(8, 8, 464, 160)
+WIN_WETTER = pygame.Rect(8, 174, 464, 156)
+WIN_BVG = pygame.Rect(8, 336, 464, 296)
+WIN_WG = pygame.Rect(8, 638, 464, 116)
 HOME_WINDOWS = {"uhr": WIN_UHR, "wetter": WIN_WETTER, "bvg": WIN_BVG, "wg": WIN_WG}
 HOME_WINDOW_TITLES = {"uhr": "uhr.exe", "wetter": "wetter.exe", "bvg": "bvg.exe", "wg": "wg.txt"}
 HOME_WINDOW_ICONS = {"uhr": "clock", "wetter": "weather", "bvg": "bus", "wg": "note"}
@@ -5368,7 +5374,7 @@ RAIN_REFRESH_SECONDS = 20 * 60
 # EGG_SECONDS closes it and the emotion prompt (if due) comes after.
 EGGS_CONFIG = config.get("EGGS", {})
 EGGS_ENABLED = EGGS_CONFIG.get("ENABLED", False)
-EGGS_ONE_IN = max(1, int(EGGS_CONFIG.get("ONE_IN", 15)))
+EGGS_ONE_IN = max(1, int(EGGS_CONFIG.get("ONE_IN", 5)))
 EGG_SECONDS = 10.0
 EGG_KINDS = ["assistant", "peek", "bluescreen0", "bluescreen1", "bluescreen2", "update"]
 EGG = None
@@ -5543,18 +5549,18 @@ def _draw_wg_line(prefix, content, y, x_left, max_width):
     """One wg.txt line: the "TUN: "-style prefix stays put, only the content
     after it scrolls (clipped) when it's wider than the window, so nothing is
     ever permanently hidden - see _moabeats_scroll_offset()."""
-    f = K.font(14, False)
-    prefix_rect = K.t95(tft_surf, prefix, 14, (x_left, y), bold=False) if prefix else pygame.Rect(x_left, y, 0, 0)
+    f = K.font(16, False)
+    prefix_rect = K.t95(tft_surf, prefix, 16, (x_left, y), bold=False) if prefix else pygame.Rect(x_left, y, 0, 0)
     content_x = x_left + prefix_rect.width
     content_max_width = max_width - prefix_rect.width
     content_width = f.size(content)[0]
     if content_width <= content_max_width:
-        K.t95(tft_surf, content, 14, (content_x, y), bold=False)
+        K.t95(tft_surf, content, 16, (content_x, y), bold=False)
         return
     offset = _moabeats_scroll_offset(content_width - content_max_width)
     previous_clip = tft_surf.get_clip()
-    tft_surf.set_clip(pygame.Rect(content_x, y - 2, content_max_width, 22))
-    K.t95(tft_surf, content, 14, (content_x - offset, y), bold=False)
+    tft_surf.set_clip(pygame.Rect(content_x, y - 2, content_max_width, 24))
+    K.t95(tft_surf, content, 16, (content_x - offset, y), bold=False)
     tft_surf.set_clip(previous_clip)
 
 
@@ -5570,14 +5576,14 @@ def _draw_home_static(surf, now):
     rects = {}
 
     if "uhr" not in MINIMIZED:
-        inner = K.window(surf, WIN_UHR, f"uhr.exe - {K.WD_SHORT[now.weekday()]} {now.strftime('%d.%m.%Y')}", icon="clock")
+        inner = K.window(surf, WIN_UHR, f"uhr.exe - {K.WD_SHORT[now.weekday()]} {now.strftime('%d.%m.%Y')}", icon="clock", buttons="xo_")
         K.bevel(surf, inner, sunken=True, face=(16, 6, 24))
         x0 = inner.x + 26
         for i, ch in enumerate(now.strftime("%H%M")):
             K.seven_seg(surf, ch, x0 + i * 100 + (30 if i >= 2 else 0), inner.y + 14, 70, inner.h - 28)
 
     if "wetter" not in MINIMIZED:
-        inner = K.window(surf, WIN_WETTER, "wetter.exe", icon="weather")
+        inner = K.window(surf, WIN_WETTER, "wetter.exe", icon="weather", buttons="xo_")
         current, daily = _weather_now()
         if current is None:
             K.t95(surf, "Wetter lädt...", 18, (inner.x + 8, inner.y + 8))
@@ -5586,15 +5592,15 @@ def _draw_home_static(surf, now):
             unit = "°C" if METRIC else "°F"
             surf.blit(K.weather_icon(kind, 96), (inner.x + 2, inner.y + 4))
             K.t95(surf, f"{round(current['temp'])}{unit}", 40, (inner.x + 108, inner.y - 2))
-            K.t95(surf, K.QUIRKY_DESC[kind], 15, (inner.x + 110, inner.y + 50), bold=False)
+            K.t95(surf, K.QUIRKY_DESC[kind], 17, (inner.x + 110, inner.y + 46), bold=False)
             today = daily[0]
-            K.t95(surf, f"{round(today['min_temp'])}° bis {round(today['max_temp'])}°", 15, (inner.x + 110, inner.y + 72), color=K.F_DARK, bold=False)
+            K.t95(surf, f"{round(today['min_temp'])}° bis {round(today['max_temp'])}°", 16, (inner.x + 110, inner.y + 70), color=K.F_DARK, bold=False)
         hours, probs = _rain_view(now)
         graph = pygame.Rect(inner.right - 160, inner.y + 2, 158, 78)
         K.rain_chart(surf, graph, hours, probs)
-        K.t95(surf, "Regen 12h", 12, (graph.x + 6, graph.y + 3), color=K.F_DARK, bold=False)
+        K.t95(surf, "Regen 12h", 14, (graph.x + 6, graph.y + 3), color=K.F_DARK, bold=False)
         msg, wet = K.rain_summary(hours, probs)
-        K.t95(surf, msg, 15, (inner.x + 4, inner.bottom - 22), color=K.F_ACCENT if wet else K.F_INK)
+        K.t95(surf, msg, 17, (inner.x + 4, inner.bottom - 24), color=K.F_ACCENT if wet else K.F_INK)
         rects["mehr"] = K.button(surf, pygame.Rect(inner.right - 110, inner.bottom - 30, 108, 30), "Mehr...")
 
     if "bvg" not in MINIMIZED:
@@ -5604,7 +5610,7 @@ def _draw_home_static(surf, now):
             rects.update(_draw_bvg_window(surf, now))
 
     if "wg" not in MINIMIZED:
-        inner = K.window(surf, WIN_WG, "wg.txt - Editor", icon="note")
+        inner = K.window(surf, WIN_WG, "wg.txt - Editor", icon="note", buttons="xo_")
         K.bevel(surf, inner, sunken=True, face=K.F_PAPER)
 
     for name in MINIMIZED:
@@ -5615,14 +5621,14 @@ def _draw_home_static(surf, now):
 
 
 def _draw_bvg_window(surf, now):
-    inner = K.window(surf, WIN_BVG, "bvg.exe", icon="bus")
+    inner = K.window(surf, WIN_BVG, "bvg.exe", icon="bus", buttons="xo_")
     lv = pygame.Rect(inner.x, inner.y, inner.w, inner.h - 38)
     K.bevel(surf, lv, sunken=True, face=K.F_PAPER)
-    hx = [lv.x + 2, lv.x + 120, lv.x + 300, lv.right - 2]
+    hx = [lv.x + 2, lv.x + 120, lv.x + 312, lv.right - 2]
     for i, label in enumerate(["Linie", "Richtung", "Abfahrt"]):
         b = pygame.Rect(hx[i], lv.y + 2, hx[i + 1] - hx[i], 22)
         K.bevel(surf, b)
-        K.t95(surf, label, 13, (b.x + 6, b.y + 3))
+        K.t95(surf, label, 15, (b.x + 6, b.y + 2))
     rows = _bvg_rows_view(now)
     row_h = min(46, (lv.h - 28) // max(1, len(rows)))
     soonest = min(range(len(rows)), key=lambda i: rows[i]["mins"][0] if rows[i]["mins"] else 999) if rows else None
@@ -5635,12 +5641,12 @@ def _draw_bvg_window(surf, now):
         surf.blit(K.arrow_icon(row["icon"], 22, (120, 70, 200)), (rr.x + 4, rr.centery - 11))
         K.line_badge(surf, row["line"], (rr.x + 34, rr.centery - 13), size=16)
         surf.blit(K.landmark_icon(row["landmark"], 42), (hx[1] + 2, rr.centery - 21))
-        K.t95(surf, row["label"], K.fit_size(row["label"], hx[2] - hx[1] - 54, sizes=(16, 14, 12)), (hx[1] + 50, rr.centery - 10))
+        K.t95(surf, row["label"], K.fit_size(row["label"], hx[2] - hx[1] - 54, sizes=(18, 17, 16, 14)), (hx[1] + 50, rr.centery - 10))
         first, rest = K.mins_text(row["mins"])
         color = K.due_color(row["delays"][0]) if row["mins"] else K.F_DARK
         K.t95(surf, first, 18, (hx[2] + 6, rr.y + 3), color=color)
         if rest:
-            K.t95(surf, f"dann {rest}", 13, (hx[2] + 6, rr.y + 26), color=K.F_DARK, bold=False)
+            K.t95(surf, f"dann {rest}", K.fit_size(f"dann {rest}", hx[3] - hx[2] - 10, sizes=(15, 14, 13)), (hx[2] + 6, rr.y + 25), color=K.F_DARK, bold=False)
         y += row_h
     status = pygame.Rect(inner.x, inner.bottom - 32, 250, 30)
     K.bevel(surf, status, sunken=True)
@@ -5648,13 +5654,13 @@ def _draw_bvg_window(surf, now):
         stand = f"Stand {convert_timestamp(UPDATED_BVG_TIME, '%H:%M:%S')}"
     else:
         stand = "Keine Verbindung zur BVG"
-    K.t95(surf, stand, 13, (status.x + 8, status.centery), color=K.F_DARK, bold=False, anchor="midleft")
+    K.t95(surf, stand, 15, (status.x + 8, status.centery), color=K.F_DARK, bold=False, anchor="midleft")
     rects = {}
     if BVG_MAP:
         kb = pygame.Rect(inner.right - 126, inner.bottom - 32, 126, 32)
         K.bevel(surf, kb)
         surf.blit(K.menu_icon("map", 20), (kb.x + 8, kb.y + 6))
-        K.t95(surf, "Karte...", 15, (kb.x + 34, kb.centery), anchor="midleft")
+        K.t95(surf, "Karte...", 17, (kb.x + 34, kb.centery), anchor="midleft")
         rects["karte"] = kb
     return rects
 
@@ -5665,10 +5671,10 @@ def _draw_sev(surf, rect):
     K.t95(surf, "bvg.exe wurde durch", 17, (inner.x + 8, inner.y + 10))
     K.t95(surf, "Schienenersatzverkehr", 17, (inner.x + 8, inner.y + 34), color=K.F_ACCENT)
     K.t95(surf, "ersetzt.", 17, (inner.x + 8, inner.y + 58))
-    K.t95(surf, "Ersatzbusse werden gesucht...", 14, (inner.x + 8, inner.y + 110), color=K.F_DARK, bold=False)
+    K.t95(surf, "Ersatzbusse werden gesucht...", 16, (inner.x + 8, inner.y + 110), color=K.F_DARK, bold=False)
     done = min(10, int((time.time() - (SEV_UNTIL - SEV_SECONDS)) / SEV_SECONDS * 10) + 1)
     K.progress95(surf, pygame.Rect(inner.x + 8, inner.y + 134, inner.w - 16, 24), done, 12)
-    K.t95(surf, "Verbleibende Zeit: ca. 2 Jahre", 14, (inner.x + 8, inner.y + 170), color=K.F_DARK, bold=False)
+    K.t95(surf, "Verbleibende Zeit: ca. 2 Jahre", 16, (inner.x + 8, inner.y + 170), color=K.F_DARK, bold=False)
     surf.blit(K.menu_icon("bus", 64), (inner.right - 74, inner.y + 8))
 
 
@@ -5732,7 +5738,7 @@ def draw_home():
         previous_clip = tft_surf.get_clip()
         tft_surf.set_clip(inner.inflate(-4, -4))
         for index, (prefix, content) in enumerate(_moabeats_wg_lines()[:3]):
-            _draw_wg_line(prefix, content, inner.y + 3 + index * 18, inner.x + 8, inner.w - 16)
+            _draw_wg_line(prefix, content, inner.y + 2 + index * 23, inner.x + 8, inner.w - 16)
         tft_surf.set_clip(previous_clip)
 
     if START_MENU_OPEN:
@@ -5861,24 +5867,24 @@ def draw_home_window(now):
     global HOME_WINDOW_RECTS
     tft_surf.blit(K.desktop(), (0, 0))
     frame = pygame.Rect(0, 0, DISPLAY_WIDTH, DISPLAY_HEIGHT - 40)
-    rects = dict(K.title_buttons(frame))
+    rects = {"x": K.close_box(frame)}
     if HOME_WINDOW == "wetter":
         inner = K.window(tft_surf, frame, "wetter.exe - Details", icon="weather")
         _draw_weather_details(inner, now)
         rects["back"] = K.button(tft_surf, pygame.Rect(inner.right - 122, inner.bottom - 36, 122, 36), "< Zurück", size=16)
-        K.t95(tft_surf, "Quelle: Weatherbit + Open-Meteo", 11, (inner.x + 4, inner.bottom - 18), color=K.F_DARK, bold=False, anchor="midleft")
+        K.t95(tft_surf, "Quelle: Weatherbit + Open-Meteo", 13, (inner.x + 4, inner.bottom - 18), color=K.F_DARK, bold=False, anchor="midleft")
         tasks = [("weather", "wetter.exe")]
     elif HOME_WINDOW == "karte":
         inner = K.window(tft_surf, frame, "karte.exe - Kiez", icon="map")
         mb = pygame.Rect(inner.x, inner.y - 2, inner.w, 22)
         for item, x in zip(["Datei", "Ansicht", "Busse", "?"], [0, 56, 130, 192]):
-            K.t95(tft_surf, item, 14, (mb.x + 6 + x, mb.y + 2), bold=False)
+            K.t95(tft_surf, item, 15, (mb.x + 6 + x, mb.y + 2), bold=False)
         area = pygame.Rect(inner.x, mb.bottom + 2, inner.w, inner.h - 60)
         K.draw_map(tft_surf, area, BVG_MAP, {row["id"]: row for row in _bvg_rows_view(now)})
         status = pygame.Rect(inner.x, inner.bottom - 34, inner.w - 130, 32)
         K.bevel(tft_surf, status, sunken=True)
         stand = f"Stand {convert_timestamp(UPDATED_BVG_TIME, '%H:%M:%S')}" if UPDATED_BVG_TIME else "Keine Verbindung zur BVG"
-        K.t95(tft_surf, stand, 13, (status.x + 8, status.centery), color=K.F_DARK, bold=False, anchor="midleft")
+        K.t95(tft_surf, stand, 15, (status.x + 8, status.centery), color=K.F_DARK, bold=False, anchor="midleft")
         rects["back"] = K.button(tft_surf, pygame.Rect(inner.right - 122, inner.bottom - 34, 122, 34), "< Zurück", size=16)
         tasks = [("map", "karte.exe")]
     else:  # "clock": hours over minutes, tap anywhere to restore
@@ -5913,11 +5919,11 @@ def _draw_weather_details(inner, now):
     K.groupbox(tft_surf, g, "Jetzt")
     tft_surf.blit(K.weather_icon(kind, 112), (g.x + 8, g.y + 18))
     K.t95(tft_surf, f"{round(current['temp'])}{unit}", 44, (g.x + 132, g.y + 10))
-    K.t95(tft_surf, K.QUIRKY_DESC[kind], 16, (g.x + 134, g.y + 66))
-    K.t95(tft_surf, f"gefühlt {round(current['app_temp'])}°", 14, (g.x + 134, g.y + 90), color=K.F_DARK, bold=False)
-    K.t95(tft_surf, f"Wind {round(wind)} {wind_unit} {current['wind_cdir']}", 14, (g.x + 134, g.y + 110), color=K.F_DARK, bold=False)
-    K.t95(tft_surf, f"Luft {round(current['rh'])}%", 14, (g.right - 12, g.y + 90), color=K.F_DARK, bold=False, anchor="topright")
-    K.t95(tft_surf, f"UV {round(current['uv'])}", 14, (g.right - 12, g.y + 110), color=K.F_DARK, bold=False, anchor="topright")
+    K.t95(tft_surf, K.QUIRKY_DESC[kind], 18, (g.x + 134, g.y + 64))
+    K.t95(tft_surf, f"gefühlt {round(current['app_temp'])}°", 16, (g.x + 134, g.y + 90), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, f"Wind {round(wind)} {wind_unit} {current['wind_cdir']}", 16, (g.x + 134, g.y + 113), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, f"Luft {round(current['rh'])}%", 16, (g.right - 12, g.y + 90), color=K.F_DARK, bold=False, anchor="topright")
+    K.t95(tft_surf, f"UV {round(current['uv'])}", 16, (g.right - 12, g.y + 113), color=K.F_DARK, bold=False, anchor="topright")
 
     g = pygame.Rect(inner.x + 4, g.bottom + 18, inner.w - 8, 196)
     K.groupbox(tft_surf, g, "Regen, nächste 12 Stunden")
@@ -5933,13 +5939,13 @@ def _draw_weather_details(inner, now):
     sunset = convert_timestamp(today["sunset_ts"], theme["DATE_FORMAT"]["SUNRISE_SUNSET"])
     tft_surf.blit(K.sunrise_icon(48), (g.x + 10, g.y + 22))
     K.t95(tft_surf, rise, 20, (g.x + 62, g.y + 24))
-    K.t95(tft_surf, "auf", 13, (g.x + 62, g.y + 50), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, "auf", 15, (g.x + 62, g.y + 50), color=K.F_DARK, bold=False)
     tft_surf.blit(K.sunrise_icon(48), (g.x + 152, g.y + 22))
     K.t95(tft_surf, sunset, 20, (g.x + 204, g.y + 24))
-    K.t95(tft_surf, "unter", 13, (g.x + 204, g.y + 50), color=K.F_DARK, bold=False)
+    K.t95(tft_surf, "unter", 15, (g.x + 204, g.y + 50), color=K.F_DARK, bold=False)
     lunation = float(today.get("moon_phase_lunation", 0.5))
     tft_surf.blit(K.moon_phase(lunation, 48), (g.x + 300, g.y + 22))
-    K.t95(tft_surf, K.moon_name(lunation), 14, (g.x + 354, g.y + 36), bold=False)
+    K.t95(tft_surf, K.moon_name(lunation), 15, (g.x + 352, g.y + 36))
 
     g = pygame.Rect(inner.x + 4, g.bottom + 18, inner.w - 8, 176)
     K.groupbox(tft_surf, g, "Nächste Tage")
@@ -5948,10 +5954,10 @@ def _draw_weather_details(inner, now):
         c = pygame.Rect(g.x + 10 + i * (cw + 8), g.y + 16, cw, g.h - 26)
         K.bevel(tft_surf, c, sunken=True, face=K.F_PAPER)
         dt = datetime.datetime.strptime(day["valid_date"], "%Y-%m-%d")
-        K.t95(tft_surf, K.WEEKDAYS[dt.weekday()], 15, (c.centerx, c.y + 8), anchor="midtop")
+        K.t95(tft_surf, K.WEEKDAYS[dt.weekday()], 17, (c.centerx, c.y + 6), anchor="midtop")
         tft_surf.blit(K.weather_icon(K.kind_of(day["weather"]["code"]), 64), (c.centerx - 32, c.y + 28))
-        K.t95(tft_surf, f"{round(day['max_temp'])}° / {round(day['min_temp'])}°", 15, (c.centerx, c.y + 96), anchor="midtop")
-        K.t95(tft_surf, f"Regen {day['pop']}%", 13, (c.centerx, c.y + 118), color=K.F_DARK, bold=False, anchor="midtop")
+        K.t95(tft_surf, f"{round(day['max_temp'])}° / {round(day['min_temp'])}°", 17, (c.centerx, c.y + 94), anchor="midtop")
+        K.t95(tft_surf, f"Regen {day['pop']}%", 15, (c.centerx, c.y + 118), color=K.F_DARK, bold=False, anchor="midtop")
 
 
 def draw_dada():
@@ -5990,7 +5996,7 @@ def _home_title_action(window_name, glyph):
 def handle_home_click(mx, my):
     """Taps on the awake KiezOS desktop (Start menu, dada boxes, the home
     windows and their detail views). Runs last in handle_tap()."""
-    global HOME_WINDOW_LAST_ACTIVITY_TS, START_MENU_OPEN, TITLE_TAP, DADA
+    global HOME_WINDOW_LAST_ACTIVITY_TS, START_MENU_OPEN, TITLE_TAP, DADA, SEV_UNTIL
     if DISPLAY_BLANK or dashboard_overlay_open():
         return False
 
@@ -6026,6 +6032,9 @@ def handle_home_click(mx, my):
         START_MENU_OPEN = True
         return True
 
+    if time.time() < SEV_UNTIL and "bvg" not in MINIMIZED and K.close_box(WIN_BVG).collidepoint((mx, my)):
+        SEV_UNTIL = 0  # sev.exe's x gives bvg.exe back
+        return True
     for name, win in HOME_WINDOWS.items():
         if name in MINIMIZED or (name == "bvg" and time.time() < SEV_UNTIL):
             continue
@@ -6091,7 +6100,7 @@ def draw_shutdown():
     K.t95(tft_surf, "Merz hat es verboten.", 16, (w // 2, y + 24), color=(200, 170, 255), bold=False, anchor="midtop")
     K.heart(tft_surf, (w // 2 - 70, y + 82), 3, K.PINK)
     K.t95(tft_surf, "Ju likes you", 16, (w // 2 - 50, y + 72), color=(200, 170, 255), bold=False)
-    K.t95(tft_surf, "(tippen zum Zurückkehren)", 12, (w // 2, DISPLAY_HEIGHT - 40), color=(110, 90, 140), bold=False, anchor="midtop")
+    K.t95(tft_surf, "(tippen zum Zurückkehren)", 15, (w // 2, DISPLAY_HEIGHT - 40), color=(110, 90, 140), bold=False, anchor="midtop")
 
 
 def handle_shutdown_click(mx, my):
@@ -6125,11 +6134,11 @@ def draw_egg():
         if EGG == "assistant":
             K.speech(tft_surf, pygame.Rect(226, 420, 246, 160),
                      ["Es sieht so aus, als", "wolltest du Bus fahren.", "Nimm lieber einen", "Privatjet."], (414, 650))
-            EGG_RECTS["hilfe"] = K.button(tft_surf, pygame.Rect(358, 538, 102, 30), "Hilfe!", size=14).inflate(8, 14)
-            K.button(tft_surf, pygame.Rect(238, 538, 112, 30), "Wegtreten", size=14)
+            EGG_RECTS["hilfe"] = K.button(tft_surf, pygame.Rect(358, 538, 102, 30), "Hilfe!", size=16).inflate(8, 14)
+            K.button(tft_surf, pygame.Rect(238, 538, 112, 30), "Wegtreten", size=16)
         else:
             K.speech(tft_surf, pygame.Rect(226, 450, 246, 120), ["Hilfe gibt es nur", "für Unternehmen."], (414, 650), size=16)
-            K.button(tft_surf, pygame.Rect(238, 528, 112, 30), "Wegtreten", size=14)
+            K.button(tft_surf, pygame.Rect(238, 528, 112, 30), "Wegtreten", size=16)
         merz = K.merz_sprite(152)  # 4 px per cell
         tft_surf.blit(merz, (w - merz.get_width() - 4, h - 40 - merz.get_height()))
     elif EGG == "peek":
@@ -6149,15 +6158,15 @@ def draw_egg():
         tft_surf.blit(K.desktop(), (0, 0))
         inner = K.dialog(tft_surf, pygame.Rect(30, 250, w - 60, 250), "KiezOS 161 Update", icon="power")
         K.t95(tft_surf, "Update 3 von 69 wird installiert...", 16, (inner.x + 8, inner.y + 10))
-        K.t95(tft_surf, "Bitte den Kühlschrank nicht öffnen", 14, (inner.x + 8, inner.y + 40), bold=False)
-        K.t95(tft_surf, "und den Pi nicht ausschalten.", 14, (inner.x + 8, inner.y + 60), bold=False)
+        K.t95(tft_surf, "Bitte den Kühlschrank nicht öffnen", 16, (inner.x + 8, inner.y + 38), bold=False)
+        K.t95(tft_surf, "und den Pi nicht ausschalten.", 16, (inner.x + 8, inner.y + 60), bold=False)
         bar = pygame.Rect(inner.x + 8, inner.y + 100, inner.w - 16, 30)
         K.bevel(tft_surf, bar, sunken=True, face=K.F_PAPER)
         blocks = 6 + int((EGG_SECONDS - (EGG_UNTIL - time.time())) / 2)  # creeps, never finishes
         for i in range(min(blocks, (bar.w - 8) // 16)):
             pygame.draw.rect(tft_surf, K.F_SEL, (bar.x + 4 + i * 16, bar.y + 4, 13, bar.h - 8))
-        K.t95(tft_surf, "Verbleibend: ca. 4 Legislaturperioden", 13, (inner.x + 8, inner.y + 144), color=K.F_DARK, bold=False)
-        K.button(tft_surf, pygame.Rect(inner.right - 110, inner.bottom - 34, 110, 32), "Abbrechen", size=14)
+        K.t95(tft_surf, "Verbleibend: ca. 4 Legislaturperioden", 15, (inner.x + 8, inner.y + 144), color=K.F_DARK, bold=False)
+        K.button(tft_surf, pygame.Rect(inner.right - 110, inner.bottom - 34, 110, 32), "Abbrechen", size=16)
         K.taskbar(tft_surf, datetime.datetime.now(), _weather_kind())
 
 

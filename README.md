@@ -295,7 +295,7 @@ default) and ignore this section entirely.
 ```json
 "EGGS": {
   "ENABLED": false,
-  "ONE_IN": 15
+  "ONE_IN": 5
 }
 ```
 - When the display wakes up from motion (PIR), there's a 1 in `ONE_IN` chance that KiezOS 161 does something unexpected instead of just showing the dashboard (never the same surprise twice in a row). A tap or ~10 seconds closes it; the normal dashboard and emotion prompt follow as usual. Touch wakes never trigger one.
@@ -321,10 +321,10 @@ default) and ignore this section entirely.
 - Whenever the display is reactivated from blank state (touch or PIR motion), an emotion popup can appear.
 - Prompt frequency is rate-limited by `COOLDOWN_SECONDS` (default: once every 30 minutes).
 - The post-save confirmation popup stays visible for `CONFIRMATION_SECONDS` (default: 5 seconds).
-- Emotion buttons show up to 16 options (default catalog + custom slots), plus `Abbrechen` and `Ergebnisse anzeigen` actions (also under `Start` → `Stimmung & Stats`).
-- `Ergebnisse anzeigen` opens a second overlay with a QR code to the web results page.
+- Emotion buttons show up to 16 options (default catalog + custom slots), plus `Cancel` and `Show results` actions (also under `Start` → `Stimmung & Stats`). This window (`mood.exe`) is English, like the emotion names it logs.
+- `Show results` opens a second overlay with a QR code to the web results page.
 - If nobody interacts, prompt dismissal follows `TIMER.DISPLAY_BLANK` timing and is not logged.
-- **Custom emotions**: Tap `eigene...` to enter text. New emotions auto-deduplicate against catalog. If LLM enabled, auto-classifies with emoji, color, and position on sentiment spectrum (green=positive→red=negative). Spelling fixes from LLM map back to existing entries.
+- **Custom emotions**: Tap `custom...` to enter text. New emotions auto-deduplicate against catalog. If LLM enabled, auto-classifies with emoji, color, and position on sentiment spectrum (green=positive→red=negative). Spelling fixes from LLM map back to existing entries.
 
 #### Local Web Dashboard
 ```json

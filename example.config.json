@@ -190,7 +190,7 @@
   },
   "EGGS": {
     "ENABLED": false,
-    "ONE_IN": 15
+    "ONE_IN": 5
   },
   "ENV": "Pi",
   "LOG_TO_FILES": false,

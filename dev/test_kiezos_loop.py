@@ -5,7 +5,7 @@ End-to-end smoke test of the KiezOS 161 dashboard: runs PiDashboard.py's
 real loop() (scheduler threads, event queue, timeouts, blanking) headless
 and drives it with posted touch events from a second thread, the way the
 touchscreen does: Start menu -> STAPEL-TURM -> x, Mehr... -> Zurück,
-uhr.exe maximise, a dada box, display blank + touch wake, a PIR wake with a
+uhr.exe maximise, dada boxes, every popup's x, display blank + touch wake, a PIR wake with a
 surprise (forced) followed by the emotion prompt, the 5-tap emergency exit
 counter, then QUIT. Fails on any exception in the loop or a step whose
 effect doesn't show up.
@@ -101,6 +101,22 @@ def driver():
         tap(P.DADA_BUTTON_RECTS[1][0])  # Nein!
         check("Nein! closes it", P.DADA is None)
 
+        # Popups have one x (no o/_), and it closes them.
+        tap(P.K.title_buttons(P.WIN_UHR)["x"])
+        tap(next(r for r, label in P.DADA_BUTTON_RECTS if label == "x"))
+        check("dada box x closes it", P.DADA is None)
+        tap(P.HOME_RECTS["mehr"])
+        tap(P.HOME_WINDOW_RECTS["x"])
+        check("wetter details x closes", P.HOME_WINDOW is None)
+        P.open_games_menu()
+        time.sleep(0.3)
+        tap(P.GAMES_MENU_TITLE_X)
+        check("spiele.exe x closes", not P.games_open())
+        tap(P.K.title_buttons(P.WIN_BVG)["x"])
+        check("bvg.exe x -> sev.exe", time.time() < P.SEV_UNTIL)
+        tap(P.K.close_box(P.WIN_BVG))
+        check("sev.exe x gives bvg.exe back", time.time() >= P.SEV_UNTIL)
+
         # Display blank (idle timeout) and touch wake.
         P.LAST_TOUCH_TIME = time.time() - P.DISPLAY_BLANK_AFTER - 1
         time.sleep(0.5)
@@ -124,7 +140,7 @@ def driver():
         time.sleep(0.3)
         check("emotion prompt follows", P.EMOTION_PROMPT_VISIBLE)
         tap(P.EMOTION_ACTION_RECTS["cancel"])
-        check("Abbrechen logs a skip", not P.EMOTION_PROMPT_VISIBLE and LOGGED and LOGGED[-1].get("skipped"))
+        check("Cancel logs a skip", not P.EMOTION_PROMPT_VISIBLE and LOGGED and LOGGED[-1].get("skipped"))
 
         # Emergency exit: counts taps in the corner (4 only - 5 would quit).
         for _ in range(4):
