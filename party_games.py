@@ -11,9 +11,9 @@ PiDashboard.py itself, these two are self-contained):
 
 Each game is one object PiDashboard.py drives every frame: update(now),
 draw(surf), tap(x, y) -> None | "close" | "menu". All motion is dt-based,
-so the frame rate only changes smoothness. An all-time top 5 per game is
-kept in logs/ (highscore_store.py); getting into it asks for a name on an
-on-screen keyboard in the game-over panel.
+so the frame rate only changes smoothness. Every finished round is kept in
+logs/ (highscore_store.py); the game-over panel shows the whole Bestenliste
+(scrollable, own row highlighted) and adding a name is optional.
 """
 
 import math
@@ -22,14 +22,13 @@ import random
 import pygame
 
 import highscore_store
+import kiezos as K
 
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 GRAY = (150, 150, 150)
 BVG_YELLOW = (240, 215, 0)
 CLOSE_ORANGE = (255, 140, 0)
-PANEL_BG = (25, 25, 32)
-BUTTON_PURPLE = (196, 150, 255)
 
 # Ignore taps right after a game over, so frantic tapping doesn't hit
 # "NOCHMAL" by accident before people even saw the score.
@@ -39,11 +38,10 @@ GAME_OVER_TAP_DELAY_SECONDS = 0.8
 MAX_DT_SECONDS = 0.05
 
 NAME_MAX_CHARS = 10
-KEYBOARD_ROWS = ["QWERTZUIOP", "ASDFGHJKL", "YXCVBNM"]
-NAME_FALLBACK = "ANONYM"
-HIGHLIGHT_GREEN = (90, 255, 120)
+KEYBOARD_ROWS = ["QWERTZUIOP", "ASDFGHJKL", "YXCVBNMÄÖÜ"]  # umlauts where row 3 has room (10 keys max)
+ANON_LABEL = "anonym"  # list label of rounds saved without a name
 
-# Set by configure() from PiDashboard.py: game name -> top list, best first.
+# Set by configure() from PiDashboard.py: game name -> all rounds, best first.
 LOG_DIR = None
 HIGHSCORES = {}
 
@@ -64,15 +62,8 @@ def best(name):
     return entries[0] if entries else None
 
 
-def projected_place(name, score, lower_is_better=False):
-    """0-based place a score would get in the top list, None if it doesn't make it."""
-    if score <= 0:
-        return None
-    entries = top_list(name)
-    place = next(
-        (i for i, e in enumerate(entries) if highscore_store.better(score, e["score"], lower_is_better)), len(entries)
-    )
-    return place if place < highscore_store.TOP_N else None
+def entry_name(entry):
+    return entry.get("name") or ANON_LABEL
 
 
 class _Fonts:
@@ -92,6 +83,8 @@ class _Game:
     """Shared ready -> play -> over flow, HUD, close button and game-over panel."""
 
     NAME = ""
+    ICON = "games"  # kiezos.menu_icon kind for spiele.exe and the title bar
+    OVER_TOP = 16  # y of the game-over dialog (MerzResult draws on the full screen, below MERZ's title bar)
     READY_TEXT = "Tippen zum Starten"
     SCORE_LABEL = "Punkte"
     SCORE_UNIT = ""  # appended in lists/record lines, e.g. " s"
@@ -116,10 +109,15 @@ class _Game:
         self.over_at = 0.0
         self.over_text = ""
         self.buttons = {}
-        self.name_entry = False  # game-over panel shows the keyboard
+        self.name_entry = False  # game-over panel shows the (optional) name keyboard
         self.name_text = ""
         self.key_rects = []  # (rect, token) of the on-screen keyboard
-        self.place = None  # 0-based place in the top list once saved
+        self.place = None  # 0-based place in the Bestenliste once saved
+        self.entry_id = None  # this round's stored entry (for adding the name)
+        self.named = False  # a name was added to this round
+        self.list_top = None  # first visible Bestenliste row; None = scrolled to this round
+        self._over_key = None  # what the cached game-over dialog (_over_surf) shows
+        self._over_surf = None
 
     def tap(self, x, y):
         """Returns "close", "menu" or None (tap used by the game)."""
@@ -131,10 +129,16 @@ class _Game:
             if self.name_entry:
                 self._name_tap(x, y)
                 return None
-            if "again" in self.buttons and self.buttons["again"].collidepoint((x, y)):
+            hit = next((k for k, rect in self.buttons.items() if rect.collidepoint((x, y))), None)
+            if hit == "again":
                 return self.again()
-            elif "menu" in self.buttons and self.buttons["menu"].collidepoint((x, y)):
+            if hit == "menu":
                 return "menu"
+            if hit == "name":
+                self.name_entry = True
+            elif hit in ("up", "down"):
+                step = max(1, self.list_rows - 1)
+                self.list_top = max(0, min(self.list_top + (step if hit == "down" else -step), self.list_max_top))
             return None
         if self.state == "ready":
             self.state = "play"
@@ -146,6 +150,12 @@ class _Game:
     def again(self):
         self.reset(self.last_tick)
         return None
+
+    def drag(self, x, y):
+        """Finger moved while down (PiDashboard: MOUSEMOTION). Tap games ignore it."""
+
+    def release(self):
+        """Finger lifted (PiDashboard: MOUSEBUTTONUP). Tap games ignore it."""
 
     def _entry_extra(self):
         """Extra fields stored with this round's highscore entry."""
@@ -160,14 +170,17 @@ class _Game:
         self.step(dt)
 
     def game_over(self, text):
+        """Ends the round and stores it right away (without a name), so
+        walking away never loses a result."""
+        global HIGHSCORES
         self.state = "over"
         self.over_at = self.last_tick
         self.over_text = text
-        self.name_entry = self._projected_place() is not None
+        self.name_entry = False
         self.name_text = ""
-
-    def _projected_place(self):
-        return projected_place(self.NAME, self.score, self.LOWER_IS_BETTER)
+        HIGHSCORES, self.place, self.entry_id = highscore_store.submit_result(
+            LOG_DIR, self.NAME, self.score, self.LOWER_IS_BETTER, self._entry_extra()
+        )
 
     def _name_tap(self, x, y):
         token = next((t for rect, t in self.key_rects if rect.collidepoint((x, y))), None)
@@ -182,17 +195,19 @@ class _Game:
             self.name_text += token
 
     def save_name(self):
-        """Stores the score under the typed name (empty -> ANONYM). Also
-        called by PiDashboard.py when the game gets closed mid-entry (x, idle
-        timeout), so walking away doesn't lose a highscore."""
+        """Adds the typed name to this round's entry (nothing typed -> stays
+        anonym) and goes back to the list. Also called by PiDashboard.py when
+        the game gets closed mid-entry (x, idle timeout), so a typed name
+        isn't lost."""
         global HIGHSCORES
         if not self.name_entry:
             return
-        name = self.name_text.strip() or NAME_FALLBACK
-        HIGHSCORES, self.place = highscore_store.submit_highscore(
-            LOG_DIR, self.NAME, name, self.score, self.LOWER_IS_BETTER, self._entry_extra()
-        )
+        name = self.name_text.strip()
+        if name:
+            HIGHSCORES = highscore_store.set_name(LOG_DIR, self.NAME, self.entry_id, name)
+            self.named = True
         self.name_entry = False
+        self.list_top = None  # back to this round's row
 
     # Subclass hooks
     def start(self):
@@ -215,14 +230,24 @@ class _Game:
         return rect
 
     def _draw_outlined(self, surf, text, size, color, **pos):
-        """Big numbers/text over a busy background: black outline."""
-        font = self.fonts.get(size, True)
-        inner = font.render(text, True, color)
-        outline = font.render(text, True, BLACK)
-        rect = inner.get_rect(**pos)
-        for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-2, -2), (2, 2), (-2, 2), (2, -2)):
-            surf.blit(outline, rect.move(dx, dy))
-        surf.blit(inner, rect)
+        """Big numbers/text over a busy background: black outline. The
+        outlined text is composed once and cached (drawn every frame)."""
+        key = (text, size, tuple(color))
+        if key not in _OUTLINED:
+            if len(_OUTLINED) > 300:  # scores, popups, BONK sizes: bounded, but don't grow forever
+                _OUTLINED.clear()
+            font = self.fonts.get(size, True)
+            inner = font.render(text, True, color)
+            outline = font.render(text, True, BLACK)
+            img = pygame.Surface((inner.get_width() + 4, inner.get_height() + 4), pygame.SRCALPHA)
+            for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-2, -2), (2, 2), (-2, 2), (2, -2)):
+                img.blit(outline, (2 + dx, 2 + dy))
+            img.blit(inner, (2, 2))
+            _OUTLINED[key] = img
+        img = _OUTLINED[key]
+        rect = img.get_rect().inflate(-4, -4)  # positioned like the plain text was
+        setattr(rect, *next(iter(pos.items())))
+        surf.blit(img, rect.move(-2, -2))
         return rect
 
     def _draw_hud(self, surf):
@@ -241,100 +266,129 @@ class _Game:
             self._draw_outlined(surf, self.READY_TEXT, 26, BVG_YELLOW, center=(self.width // 2, int(self.height * 0.30)))
 
     def _draw_over(self, surf):
-        fog = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
-        fog.fill((0, 0, 0, 150))
-        surf.blit(fog, (0, 0))
-        if self.name_entry:
-            self._draw_name_entry(surf)
-        else:
-            self._draw_leaderboard(surf)
+        """KiezOS game-over: a Win95 dialog with the result and the whole
+        Bestenliste (or the optional name keyboard) over the dimmed game.
+        Fog + dialog are rendered once into one alpha surface and only redrawn
+        when something on it changes (~30 text renders per frame are slow on
+        the Pi); the game behind keeps animating."""
+        key = (self.width, self.height, self.name_entry, self.name_text, self.list_top, self.place, self.named,
+               self.entry_id, self.over_text, self.score, id(top_list(self.NAME)), len(top_list(self.NAME)),
+               self.last_tick - self.over_at >= GAME_OVER_TAP_DELAY_SECONDS)
+        if key != self._over_key:
+            if self._over_surf is None or self._over_surf.get_size() != (self.width, self.height):
+                self._over_surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            self._over_surf.fill(_FOG_COLOR)
+            if self.name_entry:
+                self._draw_name_entry(self._over_surf)
+            else:
+                self._draw_leaderboard(self._over_surf)
+            # list_top is set while drawing (None -> this round's row): key it as drawn
+            self._over_key = key[:4] + (self.list_top,) + key[5:]
+        surf.blit(self._over_surf, (0, 0))
 
-    def _panel(self, surf, height):
-        panel = pygame.Rect(0, 0, self.width - 60, height)
-        panel.center = (self.width // 2, self.height // 2)
-        pygame.draw.rect(surf, PANEL_BG, panel, border_radius=18)
-        pygame.draw.rect(surf, BUTTON_PURPLE, panel, width=3, border_radius=18)
-        return panel
+    def _exe(self):
+        return self.NAME.lower().replace(" ", "-").replace("!", "") + ".exe"
 
     def _draw_name_entry(self, surf):
-        panel = self._panel(surf, 470)
-        place = self._projected_place()
-        y = self._text(surf, "NEUER REKORD!" if place == 0 else "HIGHSCORE!", 32, BVG_YELLOW, midtop=(panel.centerx, panel.top + 20)).bottom
-        y = self._text(
-            surf, f"Platz {place + 1} mit {self.format_score(self.score)} {self.SCORE_LABEL}", 20, WHITE, bold=False, midtop=(panel.centerx, y + 4)
-        ).bottom
-
-        inner = panel.inflate(-30, 0)
-        field = pygame.Rect(inner.left, y + 14, inner.width, 54)
-        pygame.draw.rect(surf, WHITE, field, border_radius=10)
-        if self.name_text:
-            cursor = "_" if int(self.last_tick * 2) % 2 == 0 and len(self.name_text) < NAME_MAX_CHARS else ""
-            self._text(surf, self.name_text + cursor, 30, BLACK, midleft=(field.left + 14, field.centery))
-        else:
-            self._text(surf, "Dein Name", 26, GRAY, bold=False, midleft=(field.left + 14, field.centery))
-        self._text(
-            surf, f"{len(self.name_text)}/{NAME_MAX_CHARS}", 16, GRAY, bold=False, midright=(field.right - 10, field.centery)
-        )
-
-        ready = self.last_tick - self.over_at >= GAME_OVER_TAP_DELAY_SECONDS
-        gap, key_h = 5, 58
-        key_w = (inner.width - gap * (len(KEYBOARD_ROWS[0]) - 1)) / len(KEYBOARD_ROWS[0])
-        self.key_rects = []
-        row_y = field.bottom + 16
-        for chars in KEYBOARD_ROWS:
-            # Shorter rows centered, like a real keyboard.
-            row_x = inner.left + (inner.width - (len(chars) * (key_w + gap) - gap)) / 2
-            for i, char in enumerate(chars):
-                rect = pygame.Rect(int(row_x + i * (key_w + gap)), row_y, int(key_w), key_h)
-                pygame.draw.rect(surf, BUTTON_PURPLE if ready else GRAY, rect, border_radius=8)
-                self._text(surf, char, 24, BLACK, center=rect.center)
-                self.key_rects.append((rect, char))
-            row_y += key_h + gap
-        third = (inner.width - 2 * gap) // 3
-        for i, (token, label, fill) in enumerate(
-            (("back", "<-", (230, 230, 230)), ("space", "LEER", (230, 230, 230)), ("ok", "OK", HIGHLIGHT_GREEN))
-        ):
-            rect = pygame.Rect(inner.left + i * (third + gap), row_y + 4, third, key_h)
-            pygame.draw.rect(surf, fill if ready else GRAY, rect, border_radius=8)
-            self._text(surf, label, 24, BLACK, center=rect.center)
-            self.key_rects.append((rect, token))
+        win = pygame.Rect(16, 70, self.width - 32, 540)
+        inner = K.dialog(surf, win, f"{self._exe()} - Name eintragen", icon=self.ICON, buttons=None)
+        title = "NEUER REKORD!" if self.place == 0 else "Wer warst du?"
+        K.wordart(surf, title, 30, (inner.centerx, inner.y + 24), wave=4)
+        # "Platz 1 mit 13 Stockwerke", but "Platz 1 mit 7.0 s" (not "7.0 s Sekunden")
+        line = f"Platz {self.place + 1} mit {self.format_score(self.score)}{self.SCORE_UNIT or ' ' + self.SCORE_LABEL}"
+        K.t95(surf, line, K.fit_size(line, inner.w - 8, sizes=(16, 15, 14, 13), bold=False),
+              (inner.centerx, inner.y + 56), color=K.F_DARK, bold=False, anchor="midtop")
+        field = pygame.Rect(inner.x, inner.y + 88, inner.w, 54)
+        K.textfield(surf, field, self.name_text, "Name (optional)", warn=len(self.name_text) >= NAME_MAX_CHARS)
+        K.t95(surf, f"{len(self.name_text)}/{NAME_MAX_CHARS}", 15, (field.right - 10, field.centery), color=K.F_DARK,
+              bold=False, anchor="midright")
+        self.key_rects = K.keyboard95(surf, pygame.Rect(inner.x, field.bottom + 16, inner.w, inner.bottom - field.bottom - 16),
+                                      KEYBOARD_ROWS, [("<-", "back", 0.28), ("Leertaste", "space", 0.44), ("OK", "ok", 0.28)])
 
     def _draw_leaderboard(self, surf):
-        panel = self._panel(surf, 560)
-        y = panel.top + 22
-        for line in _wrap(self.fonts.get(28, True), self.over_text, panel.width - 40):
-            y = self._text(surf, line, 28, BVG_YELLOW, midtop=(panel.centerx, y)).bottom + 2
-        y = self._text(surf, self.format_score(self.score), 64, WHITE, midtop=(panel.centerx, y + 2)).bottom
-        y = self._text(surf, self.SCORE_LABEL, 20, GRAY, bold=False, midtop=(panel.centerx, y)).bottom
+        """Result, then the whole Bestenliste (every round, ^ / v scroll it,
+        this round highlighted), the optional name button, NOCHMAL / MENÜ."""
+        win = pygame.Rect(12, self.OVER_TOP, self.width - 24, self.height - self.OVER_TOP - 16)
+        inner = K.dialog(surf, win, f"{self._exe()} - Ergebnis", icon=self.ICON, buttons=None)
+        y = inner.y + 6
+        size = 20 if len(K.wrap(self.over_text, 20, inner.w - 16)) <= 2 else 17  # every game brings its own lines
+        for line in K.wrap(self.over_text, size, inner.w - 16)[:2]:
+            K.t95(surf, line, size, (inner.centerx, y), color=K.F_ACCENT, anchor="midtop")
+            y += 26
+        score = self.format_score(self.score) + self.SCORE_UNIT
+        K.t95(surf, score, K.fit_size(score, inner.w - 20, sizes=(46, 40, 34, 28)), (inner.centerx, y + 2), anchor="midtop")
+        y += 54
+        label = self.SCORE_LABEL + (f"  ·  Platz {self.place + 1}" if self.place is not None else "")
+        K.t95(surf, label, 16, (inner.centerx, y), color=K.F_DARK, bold=False, anchor="midtop")
+        y += 24
         if self.place == 0:
-            y = self._text(surf, "NEUER REKORD!", 22, BUTTON_PURPLE, midtop=(panel.centerx, y + 6)).bottom
-
-        y = self._text(surf, "Bestenliste", 22, WHITE, midtop=(panel.centerx, y + 14)).bottom + 6
-        entries = top_list(self.NAME)
-        if not entries:
-            self._text(surf, "Noch keine Einträge", 20, GRAY, bold=False, midtop=(panel.centerx, y + 4))
-        row_h = 32
-        for i, entry in enumerate(entries):
-            row = pygame.Rect(panel.left + 24, y + i * row_h, panel.width - 48, row_h - 2)
-            mine = i == self.place
-            if mine:
-                pygame.draw.rect(surf, (60, 48, 90), row, border_radius=8)
-            color = HIGHLIGHT_GREEN if mine else WHITE
-            self._text(surf, f"{i + 1}.", 22, GRAY, midleft=(row.left + 10, row.centery))
-            self._text(surf, entry["name"], 22, color, midleft=(row.left + 46, row.centery))
-            score_rect = self._text(
-                surf, self.format_score(entry["score"]) + self.SCORE_UNIT, 22, color, midright=(row.right - 10, row.centery)
-            )
-            self._draw_entry_mark(surf, entry, score_rect.left - 8, row.centery)
+            K.wordart(surf, "NEUER REKORD!", 26, (inner.centerx, y + 16), wave=4)
+            y += 36
 
         ready = self.last_tick - self.over_at >= GAME_OVER_TAP_DELAY_SECONDS
-        button_w = (panel.width - 60) // 2
-        again = pygame.Rect(panel.left + 20, panel.bottom - 90, button_w, 70)
-        menu = pygame.Rect(again.right + 20, again.top, button_w, 70)
-        for rect, label, fill in ((again, "NOCHMAL", BVG_YELLOW), (menu, "MENÜ", BUTTON_PURPLE)):
-            pygame.draw.rect(surf, fill if ready else GRAY, rect, border_radius=12)
-            self._text(surf, label, 26, BLACK, center=rect.center)
+        half = (inner.w - 8) // 2
+        again = K.button(surf, pygame.Rect(inner.x, inner.bottom - 62, half, 62), "NOCHMAL", size=20, enabled=ready)
+        menu = K.button(surf, pygame.Rect(inner.x + half + 8, inner.bottom - 62, half, 62), "MENÜ", size=20, enabled=ready)
         self.buttons = {"again": again, "menu": menu}
+        bottom = again.top - 8
+        if self.entry_id is not None and not self.named:
+            self.buttons["name"] = K.button(surf, pygame.Rect(inner.x, bottom - 50, inner.w, 50), "Name eintragen (optional)",
+                                            size=18, enabled=ready)
+            bottom -= 58
+
+        entries = top_list(self.NAME)
+        box = pygame.Rect(inner.x + 2, y + 10, inner.w - 4, bottom - y - 14)
+        K.groupbox(surf, box, f"Bestenliste ({len(entries)} Runde{'' if len(entries) == 1 else 'n'})")
+        area = pygame.Rect(box.x + 8, box.y + 18, box.w - 16 - (50 if len(entries) > 1 else 0), box.h - 26)
+        K.bevel(surf, area, sunken=True, face=K.F_PAPER)
+        row_h = 30
+        self.list_rows = max(1, (area.height - 6) // row_h)
+        self.list_max_top = max(0, len(entries) - self.list_rows)
+        if self.list_top is None:
+            self.list_top = 0 if self.place is None else max(0, min(self.place - self.list_rows // 2, self.list_max_top))
+        if not entries:
+            K.t95(surf, "Noch keine Einträge", 17, area.center, color=K.F_DARK, bold=False, anchor="center")
+        rank_w = K.font(17).size(f"{len(entries)}.")[0]
+        for i in range(self.list_top, min(len(entries), self.list_top + self.list_rows)):
+            entry = entries[i]
+            row = pygame.Rect(area.x + 3, area.y + 3 + (i - self.list_top) * row_h, area.w - 6, row_h)
+            mine = i == self.place
+            if mine:
+                pygame.draw.rect(surf, K.F_SEL, row)
+            color = (255, 255, 255) if mine else (K.F_INK if entry.get("name") else (130, 120, 150))
+            K.t95(surf, f"{i + 1}.", 17, (row.x + 6 + rank_w, row.centery), color=(255, 255, 255) if mine else K.F_DARK,
+                  anchor="midright", bold=False)
+            score_rect = K.t95(surf, self.format_score(entry["score"]) + self.SCORE_UNIT, 17, (row.right - 8, row.centery),
+                               color=color, anchor="midright")
+            name = entry_name(entry) + (" (du)" if mine and not entry.get("name") else "")
+            name_x = row.x + 14 + rank_w
+            K.t95(surf, _fit(K.font(17), name, score_rect.left - 30 - name_x), 17, (name_x, row.centery), color=color, anchor="midleft")
+            self._draw_entry_mark(surf, entry, score_rect.left - 8, row.centery)
+        if len(entries) > 1:
+            half_h = (area.height - 6) // 2
+            up = pygame.Rect(area.right + 6, area.y, 44, half_h)
+            down = pygame.Rect(area.right + 6, area.bottom - half_h, 44, half_h)
+            if len(entries) > self.list_rows:
+                self.buttons["up"] = K.button(surf, up, "^", size=20, enabled=self.list_top > 0)
+                self.buttons["down"] = K.button(surf, down, "v", size=20, enabled=self.list_top < self.list_max_top)
+            else:
+                K.button(surf, up, "^", size=20, enabled=False)
+                K.button(surf, down, "v", size=20, enabled=False)
+
+
+_FOG_COLOR = (30, 12, 50, 150)  # dims the game behind the game-over dialog
+_OUTLINED = {}  # (text, size, color) -> outlined text, see _Game._draw_outlined
+_BARRIERS = {}  # (w, h) -> striped FLAPPY BVG barrier body
+_PUFFS = {}  # (radius, alpha) -> exhaust cloud
+
+
+def _fit(font, text, max_width):
+    """Cut text with "..." to max_width."""
+    if font.size(text)[0] <= max_width:
+        return text
+    while len(text) > 1 and font.size(text + "...")[0] > max_width:
+        text = text[:-1]
+    return text + "..."
 
 
 def _wrap(font, text, max_width):
@@ -352,6 +406,8 @@ def _wrap(font, text, max_width):
 
 
 class StackGame(_Game):
+
+    ICON = "stack"
     NAME = "STAPEL-TURM"
     DESCRIPTION = "Plattenbau hochstapeln"
     READY_TEXT = "Tippen zum Absetzen"
@@ -521,6 +577,8 @@ class StackGame(_Game):
 
 
 class FlappyGame(_Game):
+
+    ICON = "bus"
     NAME = "FLAPPY BVG"
     DESCRIPTION = "Bus durch die Baustellen"
     READY_TEXT = "Tippen zum Abfahren"
@@ -811,23 +869,28 @@ class FlappyGame(_Game):
             pygame.draw.polygon(surf, (220, 30, 30), points, width=3)
             self._draw_outlined(surf, "BONK!", int(14 + 12 * grow), (220, 30, 30), center=(cx, cy))
 
+    @staticmethod
+    def _barrier_body(w, h):
+        """Striped body of a barrier (cached: ~60 polygons each, every frame
+        was most of the frame time on the Pi; a barrier keeps its size)."""
+        if (w, h) not in _BARRIERS:
+            if len(_BARRIERS) > 40:
+                _BARRIERS.clear()
+            body = pygame.Surface((w, h))
+            body.fill(WHITE)
+            stripe = 22
+            # Diagonal red/white Baustellen stripes.
+            for i in range(-h // stripe - 2, w // stripe + h // stripe + 2):
+                x0 = i * stripe * 2
+                pygame.draw.polygon(body, (220, 30, 30), [(x0, h), (x0 + stripe, h), (x0 + stripe + h, 0), (x0 + h, 0)])
+            pygame.draw.rect(body, (60, 20, 20), body.get_rect(), width=2)
+            _BARRIERS[(w, h)] = body
+        return _BARRIERS[(w, h)]
+
     def _draw_barrier(self, surf, rect, cap_at_bottom):
         if rect.height <= 0:
             return
-        stripe = 22
-        clip = surf.get_clip()
-        surf.set_clip(rect)
-        surf.fill(WHITE, rect)
-        # Diagonal red/white Baustellen stripes.
-        for i in range(-rect.height // stripe - 2, rect.width // stripe + rect.height // stripe + 2):
-            x0 = rect.left + i * stripe * 2
-            pygame.draw.polygon(
-                surf,
-                (220, 30, 30),
-                [(x0, rect.bottom), (x0 + stripe, rect.bottom), (x0 + stripe + rect.height, rect.top), (x0 + rect.height, rect.top)],
-            )
-        surf.set_clip(clip)
-        pygame.draw.rect(surf, (60, 20, 20), rect, width=2)
+        surf.blit(self._barrier_body(rect.width, rect.height), rect)
         # Warning lamp on the end next to the gap.
         lamp_y = rect.bottom - 8 if cap_at_bottom else rect.top + 8
         lamp_on = int(self.last_tick * 3) % 2 == 0
@@ -872,9 +935,11 @@ class FlappyGame(_Game):
                 continue
             t = puff["age"] / 0.7
             radius = int(5 + 12 * t)
-            cloud = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
-            pygame.draw.circle(cloud, (90, 90, 95, int(170 * (1 - t))), (radius, radius), radius)
-            surf.blit(cloud, (int(puff["x"]) - radius, int(puff["y"]) - radius))
+            key = (radius, int(170 * (1 - t)) // 10 * 10)
+            if key not in _PUFFS:  # ~13 radii x 18 alphas, no new alpha surface per puff per frame
+                _PUFFS[key] = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+                pygame.draw.circle(_PUFFS[key], (90, 90, 95, key[1]), (radius, radius), radius)
+            surf.blit(_PUFFS[key], (int(puff["x"]) - radius, int(puff["y"]) - radius))
         if self.wheel is not None:
             wx, wy = int(self.wheel["x"]), int(self.wheel["y"])
             pygame.draw.circle(surf, (25, 25, 25), (wx, wy), 7)
@@ -950,6 +1015,8 @@ class MerzResult(_Game):
     Its tap() returns "again" for NOCHMAL so PiDashboard.py restarts MERZ."""
 
     NAME = "MERZ"
+    ICON = "merz"
+    OVER_TOP = 52
     SCORE_LABEL = "Sekunden"
     SCORE_UNIT = " s"
     LOWER_IS_BETTER = True
@@ -993,9 +1060,12 @@ def _draw_flame(surf, right, cy):
 
 
 def record_line(game_cls, short=False):
-    """ "Rekord: 13 (JU)" for menu cards, "Rekord: 13 JU" (short) for HUDs."""
+    """ "Rekord: 13 (JU)" for menu cards, "Rekord: 13 JU" (short) for HUDs.
+    Games without a score (TIC-TAC-DADA) set MENU_LINE instead."""
+    if getattr(game_cls, "MENU_LINE", None):
+        return game_cls.MENU_LINE
     top = best(game_cls.NAME)
     if top is None:
         return "Rekord: -" if short else "Noch kein Rekord"
     score = game_cls.format_score(top["score"]) + game_cls.SCORE_UNIT
-    return f"Rekord: {score} {top['name']}" if short else f"Rekord: {score} ({top['name']})"
+    return f"Rekord: {score} {entry_name(top)}" if short else f"Rekord: {score} ({entry_name(top)})"

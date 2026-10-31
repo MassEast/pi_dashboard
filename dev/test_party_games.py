@@ -7,14 +7,15 @@ Headless check of the PLAY menu and the party_games.py games:
   FLAPPY BVG, "Schließen" closes, emergency exit only off inside a game.
 - STAPEL-TURM: perfect drop keeps the width, offset drop cuts it, a full
   miss ends the game, game-over taps are ignored for a moment, NOCHMAL/MENÜ.
-- Highscores: a top-5 score asks for a name (on-screen keyboard), saves it
-  to the JSON store (temp dir), the list keeps only 5, a score that doesn't
-  make it skips the keyboard, closing mid-entry still saves (as ANONYM).
+- Highscores: every finished round is stored right away (JSON store in a
+  temp dir), without a name; the Bestenliste shows all rounds, scrolls with
+  ^ / v and opens at this round; "Name eintragen (optional)" opens the
+  keyboard and adds the name; closing mid-entry keeps a typed name.
 - FLAPPY BVG: no taps -> crashes into the street; a simple tapping bot gets
   through barriers (the physics are actually playable); x closes.
 - MERZ: clock starts with the first throw (not a pill tap), the win opens
-  the same name keyboard + Bestenliste, sorted by time (lower is better),
-  NOCHMAL restarts MERZ, MENÜ goes back, closing mid-entry still saves;
+  the same Bestenliste (+ optional name), sorted by time (lower is better),
+  NOCHMAL restarts MERZ, MENÜ goes back, closing mid-entry keeps the name;
   the banner stays MERZ_RESULT_DELAY_SECONDS before the panel, BURN rounds
   get a flame mark.
 - Idle timeout and display blank close the game.
@@ -64,7 +65,16 @@ def test_menu():
     P.DISPLAY_BLANK = False
     P.GAMES_ENABLED = True
     exit_zone = pygame.Rect(0, 0, P.EMERGENCY_EXIT_MAX_X, P.EMERGENCY_EXIT_MAX_Y)
-    # Start -> Spiele opens the submenu with all three games.
+    # Start -> Spiele: the favourites (game of the day first) + "Mehr Spiele...".
+    P.GAMES_FEATURED = ["ENTEIGNEN!", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT", "MERZ"]
+    daily, featured, more = P.games_menu_split()
+    order = [e[0] for e in [daily] + featured]
+    assert sorted(order) == sorted(["ENTEIGNEN!", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT", "merz"]), order
+    more_keys = [e[0] for e in more]  # the rest, in registration order (other games get added over time)
+    assert more_keys[:3] == ["STAPEL-TURM", "FLAPPY BVG", "KIEZBLOCK"], more
+    import datetime
+    picks = {P.games_menu_split(datetime.date(2026, 11, d))[0][0] for d in range(1, 6)}
+    assert len(picks) == 5, "the game of the day rotates through all favourites"
     P.close_start_menu()
     P.draw_home()
     assert P.handle_tap(*P.START_BUTTON_RECT.center) and P.START_MENU_OPEN
@@ -73,30 +83,43 @@ def test_menu():
     P.draw_home()
     shot("00_start_spiele.png")
     sub = [a for _, a in P.START_MENU_RECTS if a.startswith("game:")]
-    assert sub == ["game:STAPEL-TURM", "game:FLAPPY BVG", "game:merz"], sub
+    assert sub == [f"game:{k}" for k in order] + ["game:__more__"], sub
     for rect, action in P.START_MENU_RECTS:
         assert not rect.colliderect(exit_zone), f"{action} in the emergency-exit zone"
     assert P.handle_tap(*next(r for r, a in P.START_MENU_RECTS if a == "game:merz").center)
     assert P.MERZ_VISIBLE and not P.START_MENU_OPEN
     P.dismiss_merz_game("test")
 
-    # spiele.exe (where a game's MENÜ button leads)
+    # spiele.exe (where a game's MENÜ button leads): game of the day, favourites, folder
     P.open_games_menu()
     assert P.emergency_exit_active(), "emergency exit must stay on in the menu"
     P.draw_home()
     P.draw_dashboard_overlays()
     shot("01_menu.png")
     keys = [key for _, key in P.GAMES_MENU_RECTS]
-    assert keys == ["STAPEL-TURM", "FLAPPY BVG", "merz"], keys
-    for rect, key in P.GAMES_MENU_RECTS:
-        assert not rect.colliderect(exit_zone), f"menu card {key} in the emergency-exit zone"
-        assert not rect.colliderect(P.GAMES_MENU_CLOSE_RECT), f"menu card {key} overlaps Schließen"
-        assert 0 <= rect.left and rect.right <= P.DISPLAY_WIDTH
-    # Names and record lines fit the card (text starts 112 px in).
+    assert keys == order + ["__more__"], keys
+    for page in ("main", "more"):
+        P.open_games_menu(page)
+        P.draw_games_menu()
+        for rect, key in P.GAMES_MENU_RECTS:
+            assert not rect.colliderect(exit_zone), f"menu card {key} in the emergency-exit zone"
+            assert not rect.colliderect(P.GAMES_MENU_CLOSE_RECT), f"menu card {key} overlaps Schließen"
+            assert not (P.GAMES_MENU_BACK_RECT and rect.colliderect(P.GAMES_MENU_BACK_RECT)), f"{key} overlaps Zurück"
+            assert 0 <= rect.left and rect.right <= P.DISPLAY_WIDTH
+    # folder page: the rest + < Zurück
+    P.open_games_menu()
+    P.draw_games_menu()
+    assert P.handle_tap(*P.GAMES_MENU_RECTS[-1][0].center) and P.GAMES_MENU_PAGE == "more"
+    P.draw_home()
+    P.draw_dashboard_overlays()
+    shot("01b_menu_mehr.png")
+    assert [key for _, key in P.GAMES_MENU_RECTS] == more_keys
+    assert P.handle_tap(*P.GAMES_MENU_BACK_RECT.center) and P.GAMES_MENU_PAGE == "main"
+    P.draw_games_menu()
+    # Names fit the card (text starts 112 px in); record lines are cut with "...".
     for game_cls in list(party_games.GAMES) + [party_games.MerzResult]:
         card = P.GAMES_MENU_RECTS[0][0]
         assert 112 + P.K.font(22).size(game_cls.NAME)[0] < card.width - 8, f"{game_cls.NAME} name too long"
-        assert 112 + P.K.font(15, False).size(party_games.record_line(game_cls))[0] < card.width - 8
 
     # Taps on empty menu space are swallowed, not passed to the dashboard.
     assert P.handle_tap(P.DISPLAY_WIDTH // 2, P.GAMES_MENU_CLOSE_RECT.top - 4)
@@ -126,6 +149,16 @@ def press(game, token):
     game.tap(*next(r for r, t in game.key_rects if t == token).center)
 
 
+def add_name(game, text, ok=True):
+    """Game-over panel: "Name eintragen (optional)", type text (+ OK)."""
+    game.draw(P.tft_surf)
+    game.tap(*game.buttons["name"].center)
+    assert game.name_entry
+    game.draw(P.tft_surf)
+    type_name(game, text, ok)
+    game.draw(P.tft_surf)
+
+
 def type_name(game, text, ok=True):
     for token in text:
         press(game, token)
@@ -136,6 +169,9 @@ def type_name(game, text, ok=True):
 def open_game(name):
     P.open_games_menu()
     P.draw_games_menu()
+    if name not in [key for _, key in P.GAMES_MENU_RECTS]:  # not a favourite: in the folder
+        P.handle_tap(*next(r for r, key in P.GAMES_MENU_RECTS if key == "__more__").center)
+        P.draw_games_menu()
     rect = next(r for r, key in P.GAMES_MENU_RECTS if key == name)
     assert P.handle_tap(*rect.center)
     assert P.ACTIVE_GAME is not None and P.ACTIVE_GAME.NAME == name
@@ -185,25 +221,27 @@ def test_stack():
     game.moving_x = top_x + top_w + 5
     score = game.score
     game.tap(10, P.DISPLAY_HEIGHT // 2)
-    assert game.state == "over" and game.name_entry, "first score must ask for a name"
+    assert game.state == "over" and not game.name_entry and game.place == 0, "round must be stored, no forced keyboard"
+    assert party_games.best("STAPEL-TURM")["name"] is None, "stored without a name"
 
-    # Taps right after game over do nothing (not even a key).
+    # Taps right after game over do nothing (not even the name button).
     now = run_frames(game, now, 0.6)
     game.draw(P.tft_surf)
-    game.tap(*game.key_rects[0][0].center)
-    assert game.name_text == "", "key hit within the game-over tap delay"
+    game.tap(*game.buttons["name"].center)
+    assert not game.name_entry, "name button hit within the game-over tap delay"
     now = run_frames(game, now, 0.5)
-    game.draw(P.tft_surf)
+    add_name(game, "JUU", ok=False)
     for rect, token in game.key_rects:
         assert 0 < rect.left and rect.right < P.DISPLAY_WIDTH, token
-    type_name(game, "JUU", ok=False)
     press(game, "back")
     game.draw(P.tft_surf)
     shot("04a_stack_name.png")
     press(game, "ok")
-    assert not game.name_entry and game.place == 0
+    assert not game.name_entry and game.place == 0 and game.named
     top = party_games.best("STAPEL-TURM")
     assert (top["name"], top["score"]) == ("JU", score), top
+    game.draw(P.tft_surf)
+    assert "name" not in game.buttons, "name already added"
     game.draw(P.tft_surf)
     shot("04_stack_over.png")
     again = game.buttons["again"]
@@ -231,8 +269,9 @@ def test_highscores():
     name = "STAPEL-TURM"
     game = open_game(name)
     now = game.last_tick
+    before = len(party_games.top_list(name))
 
-    def finish(score, text):
+    def finish(score, text=None):
         nonlocal now
         game.reset(now)
         game.tap(1, 400)
@@ -240,52 +279,192 @@ def test_highscores():
         game.game_over("test")
         now = run_frames(game, now, 1.0)
         game.draw(P.tft_surf)
-        if game.name_entry:
-            type_name(game, text)
+        if text:
+            add_name(game, text)
         return game.place
 
-    for score, text in ((5, "A"), (7, "B"), (3, "C"), (9, "D"), (4, "E")):
+    for score, text in ((5, "A"), (7, None), (3, "C"), (9, None), (4, "E"), (0, None), (5, "A")):
         finish(score, text)
-    scores = [e["score"] for e in party_games.top_list(name)]
-    assert scores == sorted(scores, reverse=True) and len(scores) == 5, scores
+    entries = party_games.top_list(name)
+    scores = [e["score"] for e in entries]
+    assert len(entries) == before + 7, "every round is kept, also 0 and repeats"
+    assert scores == sorted(scores, reverse=True), scores
+    assert [e["name"] for e in entries].count("A") == 2, "same person twice = twice in the list"
+    assert sum(1 for e in entries if e["name"] is None) >= 3 and all(e["ts_iso"] and e["id"] for e in entries)
 
-    # Too low for the top 5: no keyboard, straight to the list.
-    game.reset(now)
-    game.tap(1, 400)
-    game.score = scores[-1]  # a tie with the last place does not push it out
-    game.game_over("test")
-    assert not game.name_entry and game.place is None
-    now = run_frames(game, now, 1.0)
-    game.draw(P.tft_surf)
-    assert "again" in game.buttons
+    # Tie: the older round keeps its place, the new one goes after it.
+    place = finish(5)
+    assert entries_names(name)[place - 2:place] == ["A", "A"], entries_names(name)
 
-    # Middle place, highlighted in the list.
-    # List is now 13 (JU from test_stack), 9, 7, 5, 4 -> 8 lands on place 3.
-    place = finish(8, "MITTE")
-    assert place == 2 and party_games.top_list(name)[2]["name"] == "MITTE", party_games.top_list(name)
-    game.draw(P.tft_surf)
+    # Many rounds: the list scrolls, opens at this round, ^ / v move it.
+    for score in range(10, 40):
+        finish(score)
+    place = finish(20, "MITTE")
+    assert party_games.top_list(name)[place]["name"] == "MITTE"
+    assert game.list_top <= place < game.list_top + game.list_rows, "this round not visible"
     shot("09_leaderboard.png")
+    top_before = game.list_top
+    game.tap(*game.buttons["down"].center)
+    assert game.list_top > top_before
+    game.tap(*game.buttons["up"].center)
+    game.tap(*game.buttons["up"].center)
+    assert game.list_top < top_before
+    game.draw(P.tft_surf)
+    shot("09b_leaderboard_scrolled.png")
 
     # Persisted: a fresh load from disk sees the same list.
     in_memory = party_games.top_list(name)
     party_games.configure(party_games.LOG_DIR)
     assert party_games.top_list(name) == in_memory
 
-    # Closed (x / idle) mid-entry: still saved, as ANONYM.
-    game.reset(now)
-    game.tap(1, 400)
-    game.score = 99
-    game.game_over("test")
-    assert game.name_entry
+    # Closed (x / idle) mid-entry: the typed name is kept; untyped stays anonym.
+    finish(99)
+    add_name(game, "ZU", ok=False)
     assert P.handle_tap(*P.GAME_TITLE_X.center) and not P.games_open()
-    assert party_games.best(name)["name"] == "ANONYM" and party_games.best(name)["score"] == 99
+    assert (party_games.best(name)["name"], party_games.best(name)["score"]) == ("ZU", 99)
+    game = open_game(name)
+    finish(100)
+    assert P.handle_tap(*P.GAME_TITLE_X.center) and not P.games_open()
+    assert party_games.best(name)["name"] is None and party_games.best(name)["score"] == 100
 
     # Menu card shows the all-time record.
     P.open_games_menu()
     P.draw_games_menu()
     shot("10_menu_alltime.png")
     P.close_games("test")
-    print(f"HIGHSCORES: top5/keyboard/skip/persist/close-saves ok: {party_games.top_list(name)}", flush=True)
+    print(f"HIGHSCORES: all {len(party_games.top_list(name))} rounds kept/optional name/scroll/persist/close ok", flush=True)
+
+
+def test_v1_store():
+    """A v1 file (the Pi's: top 5 with name/score/ts_iso, no id) still loads,
+    keeps its entries and takes new rounds + names."""
+    import json
+    import highscore_store
+    log_dir = tempfile.mkdtemp(prefix="v1_scores_")
+    old = {"name": "ALT", "score": 12, "ts_iso": "2026-10-20T20:00:00+02:00"}
+    with open(os.path.join(log_dir, highscore_store.STORE_FILE), "w") as f:
+        json.dump({"version": 1, "games": {"STAPEL-TURM": [old]}}, f)
+    games, place, entry_id = highscore_store.submit_result(log_dir, "STAPEL-TURM", 20)
+    assert place == 0 and games["STAPEL-TURM"][1] == old
+    games = highscore_store.set_name(log_dir, "STAPEL-TURM", entry_id, "NEU")
+    assert [e["name"] for e in games["STAPEL-TURM"]] == ["NEU", "ALT"]
+    games, place, _ = highscore_store.submit_result(log_dir, "STAPEL-TURM", 1)
+    assert place == 2 and len(games["STAPEL-TURM"]) == 3
+    print("V1 STORE: old top-5 entries kept, new rounds + names work", flush=True)
+
+
+def test_over_dialog_all_games():
+    """The shared game-over dialog for every registered game (+ MERZ):
+    500 rounds, scores of every magnitude, max-length names with umlauts,
+    v1 entries without id - buttons on screen, not overlapping, none in the
+    emergency-exit corner; scrolling stops at both ends; the cached dialog
+    is redrawn when it changes; the keyboard caps names and has umlauts."""
+    import json
+    import highscore_store
+    log_dir = tempfile.mkdtemp(prefix="over_all_")
+    fonts = (P.FONT_PATH + P.FONT_MEDIUM, P.FONT_PATH + P.FONT_BOLD)
+    names = ["ÄÖÜ ÄÖÜ ÄÖ", "WWWWWWWWWW", None, "Ö"]
+    classes = [c for c in party_games.GAMES if not getattr(c, "MENU_LINE", None)] + [party_games.MerzResult]
+    assert len(classes) >= 3
+    for cls in classes:
+        merz = cls is party_games.MerzResult
+        entries = [{"name": names[i % 4], "score": [0, 7, 12345, 19930000][i % 4] + (i * 0.37 if merz else 0),
+                    "ts_iso": "2026-10-20T20:00:00+02:00", **({"id": f"x{i}"} if i % 2 else {})} for i in range(500)]
+        entries.sort(key=lambda e: e["score"], reverse=not cls.LOWER_IS_BETTER)
+        with open(os.path.join(log_dir, highscore_store.STORE_FILE), "w") as f:
+            json.dump({"version": 2, "games": {cls.NAME: entries}}, f)
+        party_games.configure(log_dir)
+        if merz:
+            game = cls(P.DISPLAY_WIDTH, P.DISPLAY_HEIGHT, *fonts, 12345.67, 1000.0, burn=True)
+            exit_zone = pygame.Rect(0, 0, P.EMERGENCY_EXIT_MAX_X, P.EMERGENCY_EXIT_MAX_Y)
+        else:
+            game = cls(P.DISPLAY_WIDTH, P.DISPLAY_HEIGHT - P.GAME_TITLE_HEIGHT, *fonts)
+            game.show_close = False
+            game.reset(1000.0)
+            game.score = 12345
+            game.game_over("Verkehrsplanung von 1965 schlägt zurück. Und zwar richtig, mit Anlauf und allem.")
+            game.bilanz = False  # KIEZ KAPERN shows its own Bilanz screen first
+            exit_zone = pygame.Rect(0, 0, P.EMERGENCY_EXIT_MAX_X, P.EMERGENCY_EXIT_MAX_Y - P.GAME_TITLE_HEIGHT)
+        surf = pygame.Surface((game.width, game.height))
+        game._draw_over(surf)
+        before = surf.copy()
+        game.last_tick += party_games.GAME_OVER_TAP_DELAY_SECONDS + 0.01
+        game._draw_over(surf)
+        assert pygame.image.tobytes(surf, "RGB") != pygame.image.tobytes(before, "RGB"), f"{cls.NAME}: cache kept the disabled buttons"
+        screen = surf.get_rect()
+        for key, rect in game.buttons.items():
+            assert screen.contains(rect), (cls.NAME, key, rect)
+            assert not rect.colliderect(exit_zone), (cls.NAME, key)
+            for other, rect2 in game.buttons.items():
+                assert key == other or not rect.colliderect(rect2), (cls.NAME, key, other)
+        assert {"again", "menu", "name", "up", "down"} <= set(game.buttons), (cls.NAME, game.buttons)
+        assert game.list_top <= game.place < game.list_top + game.list_rows, f"{cls.NAME}: this round not visible"
+        # scroll to both ends and past them
+        for _ in range(60):
+            game.tap(*game.buttons["up"].center)
+            game._draw_over(surf)
+        assert game.list_top == 0, (cls.NAME, game.list_top, game.buttons.get("up"), game.last_tick - game.over_at)
+        top_pixels = pygame.image.tobytes(surf, "RGB")
+        for _ in range(60):
+            game.tap(*game.buttons["down"].center)
+            game._draw_over(surf)
+        assert game.list_top == game.list_max_top == 501 - game.list_rows, (cls.NAME, game.list_top)
+        assert pygame.image.tobytes(surf, "RGB") != top_pixels, f"{cls.NAME}: cached dialog not redrawn after scrolling"
+        shot(f"14_over_{cls.NAME.replace(' ', '_')}.png") if merz else None
+        # keyboard: umlauts, max NAME_MAX_CHARS, keys clear of the exit corner
+        game.tap(*game.buttons["name"].center)
+        game._draw_over(surf)
+        assert game.name_entry and {"Ä", "Ö", "Ü"} <= {t for _, t in game.key_rects}
+        assert not any(r.colliderect(exit_zone) for r, _ in game.key_rects)
+        assert all(screen.contains(r) for r, _ in game.key_rects)
+        type_name(game, "ÖZLEMWWWWWWWW", ok=False)
+        assert game.name_text == "ÖZLEMWWWWW" and len(game.name_text) == party_games.NAME_MAX_CHARS
+        game._draw_over(surf)
+        press(game, "ok")
+        assert party_games.top_list(cls.NAME)[game.place]["name"] == "ÖZLEMWWWWW"
+    # name-entry line: the unit once ("7.0 s", not "7.0 s Sekunden"), the label when there is no unit
+    log = []
+    orig = P.K.t95
+    P.K.t95 = lambda surf, s, *a, **kw: log.append(s) or orig(surf, s, *a, **kw)
+    try:
+        for cls, want in ((party_games.MerzResult, "mit 12345.7 s"), (party_games.StackGame, "mit 12345 Stockwerke")):
+            if cls is party_games.MerzResult:
+                game = cls(P.DISPLAY_WIDTH, P.DISPLAY_HEIGHT, *fonts, 12345.67, 1000.0)
+            else:
+                game = cls(P.DISPLAY_WIDTH, P.DISPLAY_HEIGHT - P.GAME_TITLE_HEIGHT, *fonts)
+                game.reset(1000.0)
+                game.score = 12345
+                game.game_over("x")
+            game.name_entry = True
+            log.clear()
+            game._draw_over(pygame.Surface((game.width, game.height)))
+            line = next(s for s in log if s.startswith("Platz "))
+            assert line.endswith(want), line
+    finally:
+        P.K.t95 = orig
+    with open(os.path.join(log_dir, highscore_store.STORE_FILE)) as f:
+        assert f.read().count("\n") == 0, "store written compact (C json encoder)"
+    party_games.configure(os.path.join(OUT_DIR, "logs"))
+    print(f"OVER DIALOG: {len(classes)} games x 500 rounds - buttons/scroll/cache/keyboard/umlauts ok", flush=True)
+
+
+def test_outlined_and_barrier_cache():
+    """The cached outlined text sits exactly where the plain text did; the
+    cached FLAPPY barrier is the striped one."""
+    game = party_games.StackGame(P.DISPLAY_WIDTH, P.DISPLAY_HEIGHT - P.GAME_TITLE_HEIGHT,
+                                 P.FONT_PATH + P.FONT_MEDIUM, P.FONT_PATH + P.FONT_BOLD)
+    surf = pygame.Surface((game.width, game.height))
+    for pos in ({"midtop": (240, 60)}, {"topleft": (12, 14)}, {"center": (100, 300)}):
+        rect = game._draw_outlined(surf, "1234", 64, (255, 255, 255), **pos)
+        assert rect == game.fonts.get(64, True).render("1234", True, (0, 0, 0)).get_rect(**pos), (pos, rect)
+    body = party_games.FlappyGame._barrier_body(74, 300)
+    assert body.get_size() == (74, 300) and body.get_at((37, 150))[:3] in ((255, 255, 255), (220, 30, 30))
+    assert party_games.FlappyGame._barrier_body(74, 300) is body, "barrier not cached"
+    print("CACHES: outlined text position, barrier body ok", flush=True)
+
+
+def entries_names(name):
+    return [e["name"] for e in party_games.top_list(name)]
 
 
 def merz_win(seconds, burn=False):
@@ -356,16 +535,21 @@ def merz_press(result, token):
 
 def test_merz_highscores():
     name = party_games.MerzResult.NAME
-    for seconds, text in ((40.0, "LANGSAM"), (25.0, "FIX"), (60.0, "OPA")):
+    for seconds, text in ((40.0, "LANGSAM"), (25.0, "FIX"), (60.0, None)):
         result = merz_win(seconds, burn=text == "LANGSAM")
-        assert result.name_entry
-        for token in text:
-            merz_press(result, token)
-        shot("11_merz_name_entry.png") if text == "FIX" else None
-        merz_press(result, "ok")
+        assert not result.name_entry and result.entry_id
+        P.draw_merz_overlay()
+        if text:
+            P.handle_merz_click(*result.buttons["name"].center)
+            assert result.name_entry
+            P.draw_merz_overlay()
+            for token in text:
+                merz_press(result, token)
+            shot("11_merz_name_entry.png") if text == "FIX" else None
+            merz_press(result, "ok")
         P.draw_merz_overlay()
     entries = party_games.top_list(name)
-    assert [e["name"] for e in entries] == ["FIX", "LANGSAM", "OPA"], entries
+    assert [e["name"] for e in entries] == ["FIX", "LANGSAM", None], entries
     assert [bool(e.get("burn")) for e in entries] == [False, True, False], entries
     assert result.place == 2
     shot("12_merz_leaderboard.png")
@@ -374,11 +558,9 @@ def test_merz_highscores():
     P.handle_merz_click(*result.buttons["again"].center)
     assert P.MERZ_VISIBLE and not P.MERZ_EXPLODED and P.MERZ_RESULT is None
 
-    # Best time so far, tie with FIX keeps FIX first; MENÜ back to the menu.
+    # Same time as FIX keeps FIX first; MENÜ back to the menu.
     result = merz_win(25.0)
-    merz_press(result, "J")
-    merz_press(result, "ok")
-    assert [e["name"] for e in party_games.top_list(name)][:2] == ["FIX", "J"]
+    assert [e["name"] for e in party_games.top_list(name)][:2] == ["FIX", None]
     P.draw_merz_overlay()
     P.handle_merz_click(*result.buttons["menu"].center)
     assert not P.MERZ_VISIBLE and P.GAMES_MENU_OPEN
@@ -386,20 +568,21 @@ def test_merz_highscores():
     shot("13_menu_merz_record.png")
     P.close_games("test")
 
-    # Fill to 5, then a too-slow time skips the keyboard.
+    # Slow times are kept too.
     for seconds in (70.0, 999.0):
-        result = merz_win(seconds)
-        if result.name_entry:
-            merz_press(result, "ok")
-    assert len(party_games.top_list(name)) == 5 and not result.name_entry and result.place is None
+        merz_win(seconds)
+    assert len(party_games.top_list(name)) == 6 and party_games.top_list(name)[-1]["score"] == 999.0
 
-    # Closed (x) mid-entry: still saved, as ANONYM.
+    # Closed (x) mid-entry: the typed name is kept.
     result = merz_win(10.0)
-    assert result.name_entry
+    P.draw_merz_overlay()
+    P.handle_merz_click(*result.buttons["name"].center)
+    P.draw_merz_overlay()
+    merz_press(result, "J")
     P.handle_merz_click(*P.MERZ_ACTION_RECTS["close"].center)
     assert not P.MERZ_VISIBLE
-    assert party_games.best(name)["name"] == "ANONYM" and party_games.best(name)["score"] == 10.0
-    print(f"MERZ HIGHSCORES: clock/time-sort/again/menu/close-saves ok: {party_games.top_list(name)}", flush=True)
+    assert (party_games.best(name)["name"], party_games.best(name)["score"]) == ("J", 10.0)
+    print(f"MERZ HIGHSCORES: all rounds kept/time-sort/again/menu/optional name ok", flush=True)
 
 
 def test_flappy():
@@ -480,6 +663,9 @@ if __name__ == "__main__":
     test_stack()
     test_flappy()
     test_highscores()
+    test_v1_store()
+    test_over_dialog_all_games()
+    test_outlined_and_barrier_cache()
     test_merz_hud()
     test_merz_highscores()
     test_timeouts()
