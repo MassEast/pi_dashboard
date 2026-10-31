@@ -843,10 +843,19 @@ def merz_sprite(height):
 
 def _menu_icon(kind):
     s = _canvas(16)
-    if kind == "games":  # joystick
+    if kind == "enteignen":  # ENTEIGNEN!: a € coin with a pink cut through it
+        pygame.draw.circle(s, INK, (8, 8), 7); pygame.draw.circle(s, SUN, (8, 8), 6)
+        pygame.draw.rect(s, (200, 140, 30), (6, 5, 4, 1)); pygame.draw.rect(s, (200, 140, 30), (6, 10, 4, 1))
+        pygame.draw.rect(s, (200, 140, 30), (5, 6, 1, 4)); pygame.draw.rect(s, (200, 140, 30), (4, 7, 4, 1))
+        pygame.draw.line(s, (255, 255, 255), (1, 14), (14, 1), 2); pygame.draw.line(s, PINK, (2, 15), (15, 2), 1)
+    elif kind == "games":  # joystick
         pygame.draw.rect(s, INK, (2, 10, 12, 5)); pygame.draw.rect(s, (160, 90, 230), (3, 11, 10, 3))
         pygame.draw.line(s, INK, (8, 10), (8, 4), 2); pygame.draw.circle(s, PINK, (8, 3), 3)
         s.set_at((11, 12), SUN)
+    elif kind == "folder":  # "Mehr Spiele...": a yellow 95 folder
+        pygame.draw.rect(s, INK, (1, 3, 7, 3)); pygame.draw.rect(s, INK, (1, 5, 14, 10))
+        pygame.draw.rect(s, (255, 208, 72), (2, 4, 5, 2)); pygame.draw.rect(s, (255, 208, 72), (2, 6, 12, 8))
+        pygame.draw.rect(s, (255, 236, 150), (2, 6, 12, 1))
     elif kind == "stack":  # STAPEL-TURM
         for i, c in enumerate([(255, 130, 200), (160, 90, 230), (110, 175, 255), (255, 208, 72)]):
             pygame.draw.rect(s, INK, (3 + (i % 2), 12 - i * 3, 10, 3)); pygame.draw.rect(s, c, (4 + (i % 2), 12 - i * 3, 8, 2))
@@ -895,8 +904,15 @@ def _menu_icon(kind):
     return s
 
 
+# Icons drawn by game modules themselves (kind -> fn(size)), registered by
+# PiDashboard.py so kiezos never imports a game.
+ICON_MAKERS = {}
+
+
 def menu_icon(kind, size=32):
     """16px KiezOS menu/title icons, scaled up nearest-neighbour."""
+    if kind in ICON_MAKERS:
+        return _cached(("menu-extra", kind, size), lambda: ICON_MAKERS[kind](size))
     if kind in ("bus", "zoo", "home", "lake", "garden", "palace"):
         return landmark_icon(kind, size)
     if kind == "weather":
@@ -904,6 +920,111 @@ def menu_icon(kind, size=32):
     if kind == "merz":
         return _cached(("menu-merz", size), lambda: _merz_menu_icon(size))
     return _cached(("menu", kind, size), lambda: pygame.transform.scale(_menu_icon(kind), (size, size)))
+
+
+def _px(s, pattern, x0, y0, color):
+    """Draw a small "X" pixel pattern (list of strings) at x0, y0."""
+    for y, row in enumerate(pattern):
+        for x, ch in enumerate(row):
+            if ch == "X":
+                s.set_at((x0 + x, y0 + y), color)
+
+
+FACE = (255, 214, 90)
+FACE_SH = (235, 170, 50)
+MOUTH = (150, 40, 70)
+TEAR = DROP
+RED_FACE = (255, 120, 90)
+
+
+def _face(s, fill=FACE):
+    pygame.draw.circle(s, INK, (8, 8), 7)
+    pygame.draw.circle(s, fill, (8, 8), 6)
+    pygame.draw.arc(s, FACE_SH if fill == FACE else (0, 0, 0, 60), (2, 2, 13, 13), math.pi * 1.1, math.pi * 1.9, 1)
+
+
+def _emotion_icon(name):
+    """16px mood.exe faces, one per catalog emotion; unknown (custom) ones get a "?" face."""
+    s = _canvas(16)
+    dots = lambda y=6: (s.set_at((5, y), INK), s.set_at((10, y), INK), s.set_at((5, y + 1), INK), s.set_at((10, y + 1), INK))  # noqa: E731
+    smile = lambda: _px(s, ["X.....X", ".X...X.", "..XXX.."], 4, 9, MOUTH)  # noqa: E731
+    if name == "happy":
+        _face(s); dots(); smile()
+    elif name == "excited":  # star eyes, open mouth
+        _face(s)
+        for x in (5, 10):
+            _px(s, [".X.", "XXX", ".X."], x - 1, 5, (230, 60, 140))
+        pygame.draw.rect(s, MOUTH, (5, 9, 6, 3)); pygame.draw.rect(s, (255, 130, 160), (6, 11, 4, 1))
+    elif name == "energized":  # lightning bolt
+        pts = [(9, 0), (3, 9), (7, 9), (5, 15), (13, 6), (9, 6), (11, 0)]
+        pygame.draw.polygon(s, SUN, pts); pygame.draw.polygon(s, INK, pts, 1)
+    elif name == "wild":  # party hat + confetti
+        _face(s); dots(7); _px(s, ["X....X", ".XXXX."], 5, 10, MOUTH)
+        pygame.draw.polygon(s, (160, 90, 230), [(9, 0), (6, 4), (12, 4)]); s.set_at((9, 0), PINK)
+        for p, c in (((1, 2), PINK), ((14, 3), DROP), ((1, 13), SUN), ((14, 12), (90, 200, 90))):
+            s.set_at(p, c)
+    elif name == "grateful":  # ^^ eyes + heart
+        _face(s)
+        for x in (4, 9):
+            _px(s, [".X.", "X.X"], x, 6, INK)
+        smile()
+        _px(s, ["XX.XX", "XXXXX", ".XXX.", "..X.."], 11, 0, PINK)
+    elif name == "relaxed":  # closed eyes, small smile
+        _face(s)
+        _px(s, ["XX....XX"], 4, 7, INK); _px(s, ["X...X", ".XXX."], 6, 10, MOUTH)
+    elif name == "proud":  # sunglasses + smirk
+        _face(s)
+        pygame.draw.rect(s, INK, (3, 5, 10, 1)); pygame.draw.rect(s, INK, (3, 6, 4, 2)); pygame.draw.rect(s, INK, (9, 6, 4, 2))
+        s.set_at((4, 6), (120, 120, 160)); s.set_at((10, 6), (120, 120, 160))
+        _px(s, ["....X", "XXXX."], 6, 10, MOUTH)
+    elif name == "focused":  # bullseye
+        for r, c in ((7, INK), (6, (255, 255, 255)), (5, (220, 40, 60)), (3, (255, 255, 255)), (2, (220, 40, 60))):
+            pygame.draw.circle(s, c, (8, 8), r)
+        pygame.draw.line(s, INK, (8, 8), (15, 1)); s.set_at((14, 1), (150, 100, 60))
+    elif name == "curious":  # one big eye (monocle) + "?"
+        _face(s); s.set_at((5, 6), INK); s.set_at((5, 7), INK)
+        pygame.draw.circle(s, INK, (10, 7), 2, 1); s.set_at((10, 7), INK)
+        _px(s, ["XXX"], 6, 11, MOUTH)
+        _px(s, ["XX", "..X", ".X", "", ".X"], 13, 0, (160, 90, 230))
+    elif name == "bored":  # half-closed eyes, flat mouth
+        _face(s)
+        _px(s, ["XXX..XXX", ".X....X."], 3, 6, INK); _px(s, ["XXXX"], 6, 11, MOUTH)
+    elif name == "tired":  # closed eyes, open mouth, Zzz
+        _face(s)
+        _px(s, ["XX...XX"], 3, 7, INK); pygame.draw.rect(s, MOUTH, (6, 10, 3, 3))
+        _px(s, ["XXX", "..X", ".X.", "XXX"], 12, 0, DROP)
+    elif name == "don't know":  # shrug face with "?"s
+        _face(s); dots(); _px(s, ["XXXX"], 6, 11, MOUTH)
+        for x0, c in ((0, (160, 90, 230)), (13, PINK)):
+            _px(s, ["XX", "..X", ".X", "", ".X"], x0, 0, c)
+    elif name == "anxious":  # wide eyes, wavy mouth, sweat drop
+        _face(s)
+        for x in (4, 9):
+            pygame.draw.rect(s, (255, 255, 255), (x, 5, 3, 3)); s.set_at((x + 1, 6), INK)
+        _px(s, [".X.X.", "X.X.X"], 5, 10, MOUTH)
+        _px(s, [".X", "XX", "XX"], 13, 3, TEAR)
+    elif name == "stressed":  # spiral eyes, jagged mouth, sweat
+        _face(s, (255, 190, 120))
+        for x in (5, 10):
+            _px(s, ["XXX", "X.X", "X.."], x - 1, 5, INK)
+        _px(s, ["X.X.X", ".X.X."], 5, 10, MOUTH)
+        _px(s, [".X", "XX"], 1, 3, TEAR); _px(s, [".X", "XX"], 14, 5, TEAR)
+    elif name == "angry":  # red face, brows
+        _face(s, RED_FACE)
+        _px(s, ["XX....XX", "..X..X.."], 3, 4, INK); dots(7)
+        _px(s, [".XXXX.", "X....X"], 5, 10, MOUTH)
+    elif name == "sad":  # frown + tear
+        _face(s); dots()
+        _px(s, ["..XXX..", ".X...X.", "X.....X"], 4, 10, MOUTH)
+        _px(s, ["X", "X", "XX"], 4, 8, TEAR)
+    else:
+        _face(s, (200, 200, 220))
+        _px(s, [".XXX.", "X...X", "...X.", "..X..", ".....", "..X.."], 6, 4, INK)
+    return s
+
+
+def emotion_icon(name, size=32):
+    return _cached(("emotion", name, size), lambda: pygame.transform.scale(_emotion_icon(name), (size, size)))
 
 
 def _merz_menu_icon(size):

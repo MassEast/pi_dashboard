@@ -470,6 +470,8 @@ def test_no_tap_through_overlays():
             if overlay_name == "emotion prompt":
                 P.EMOTION_ACTION_RECTS = {}
                 P.EMOTION_BUTTON_RECTS = P.EMOTION_CUSTOM_BUTTON_RECTS = []
+            if overlay_name == "games menu" and any(r.collidepoint(rect.center) for r, _ in P.GAMES_MENU_RECTS):
+                continue  # lands on one of spiele.exe's own entries: starting that game is the point
             before = features()
             P.handle_tap(*rect.center)
             after = features()

@@ -139,6 +139,7 @@
   "EMOTION": {
     "ENABLED": true,
     "COOLDOWN_SECONDS": 1800,
+    "GROUPS": [["happy", "excited", "energized", "wild"], ["grateful", "relaxed", "proud", "focused"], ["curious", "bored", "tired", "don't know"], ["anxious", "stressed", "angry", "sad"]],
     "EMOTIONS": [
       "stressed",
       "wild",
@@ -161,11 +162,14 @@
     "HOST": "0.0.0.0",
     "PORT": 8080
   },
+  "NIGHT_MODE": {"ENABLED": false, "FROM": "23:00", "TO": "07:00", "TINT": [255, 150, 90]},
   "MOABEATS": {
     "ENABLED": false,
     "API_URL": "https://xxxxxxxxxxxx.up.railway.app",
     "DISPLAY_SECRET": "xxxxxxxxxxxxxxxxxxxxxxxxx",
-    "POLL_INTERVAL": 1800
+    "POLL_INTERVAL": 1800,
+    "PINNWAND_USER": "FlurPi",
+    "PINNWAND_PASSWORD": "dein-passwort"
   },
   "SECRET_VIDEO": {
     "ENABLED": false,
@@ -184,6 +188,10 @@
     "PASSWORD": "your-wifi-password"
   },
   "GAMES": {
+        "FEATURED": ["ENTEIGNEN!", "KIEZ-KURIER", "LASTENRAVE", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT"],
+        "TICTACTOE": {
+            "SPECIAL_LINES": {"ROUNDS": [6, 12], "WIN": ["{winner}, deine Oma wäre stolz auf dich."], "PLAY": ["Oma freut sich, dass ihr spielt."]}
+        },
     "ENABLED": false,
     "IDLE_TIMEOUT_SECONDS": 60,
     "FPS": 30

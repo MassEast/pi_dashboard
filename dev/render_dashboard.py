@@ -11,8 +11,10 @@ Live data: logs/latest_weather.json (STAGE mode; copy the Pi's
 /mnt/ramdisk/latest_weather.json there), BVG departures, MoaBeats status
 (read-only GET) if enabled in config.json. Never ticks anything.
 
---fake: made-up buses/WG/stops instead (no BVG/MoaBeats calls), only the
-home screen, for the public README (images/kiezos_home.png).
+--fake: made-up buses/WG/stops/Pinnwand instead (no BVG/MoaBeats calls):
+home screen (also in night mode), pinnwand.exe and every game, for the
+public README (images/kiezos_*.png). TIC-TAC-DADA shows its placeholder
+faces, never the WG's profile pictures.
 
 SDL_VIDEODRIVER=dummy .venv/bin/python dev/render_dashboard.py scratch/redesign/app
 """
@@ -75,6 +77,69 @@ def start_menu(action):
     tap(next(r for r, a in P.START_MENU_RECTS if a == action))
 
 
+def game_shots(prefix):
+    """Every party game after a few simulated seconds of random taps/swipes
+    (simulated time: draw_active_game() would update with the wall clock)."""
+    import random
+    import tictacdada
+    tictacdada.AVATARS = []  # placeholders, not the WG's pictures
+    rng = random.Random(161)
+    area = (0, P.GAME_TITLE_HEIGHT, P.DISPLAY_WIDTH, P.DISPLAY_HEIGHT - P.GAME_TITLE_HEIGHT)
+    for i, cls in enumerate(party_games.GAMES):
+        P.start_game(cls.NAME)
+        game = P.ACTIVE_GAME
+        sub = P.tft_surf.subsurface(area)
+        game.draw(sub)  # hit rects exist after the first draw
+        if "go" in getattr(game, "rects", {}):  # TIC-TAC-DADA: setup -> play, a few moves
+            game.tap(*game.rects["go"].center)
+            game.egg = None
+            for cell in (4, 0, 2):
+                game.draw(sub)
+                game.tap(*game.rects[f"cell{cell}"].center)
+            game.draw(sub)
+            path = os.path.join(OUT_DIR, f"{prefix}{i:02d}_tic-tac-dada.png")
+            pygame.image.save(P.tft_surf, path)
+            P.K.game_title(P.tft_surf, "tic-tac-dada.exe", game.ICON)
+            pygame.image.save(P.tft_surf, path)
+            SHOTS.append(path)
+            P.close_games("render")
+            continue
+        game.tap(240, 600)  # ready -> play
+        for f in range(int(6.0 * 20)):
+            game.update(game.last_tick + 0.05)
+            if game.state == "over":
+                break
+            if f % 10 == 0:
+                x, y = rng.randrange(60, 420), rng.randrange(250, 700)
+                game.tap(x, y)
+                for k in range(6):
+                    game.drag(x + (k - 3) * 30, y - k * 10)
+                game.release()
+        game.draw(P.tft_surf.subsurface(area))
+        P.K.game_title(P.tft_surf, cls.NAME.lower().replace("!", "") + ".exe", game.ICON)
+        path = os.path.join(OUT_DIR, f"{prefix}{i:02d}_{cls.NAME.lower().replace('!', '').replace(' ', '_')}.png")
+        pygame.image.save(P.tft_surf, path)
+        SHOTS.append(path)
+        print(f"wrote {path}", flush=True)
+        P.close_games("render")
+
+
+def fake_pinnwand():
+    """Made-up Pinnwand messages (no MoaBeats calls)."""
+    import pinnwand
+    now = datetime.datetime.now()
+    P.PINNWAND = pinnwand.Pinnwand("http://127.0.0.1:9", "FlurPi", "x")
+    msgs = [("Kim", "Wer hat meine Hafermilch leer gemacht?", False, 95),
+            ("Sam", "Ich wars. Kauf morgen neue, versprochen", False, 80),
+            ("Oma Erna", "Danke fürs Übernachten, ihr Lieben!", True, 40),
+            ("Robin", "Plenum heute um 20 Uhr in der Küche", False, 12)]
+    P.PINNWAND.messages = [{"id": i, "author": a, "text": t, "guest": g, "ts": now - datetime.timedelta(minutes=m)}
+                           for i, (a, t, g, m) in enumerate(msgs)]
+    P.PINNWAND.loaded = True
+    P.PINNWAND.seen_id = 2
+    P.PINNWAND.login_failed = True  # never fetch (would replace the made-up messages)
+
+
 def fake_data():
     """Made-up departures/WG for the public README."""
     now = datetime.datetime.now()
@@ -104,7 +169,7 @@ def fake_data():
 def main():
     P.append_emotion_event = lambda *a, **k: {"tour": "not logged"}  # never write into the real store
     scores = tempfile.mkdtemp(prefix="tour_scores_")  # closing a game saves its score: use a copy
-    if os.path.exists(os.path.join(P.LOG_PATH, "game_highscores.json")):
+    if not FAKE and os.path.exists(os.path.join(P.LOG_PATH, "game_highscores.json")):  # fake: empty lists
         shutil.copy(os.path.join(P.LOG_PATH, "game_highscores.json"), scores)
     party_games.configure(scores)
     P.images = P.image_factory(P.ICON_PATH)
@@ -112,7 +177,18 @@ def main():
     P.WeatherUpdate.read_json_and_process()
     if FAKE:
         fake_data()
+        fake_pinnwand()
         shot("home")
+        P.open_home_window("pinnwand")
+        shot("pinnwand")
+        P.close_home_window("render")
+        night = P.NIGHT_CONFIG
+        P.NIGHT_CONFIG = {"ENABLED": True, "FROM": "00:00", "TO": "23:59", "TINT": [255, 150, 90]}
+        frame()
+        P.apply_night_mode(P.tft_surf)
+        pygame.image.save(P.tft_surf, os.path.join(OUT_DIR, "night.png"))
+        P.NIGHT_CONFIG = night
+        game_shots("game_")
         return
     P.BVGUpdate.update_bvg_stop_information()
     if P.config.get("MOABEATS", {}).get("ENABLED", False):
@@ -134,17 +210,12 @@ def main():
         tap(P.HOME_RECTS["karte"])
         shot("04_karte")
         tap(P.HOME_WINDOW_RECTS["back"])
-    tap(P.K.title_buttons(P.WIN_UHR)["o"])
+    tap((360, 60, 1, 1))  # tap on the clock
     shot("05_uhr_max")
     tap((200, 400, 1, 1))
     assert P.HOME_WINDOW is None
 
     # dada title buttons
-    tap(P.K.title_buttons(P.WIN_UHR)["x"])
-    shot("10_dada_uhr_x")
-    tap(P.DADA_BUTTON_RECTS[1][0])
-    shot("10b_dada_uhr_auch_ja")
-    tap(P.DADA_BUTTON_RECTS[0][0])
     tap(P.K.title_buttons(P.WIN_WETTER)["x"])
     shot("11_dada_wetter_x")
     tap(P.DADA_BUTTON_RECTS[0][0])
@@ -188,19 +259,23 @@ def main():
         shot("25_wlan_qr")
         tap((240, 400, 1, 1))
 
+    # pinnwand.exe (read-only GET, if configured)
+    if P.PINNWAND is not None:
+        P.PINNWAND.fetch()
+        P.open_home_window("pinnwand")
+        shot("15_pinnwand")
+        P.close_home_window("render")
+
     # games
     if P.GAMES_ENABLED:
         P.open_games_menu()
         shot("30_spiele")
         tap(P.GAMES_MENU_CLOSE_RECT)
-        for name, game in (("31_stapel", "STAPEL-TURM"), ("32_flappy", "FLAPPY BVG")):
-            start_menu(f"game:{game}")
-            for _ in range(3):
-                tap((240, 500, 1, 1))
-                frame()
-            shot(name, frames=5)
-            tap(P.GAME_TITLE_X)
-            assert P.ACTIVE_GAME is None
+        start_menu("game:__more__")  # Start -> Spiele -> Mehr Spiele... = the spiele.exe folder
+        shot("30b_spiele_mehr")
+        tap(P.GAMES_MENU_CLOSE_RECT)
+        assert not P.games_open()
+        game_shots("31_")
         start_menu("game:merz")
         P.MERZ_HITS = 23
         P.MERZ_TIMER_STARTED_AT = time.time() - 12.4

@@ -54,6 +54,14 @@ from uptime_store import append_uptime_event, last_channel_is_up
 from utils import get_stop_data
 import kiezos as K
 import party_games
+import pinnwand
+import enteignen
+import games_kiezblock
+import tictacdada
+import patriaputt
+import kiezkapern
+import kiezkurier
+import lastenrave
 
 # Allow the system to manage blanking
 os.environ["SDL_VIDEO_ALLOW_SCREENSAVER"] = "1"
@@ -610,7 +618,37 @@ WIFI_PASSWORD = WIFI_CONFIG.get("PASSWORD", "")
 # hit counter for the current session.
 GAMES_CONFIG = config.get("GAMES", {})
 GAMES_ENABLED = GAMES_CONFIG.get("ENABLED", False)
+party_games.GAMES.append(enteignen.EnteignenGame)  # swipe game: needs drag()/release(), see the event loop
+party_games.GAMES.append(games_kiezblock.KiezblockGame)
+K.ICON_MAKERS["kiezblock"] = games_kiezblock.menu_icon
+party_games.GAMES.append(tictacdada.TicTacDadaGame)
+K.ICON_MAKERS["tictacdada"] = tictacdada.menu_icon
+party_games.GAMES.append(patriaputt.PatriaputtGame)  # brick-breaker: paddle follows drag()
+K.ICON_MAKERS["patriaputt"] = patriaputt.menu_icon_surface
+party_games.GAMES.append(kiezkapern.KiezKapernGame)  # tap-to-drive Kiez sandbox
+K.ICON_MAKERS["kiezkapern"] = kiezkapern.menu_icon
+party_games.GAMES.append(kiezkurier.KiezKurierGame)  # daily route puzzle: drag()/release() draw the route
+K.ICON_MAKERS["kiezkurier"] = kiezkurier.menu_icon_surface
+party_games.GAMES.append(lastenrave.LastenraveGame)  # crane stacking: tap drops, drag() moves the crane
+K.ICON_MAKERS["lastenrave"] = lastenrave.menu_icon_surface
+# Special win lines (may name real flatmates) live in the gitignored config only.
+tictacdada.SPECIAL_LINES = GAMES_CONFIG.get("TICTACTOE", {}).get("SPECIAL_LINES", {})
+for _line in tictacdada.SPECIAL_LINES.get("WIN", []):  # config boundary: fail at start, not at a win
+    try:
+        _line.format(winner="X", loser="O")
+    except (KeyError, IndexError, ValueError) as e:
+        raise ValueError(f"GAMES.TICTACTOE.SPECIAL_LINES.WIN: only {{winner}} and {{loser}} allowed, got {_line!r}") from e
+
+# pinnwand.exe: MoaBeats' Pinnwand chat via its own guest account (pinnwand.py).
+_MB = config.get("MOABEATS", {})
+PINNWAND = (pinnwand.Pinnwand(_MB["API_URL"], _MB["PINNWAND_USER"], _MB["PINNWAND_PASSWORD"], _MB.get("PINNWAND_POLL_INTERVAL", 60))
+            if _MB.get("ENABLED", False) and _MB.get("PINNWAND_USER") else None)
+PINNWAND_IDLE_TIMEOUT_SECONDS = 150  # typing takes guests a while
 GAMES_IDLE_TIMEOUT_SECONDS = GAMES_CONFIG.get("IDLE_TIMEOUT_SECONDS", 60)
+# spiele.exe shows only these (config order; one of them is "Spiel des Tages",
+# rotating daily) plus a "Mehr Spiele..." folder with the rest: a clear "play
+# THIS now" instead of a 100-in-1 game box. Names = game NAMEs, "MERZ" for MERZ.
+GAMES_FEATURED = GAMES_CONFIG.get("FEATURED", ["ENTEIGNEN!", "KIEZ-KURIER", "LASTENRAVE", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT"])
 party_games.configure(GAMES_LOG_PATH)
 # Frame rate while a game is open - the dashboard's own DISPLAY.FPS is
 # kept low (10 on the Pi) to save CPU, which makes taps/throws feel laggy
@@ -1002,6 +1040,8 @@ WIFI_QR_AUTO_CLOSE_SECONDS = 20
 PLAY_BUTTON_RECT = None
 GAMES_MENU_OPEN = False
 GAMES_MENU_RECTS = []  # (rect, key) - key "merz" or a party_games class NAME
+GAMES_MENU_PAGE = "main"  # "main" (Spiel des Tages + favourites) or "more" (the folder)
+GAMES_MENU_BACK_RECT = None
 GAMES_MENU_CLOSE_RECT = None
 GAMES_MENU_TITLE_X = None
 ACTIVE_GAME = None  # a running party_games game object
@@ -1289,7 +1329,7 @@ EMOTION_QR_URL_CACHE = None
 EMOLOG_FOOTER_RECT = None
 EMOLOG_QR_OPENED_AT = 0.0
 EMOLOG_QR_AUTO_CLOSE_SECONDS = 20
-EMOTION_SHUFFLED_OPTIONS = []
+EMOTION_SHUFFLED_ROWS = []  # mood.exe's grid: one list per mood family, rows and items shuffled
 EMOTION_CUSTOM_SLOTS = []
 EMOTION_CUSTOM_BUTTON_RECTS = []
 EMOTION_KEYBOARD_VISIBLE = False
@@ -1736,13 +1776,29 @@ def get_emotion_prompt_options(max_count=16):
     return options[:max_count]
 
 
-def get_emotion_grid_columns(option_count):
-    # Keep tap targets large while scaling from 8 to 16 emotions.
-    if option_count <= 10:
-        return 2
-    if option_count <= 14:
-        return 3
-    return 4
+# mood.exe groups the buttons into one row per mood family (config EMOTION.GROUPS
+# overrides), so a mood is quick to find; rows and the moods in them are still
+# shuffled every time against position bias in the stats.
+EMOTION_GROUPS = emotion_cfg.get("GROUPS", [
+    ["happy", "excited", "energized", "wild"],
+    ["grateful", "relaxed", "proud", "focused"],
+    ["curious", "bored", "tired", "don't know"],
+    ["anxious", "stressed", "angry", "sad"],
+])
+
+
+def shuffled_emotion_rows(options):
+    """options grouped by EMOTION_GROUPS (leftovers, e.g. new catalog entries,
+    in rows of 4), row order and order within each row shuffled."""
+    rows = [[e for e in group if e in options] for group in EMOTION_GROUPS]
+    grouped = {e for row in rows for e in row}
+    rest = [e for e in options if e not in grouped]
+    rows += [rest[i:i + 4] for i in range(0, len(rest), 4)]
+    rows = [row for row in rows if row]
+    for row in rows:
+        random.shuffle(row)
+    random.shuffle(rows)
+    return rows
 
 
 def fit_emotion_label_font(emotion, max_width):
@@ -2649,7 +2705,7 @@ def activate_pending_emotion_prompt():
     global EMOTION_PENDING_TRIGGER, EMOTION_PROMPT_VISIBLE, EMOTION_PROMPT_OPENED_AT
     global EMOTION_PROMPT_SOURCE, EMOTION_LAST_PROMPT_TS, EMOTION_ACTIVE_PROMPT_ID
     global EMOTION_RESULTS_VISIBLE, EMOTION_BUTTON_RECTS, EMOTION_ACTION_RECTS
-    global EMOTION_SHUFFLED_OPTIONS, EMOTION_CUSTOM_SLOTS, EMOTION_KEYBOARD_VISIBLE
+    global EMOTION_SHUFFLED_ROWS, EMOTION_CUSTOM_SLOTS, EMOTION_KEYBOARD_VISIBLE
     global EMOTION_KEYBOARD_TEXT, EMOTION_CUSTOM_BUTTON_RECTS, EMOTION_KEYBOARD_RECTS
     global EMOTION_LAST_ACTIVITY_TS
 
@@ -2676,8 +2732,7 @@ def activate_pending_emotion_prompt():
     EMOTION_KEYBOARD_VISIBLE = False
     EMOTION_KEYBOARD_TEXT = ""
     EMOTION_CUSTOM_SLOTS = _load_custom_slots_from_config()
-    EMOTION_SHUFFLED_OPTIONS = get_emotion_prompt_options(max_count=16)
-    random.shuffle(EMOTION_SHUFFLED_OPTIONS)
+    EMOTION_SHUFFLED_ROWS = shuffled_emotion_rows(get_emotion_prompt_options(max_count=16))
     logger.info(f"Emotion prompt activated (source={source})")
 
 
@@ -2864,26 +2919,25 @@ def draw_emotion_prompt_overlay():
     K.t95(tft_surf, "Most prevalent emotion", 18, (inner.x + 62, inner.y + 6))
     K.t95(tft_surf, "right now?", 18, (inner.x + 62, inner.y + 30))
 
-    options = EMOTION_SHUFFLED_OPTIONS if EMOTION_SHUFFLED_OPTIONS else get_emotion_prompt_options(max_count=16)
-    columns = get_emotion_grid_columns(len(options))
-    rows = max(1, math.ceil(len(options) / columns))
+    rows = EMOTION_SHUFFLED_ROWS or shuffled_emotion_rows(get_emotion_prompt_options(max_count=16))
+    columns = max(map(len, rows))
     gap = 8
     grid = pygame.Rect(inner.x + 4, inner.y + 66, inner.w - 8, 4 * (72 + gap) - gap)
     bw = (grid.w - (columns - 1) * gap) // columns
-    bh = min(72, (grid.h - (rows - 1) * gap) // rows)
-    for idx, emotion in enumerate(options):
-        row, col = divmod(idx, columns)
-        # Center partial rows (e.g. a trailing row of 2 in a 3-column grid)
-        # instead of left-packing them, so the last row doesn't look lopsided.
-        items_in_row = min(columns, len(options) - row * columns)
-        row_left = grid.x + (grid.w - (items_in_row * bw + (items_in_row - 1) * gap)) // 2
-        rect = pygame.Rect(row_left + col * (bw + gap), grid.y + row * (bh + gap), bw, bh)
-        K.button(tft_surf, rect, "")
-        swatch = pygame.Rect(rect.x + 8, rect.y + 8, 10, 10)
-        pygame.draw.rect(tft_surf, _emotion_color(emotion), swatch)
-        pygame.draw.rect(tft_surf, K.F_INK, swatch, 1)
-        K.t95(tft_surf, emotion, K.fit_size(emotion, rect.w - 10, sizes=(18, 17, 16, 15, 14)), (rect.centerx, rect.centery + 8), anchor="center")
-        EMOTION_BUTTON_RECTS.append({"emotion": emotion, "rect": rect})
+    bh = min(72, (grid.h - (len(rows) - 1) * gap) // len(rows))
+    icon = 32 if bh >= 64 else 24
+    for r, row in enumerate(rows):
+        # one mood family per row; shorter rows are centred
+        row_left = grid.x + (grid.w - (len(row) * bw + (len(row) - 1) * gap)) // 2
+        for col, emotion in enumerate(row):
+            rect = pygame.Rect(row_left + col * (bw + gap), grid.y + r * (bh + gap), bw, bh)
+            K.button(tft_surf, rect, "")
+            swatch = pygame.Rect(rect.x + 7, rect.y + 7, 9, 9)
+            pygame.draw.rect(tft_surf, _emotion_color(emotion), swatch)
+            pygame.draw.rect(tft_surf, K.F_INK, swatch, 1)
+            tft_surf.blit(K.emotion_icon(emotion, icon), (rect.centerx - icon // 2, rect.y + 5))
+            K.t95(tft_surf, emotion, K.fit_size(emotion, rect.w - 10, sizes=(17, 16, 15, 14)), (rect.centerx, rect.bottom - 6), anchor="midbottom")
+            EMOTION_BUTTON_RECTS.append({"emotion": emotion, "rect": rect})
 
     cy = grid.bottom + 10
     cw = (grid.w - 3 * gap) // 4
@@ -3073,8 +3127,23 @@ def _games_menu_entries():
     return entries + [(game.NAME, game.NAME, game.DESCRIPTION) for game in party_games.GAMES]
 
 
-def open_games_menu():
-    global GAMES_MENU_OPEN, ACTIVE_GAME, GAMES_LAST_ACTIVITY_TS
+def games_menu_split(today=None):
+    """(game of the day, other favourites, folder) as (key, name, icon, record class)
+    entries. The game of the day rotates through the favourites by date."""
+    entries = [(g.NAME, g.NAME, g.ICON, g) for g in party_games.GAMES]
+    entries.append(("merz", "MERZ", "merz", party_games.MerzResult))
+    by_name = {name: e for e in entries for name in (e[1],)}
+    featured = [by_name[n] for n in GAMES_FEATURED if n in by_name]
+    more = [e for e in entries if e not in featured]
+    if not featured:
+        return None, [], more
+    day = (today or datetime.date.today()).toordinal() % len(featured)
+    return featured[day], featured[:day] + featured[day + 1:], more
+
+
+def open_games_menu(page="main"):
+    global GAMES_MENU_OPEN, ACTIVE_GAME, GAMES_LAST_ACTIVITY_TS, GAMES_MENU_PAGE
+    GAMES_MENU_PAGE = page
     GAMES_MENU_OPEN = True
     ACTIVE_GAME = None
     GAMES_LAST_ACTIVITY_TS = time.time()
@@ -3119,35 +3188,60 @@ def update_games_timeout():
         return
     if DISPLAY_BLANK:
         close_games("display-blank")
-    elif time.time() - GAMES_LAST_ACTIVITY_TS > GAMES_IDLE_TIMEOUT_SECONDS:
+    elif time.time() - GAMES_LAST_ACTIVITY_TS > (getattr(ACTIVE_GAME, "IDLE_TIMEOUT_SECONDS", None) or GAMES_IDLE_TIMEOUT_SECONDS):
         close_games("idle-timeout")
 
 
 def draw_games_menu():
-    """spiele.exe: one big button per game with its record, "Schließen"."""
-    global GAMES_MENU_RECTS, GAMES_MENU_CLOSE_RECT, GAMES_MENU_TITLE_X
+    """spiele.exe: the game of the day (big, highlighted), the other favourites
+    and a "Mehr Spiele..." folder; the folder page lists the rest."""
+    global GAMES_MENU_RECTS, GAMES_MENU_CLOSE_RECT, GAMES_MENU_TITLE_X, GAMES_MENU_BACK_RECT
 
     if not GAMES_MENU_OPEN:
         return
 
-    win = pygame.Rect(16, 150, DISPLAY_WIDTH - 32, 520)
-    inner = K.dialog(tft_surf, win, "spiele.exe", icon="games")
+    win = pygame.Rect(16, 150, DISPLAY_WIDTH - 32, 604)  # down to the taskbar; the top stays out of the emergency corner
+    daily, featured, more = games_menu_split()
+    folder = GAMES_MENU_PAGE == "more" or daily is None
+    inner = K.dialog(tft_surf, win, "spiele.exe" + (" - Mehr Spiele" if folder else ""), icon="folder" if folder else "games")
     GAMES_MENU_TITLE_X = K.close_box(win)
-    K.t95(tft_surf, "Doppeltippen... ach, einmal reicht.", 15, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
-    entries = [(game.NAME, game.NAME, "stack" if game is party_games.StackGame else "bus", game) for game in party_games.GAMES]
-    entries.append(("merz", "MERZ", "merz", party_games.MerzResult))
+    hint = "Noch mehr Spaß. Oder Prokrastination." if folder else "Doppeltippen... ach, einmal reicht."
+    K.t95(tft_surf, hint, 15, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
+    if folder:
+        entries = more
+    else:
+        entries = [daily] + featured
+        if more:
+            names = ", ".join(e[1] for e in more)
+            entries.append(("__more__", "Mehr Spiele...", "folder", names))
     rects = []
     y = inner.y + 28
-    for key, name, icon, game_cls in entries:
-        rect = pygame.Rect(inner.x, y, inner.w, 112)
+    gap = 8
+    n = len(entries) + (0.25 if not folder else 0)  # the game of the day gets a bit more height
+    entry_h = min(104, int((inner.bottom - 48 - y) / n) - gap)
+    for i, (key, name, icon, record) in enumerate(entries):
+        top_pick = not folder and i == 0
+        h = int(entry_h * 1.25) if top_pick else entry_h
+        rect = pygame.Rect(inner.x, y, inner.w, h)
         K.button(tft_surf, rect, "")
-        image = K.merz_sprite(80) if icon == "merz" else K.menu_icon(icon, 80)
+        if top_pick:
+            pygame.draw.rect(tft_surf, K.F_SEL, rect.inflate(-8, -8))
+        icon_size = min(80, h - 16)
+        image = K.merz_sprite(icon_size) if icon == "merz" else K.menu_icon(icon, icon_size)
         tft_surf.blit(image, image.get_rect(center=(rect.x + 54, rect.centery)))
-        K.t95(tft_surf, name, 22, (rect.x + 112, rect.y + 28))
-        K.t95(tft_surf, party_games.record_line(game_cls), 16, (rect.x + 112, rect.y + 62), color=K.F_DARK, bold=False)
+        ink = (255, 255, 255) if top_pick else K.F_INK
+        sub = (255, 230, 150) if top_pick else K.F_DARK
+        line = record if isinstance(record, str) else party_games.record_line(record)
+        if top_pick:  # three lines in the taller card: label, name, record
+            K.t95(tft_surf, "SPIEL DES TAGES:", 15, (rect.x + 112, rect.centery - 31), color=(255, 208, 72))
+        K.t95(tft_surf, name, 22, (rect.x + 112, rect.centery - 14 if top_pick else rect.centery - 24), color=ink)
+        while K.font(16, False).size(line)[0] > rect.right - 8 - (rect.x + 112):
+            line = line[:-4] + "..."
+        K.t95(tft_surf, line, 16, (rect.x + 112, rect.centery + 13 if top_pick else rect.centery + 6), color=sub, bold=False)
         rects.append((rect, key))
-        y += 122
+        y += h + gap
     GAMES_MENU_CLOSE_RECT = K.button(tft_surf, pygame.Rect(inner.right - 130, inner.bottom - 40, 130, 40), "Schließen", size=16)
+    GAMES_MENU_BACK_RECT = K.button(tft_surf, pygame.Rect(inner.x, inner.bottom - 40, 130, 40), "< Zurück", size=16) if folder and daily else None
     GAMES_MENU_RECTS = rects
 
 
@@ -3162,8 +3256,8 @@ def draw_active_game():
         return
     ACTIVE_GAME.update(time.time())
     ACTIVE_GAME.draw(tft_surf.subsurface((0, GAME_TITLE_HEIGHT, DISPLAY_WIDTH, DISPLAY_HEIGHT - GAME_TITLE_HEIGHT)))
-    icon = "stack" if isinstance(ACTIVE_GAME, party_games.StackGame) else "bus"
-    GAME_TITLE_X = K.game_title(tft_surf, ACTIVE_GAME.NAME.lower().replace(" ", "-") + ".exe", icon)
+    exe = ACTIVE_GAME.NAME.lower().replace(" ", "-").replace("!", "") + ".exe"
+    GAME_TITLE_X = K.game_title(tft_surf, exe, ACTIVE_GAME.ICON)
 
 
 def handle_games_menu_click(mx, my):
@@ -3175,9 +3269,15 @@ def handle_games_menu_click(mx, my):
         if rect and rect.collidepoint((mx, my)):
             close_games("close-button")
             return True
+    if GAMES_MENU_BACK_RECT and GAMES_MENU_BACK_RECT.collidepoint((mx, my)):
+        open_games_menu("main")
+        return True
     for rect, key in GAMES_MENU_RECTS:
         if rect.collidepoint((mx, my)):
-            start_game(key)
+            if key == "__more__":
+                open_games_menu("more")
+            else:
+                start_game(key)
             return True
     return True  # modal: swallow every other tap
 
@@ -5331,10 +5431,12 @@ def handle_quiz_click(mx, my):
 # buttons do dadaist things; o (or a double-tap on the title bar) opens the
 # window's detail view.
 
-WIN_UHR = pygame.Rect(8, 8, 464, 160)
-WIN_WETTER = pygame.Rect(8, 174, 464, 156)
-WIN_BVG = pygame.Rect(8, 336, 464, 296)
-WIN_WG = pygame.Rect(8, 638, 464, 116)
+# uhr.exe is a borderless LED strip flush with the top (no title bar: a tap
+# on it maximises), the rest 4 px margin and gaps; the taskbar starts at y=760.
+WIN_UHR = pygame.Rect(0, 0, 480, 124)
+WIN_WETTER = pygame.Rect(4, 128, 472, 156)
+WIN_BVG = pygame.Rect(4, 288, 472, 296)
+WIN_WG = pygame.Rect(4, 588, 472, 168)
 HOME_WINDOWS = {"uhr": WIN_UHR, "wetter": WIN_WETTER, "bvg": WIN_BVG, "wg": WIN_WG}
 HOME_WINDOW_TITLES = {"uhr": "uhr.exe", "wetter": "wetter.exe", "bvg": "bvg.exe", "wg": "wg.txt"}
 HOME_WINDOW_ICONS = {"uhr": "clock", "wetter": "weather", "bvg": "bus", "wg": "note"}
@@ -5564,6 +5666,50 @@ def _draw_wg_line(prefix, content, y, x_left, max_width):
     tft_surf.set_clip(previous_clip)
 
 
+def _draw_pinnwand_strip(surf, inner, now):
+    """wg.txt's bottom: newest Pinnwand message + the Pinnwand button (always
+    there, so guests can write too). Returns the tappable rect (whole strip)."""
+    strip = pygame.Rect(inner.x + 4, inner.bottom - 54, inner.w - 8, 50)
+    for x in range(strip.x, strip.right, 6):  # dotted rule, like a txt file
+        pygame.draw.line(surf, (180, 170, 205), (x, strip.y - 3), (x + 2, strip.y - 3))
+    btn = pygame.Rect(strip.right - 150, strip.y + 4, 150, 44)
+    surf.blit(pinnwand.pin_icon(24), (strip.x + 2, strip.y + 6))
+    msg = PINNWAND.preview()
+    text_w = btn.x - strip.x - 40
+    if msg is None:
+        K.t95(surf, "Pinnwand der WG", 15, (strip.x + 30, strip.y + 5))
+        K.t95(surf, PINNWAND.error or "Lädt...", 16, (strip.x + 30, strip.y + 25), color=K.F_DARK, bold=False)
+    else:
+        author = pinnwand.strip_author(msg)
+        head = f"{author}, {pinnwand.when(msg['ts'], now)}:"
+        K.t95(surf, head, K.fit_size(head, text_w, sizes=(15, 14, 13)), (strip.x + 30, strip.y + 5),
+              color=K.F_SEL if msg["guest"] else PINNWAND._author_color(msg["author"]))
+        lines = K.wrap(msg["text"], 16, text_w - 30, bold=False)
+        K.t95(surf, lines[0] + ("..." if len(lines) > 1 else ""), 16, (strip.x + 30, strip.y + 25), bold=False)
+    K.bevel(surf, btn)
+    unread = PINNWAND.unread()
+    if unread:
+        K.t95(surf, "Pinnwand", 16, (btn.x + 10, btn.centery), anchor="midleft")
+        badge = pygame.Rect(btn.right - 40, btn.centery - 11, 32, 22)
+        pygame.draw.rect(surf, K.F_LATE, badge)
+        K.t95(surf, str(min(unread, 99)), 15, badge.center, color=(255, 255, 255), anchor="center")
+    else:
+        K.t95(surf, "Pinnwand >", 16, (btn.centerx, btn.y + 4), anchor="midtop")
+        K.t95(surf, "lesen & schreiben", 13, (btn.centerx, btn.bottom - 5), color=K.F_DARK, bold=False, anchor="midbottom")
+    return strip
+
+
+def _clock_layout():
+    """uhr.exe's 7-segment digits (the date sits right of them): digit xs,
+    colon centre x, digit top, digit width and height."""
+    dh = WIN_UHR.h - 24
+    dw = int(dh * 0.66)
+    gap, colon = 20, 36
+    x0 = WIN_UHR.x + 18
+    xs = [x0, x0 + dw + gap, x0 + 2 * dw + gap + colon, x0 + 3 * dw + 2 * gap + colon]
+    return xs, x0 + 2 * dw + gap + colon // 2, WIN_UHR.y + 12, dw, dh
+
+
 def _home_tasks():
     return [(HOME_WINDOW_ICONS[name], HOME_WINDOW_TITLES[name]) for name in MINIMIZED]
 
@@ -5576,11 +5722,13 @@ def _draw_home_static(surf, now):
     rects = {}
 
     if "uhr" not in MINIMIZED:
-        inner = K.window(surf, WIN_UHR, f"uhr.exe - {K.WD_SHORT[now.weekday()]} {now.strftime('%d.%m.%Y')}", icon="clock", buttons="xo_")
-        K.bevel(surf, inner, sunken=True, face=(16, 6, 24))
-        x0 = inner.x + 26
-        for i, ch in enumerate(now.strftime("%H%M")):
-            K.seven_seg(surf, ch, x0 + i * 100 + (30 if i >= 2 else 0), inner.y + 14, 70, inner.h - 28)
+        K.bevel(surf, WIN_UHR, sunken=True, face=(16, 6, 24))
+        xs, _, dy, dw, dh = _clock_layout()
+        for x, ch in zip(xs, now.strftime("%H%M")):
+            K.seven_seg(surf, ch, x, dy, dw, dh)
+        date_x = (xs[3] + dw + WIN_UHR.right) // 2
+        K.t95(surf, K.WD_SHORT[now.weekday()], 26, (date_x, WIN_UHR.centery - 4), color=K.CLOCK_ON, anchor="midbottom")
+        K.t95(surf, now.strftime("%d.%m."), 19, (date_x, WIN_UHR.centery + 4), color=K.CLOCK_ON, anchor="midtop")
 
     if "wetter" not in MINIMIZED:
         inner = K.window(surf, WIN_WETTER, "wetter.exe", icon="weather", buttons="xo_")
@@ -5612,6 +5760,8 @@ def _draw_home_static(surf, now):
     if "wg" not in MINIMIZED:
         inner = K.window(surf, WIN_WG, "wg.txt - Editor", icon="note", buttons="xo_")
         K.bevel(surf, inner, sunken=True, face=K.F_PAPER)
+        if PINNWAND is not None:
+            rects["pinnwand"] = _draw_pinnwand_strip(surf, inner, now)
 
     for name in MINIMIZED:
         _draw_minimized_note(surf, HOME_WINDOWS[name])
@@ -5650,11 +5800,7 @@ def _draw_bvg_window(surf, now):
         y += row_h
     status = pygame.Rect(inner.x, inner.bottom - 32, 250, 30)
     K.bevel(surf, status, sunken=True)
-    if UPDATED_BVG_TIME:
-        stand = f"Stand {convert_timestamp(UPDATED_BVG_TIME, '%H:%M:%S')}"
-    else:
-        stand = "Keine Verbindung zur BVG"
-    K.t95(surf, stand, 15, (status.x + 8, status.centery), color=K.F_DARK, bold=False, anchor="midleft")
+    _draw_bvg_stand(surf, status)
     rects = {}
     if BVG_MAP:
         kb = pygame.Rect(inner.right - 126, inner.bottom - 32, 126, 32)
@@ -5663,6 +5809,28 @@ def _draw_bvg_window(surf, now):
         K.t95(surf, "Karte...", 17, (kb.x + 34, kb.centery), anchor="midleft")
         rects["karte"] = kb
     return rects
+
+
+def bvg_data_stale():
+    """True when the departures are older than two update cycles (at least
+    90 s): the minutes count down from the timetable, but delays may have
+    changed since, so bvg.exe shows the Stand in red instead of looking fine."""
+    if not UPDATED_BVG_TIME:
+        return True
+    return time.time() - UPDATED_BVG_TIME > max(90, 2 * config["TIMER"]["BVG_UPDATE"])
+
+
+def _draw_bvg_stand(surf, status):
+    """bvg.exe's / karte.exe's status field: "Stand hh:mm:ss", red when stale."""
+    if not UPDATED_BVG_TIME:
+        text = "Keine Verbindung zur BVG"
+    elif bvg_data_stale():
+        text = f"Stand {convert_timestamp(UPDATED_BVG_TIME, '%H:%M')} - veraltet!"
+    else:
+        text = f"Stand {convert_timestamp(UPDATED_BVG_TIME, '%H:%M:%S')}"
+    stale = bvg_data_stale()
+    K.t95(surf, text, K.fit_size(text, status.w - 14, sizes=(15, 14, 13), bold=stale), (status.x + 8, status.centery),
+          color=K.F_LATE if stale else K.F_DARK, bold=stale, anchor="midleft")
 
 
 def _draw_sev(surf, rect):
@@ -5728,10 +5896,9 @@ def draw_home():
     if "uhr" not in MINIMIZED:
         # 1 Hz blinking colon, like an old LED alarm clock
         colon_on = int(time.time() * 2) % 2 == 0
-        inner = pygame.Rect(WIN_UHR.x + 8, WIN_UHR.y + 36, WIN_UHR.w - 16, WIN_UHR.h - 42)
-        cx = inner.x + 26 + 2 * 100 + 4
-        for cy in (inner.y + inner.h // 3, inner.y + 2 * inner.h // 3):
-            pygame.draw.rect(tft_surf, K.CLOCK_ON if colon_on else K.CLOCK_OFF, (cx, cy - 5, 10, 10))
+        _, cx, dy, _, dh = _clock_layout()
+        for cy in (dy + dh // 3, dy + 2 * dh // 3):
+            pygame.draw.rect(tft_surf, K.CLOCK_ON if colon_on else K.CLOCK_OFF, (cx - 4, cy - 4, 8, 8))
 
     if "wg" not in MINIMIZED:
         inner = pygame.Rect(WIN_WG.x + 8, WIN_WG.y + 36, WIN_WG.w - 16, WIN_WG.h - 42)
@@ -5800,8 +5967,10 @@ def draw_start_menu():
 
     submenu = []
     if START_SUBMENU_OPEN and games_row is not None:
-        entries = [(game.NAME, "stack" if game is party_games.StackGame else "bus", game.NAME) for game in party_games.GAMES]
-        entries.append(("merz", "merz", "MERZ"))
+        daily, featured, more = games_menu_split()
+        entries = [(key, icon, name) for key, name, icon, _ in ([daily] if daily else []) + featured]
+        if more:
+            entries.append(("__more__", "folder", "Mehr Spiele..."))
         sm = pygame.Rect(menu.right - 4, games_row.y - 4, 216, len(entries) * 46 + 10)
         K.bevel(tft_surf, sm)
         for j, (key, icon, label) in enumerate(entries):
@@ -5827,7 +5996,9 @@ def _start_menu_action(action):
         START_SUBMENU_OPEN = not START_SUBMENU_OPEN
         return
     close_start_menu()
-    if action.startswith("game:"):
+    if action == "game:__more__":
+        open_games_menu("more")
+    elif action.startswith("game:"):
         start_game(action[len("game:"):])
     elif action == "quiz":
         activate_quiz()
@@ -5850,6 +6021,8 @@ def open_home_window(name):
         return
     HOME_WINDOW = name
     HOME_WINDOW_LAST_ACTIVITY_TS = time.time()
+    if name == "pinnwand":
+        PINNWAND.opened()
     logger.info(f"Home window opened: {name}")
 
 
@@ -5858,6 +6031,8 @@ def close_home_window(reason):
     if HOME_WINDOW is None:
         return
     logger.info(f"Home window {HOME_WINDOW} closed ({reason})")
+    if HOME_WINDOW == "pinnwand":
+        PINNWAND.closed()
     HOME_WINDOW = None
     HOME_WINDOW_RECTS = {}
 
@@ -5874,6 +6049,11 @@ def draw_home_window(now):
         rects["back"] = K.button(tft_surf, pygame.Rect(inner.right - 122, inner.bottom - 36, 122, 36), "< Zurück", size=16)
         K.t95(tft_surf, "Quelle: Weatherbit + Open-Meteo", 13, (inner.x + 4, inner.bottom - 18), color=K.F_DARK, bold=False, anchor="midleft")
         tasks = [("weather", "wetter.exe")]
+    elif HOME_WINDOW == "pinnwand":
+        inner = K.window(tft_surf, frame, "pinnwand.exe - WG-Chat", icon="note")
+        PINNWAND.draw(tft_surf, inner, now)
+        rects["back"] = PINNWAND.rects["back"]
+        tasks = [("note", "pinnwand.exe")]
     elif HOME_WINDOW == "karte":
         inner = K.window(tft_surf, frame, "karte.exe - Kiez", icon="map")
         mb = pygame.Rect(inner.x, inner.y - 2, inner.w, 22)
@@ -5883,8 +6063,7 @@ def draw_home_window(now):
         K.draw_map(tft_surf, area, BVG_MAP, {row["id"]: row for row in _bvg_rows_view(now)})
         status = pygame.Rect(inner.x, inner.bottom - 34, inner.w - 130, 32)
         K.bevel(tft_surf, status, sunken=True)
-        stand = f"Stand {convert_timestamp(UPDATED_BVG_TIME, '%H:%M:%S')}" if UPDATED_BVG_TIME else "Keine Verbindung zur BVG"
-        K.t95(tft_surf, stand, 15, (status.x + 8, status.centery), color=K.F_DARK, bold=False, anchor="midleft")
+        _draw_bvg_stand(tft_surf, status)
         rects["back"] = K.button(tft_surf, pygame.Rect(inner.right - 122, inner.bottom - 34, 122, 34), "< Zurück", size=16)
         tasks = [("map", "karte.exe")]
     else:  # "clock": hours over minutes, tap anywhere to restore
@@ -6002,6 +6181,8 @@ def handle_home_click(mx, my):
 
     if HOME_WINDOW is not None:
         HOME_WINDOW_LAST_ACTIVITY_TS = time.time()
+        if HOME_WINDOW == "pinnwand" and PINNWAND.tap(mx, my):  # its own buttons, scrolling, compose dialog
+            return True
         for name in ("back", "x", "_"):
             rect = HOME_WINDOW_RECTS.get(name)
             if rect and rect.collidepoint((mx, my)):
@@ -6035,8 +6216,14 @@ def handle_home_click(mx, my):
     if time.time() < SEV_UNTIL and "bvg" not in MINIMIZED and K.close_box(WIN_BVG).collidepoint((mx, my)):
         SEV_UNTIL = 0  # sev.exe's x gives bvg.exe back
         return True
+    if "uhr" not in MINIMIZED and WIN_UHR.collidepoint((mx, my)):
+        # No title bar: a tap on the clock maximises it. Not inside the
+        # emergency-exit corner, where taps count towards quitting.
+        if mx >= EMERGENCY_EXIT_MAX_X or my >= EMERGENCY_EXIT_MAX_Y:
+            _home_title_action("uhr", "o")
+        return True
     for name, win in HOME_WINDOWS.items():
-        if name in MINIMIZED or (name == "bvg" and time.time() < SEV_UNTIL):
+        if name == "uhr" or name in MINIMIZED or (name == "bvg" and time.time() < SEV_UNTIL):
             continue
         buttons = K.title_buttons(win)
         for glyph in ("x", "o", "_"):
@@ -6060,6 +6247,9 @@ def handle_home_click(mx, my):
     if HOME_RECTS.get("karte") and HOME_RECTS["karte"].collidepoint((mx, my)):
         open_home_window("karte")
         return True
+    if HOME_RECTS.get("pinnwand") and HOME_RECTS["pinnwand"].collidepoint((mx, my)):
+        open_home_window("pinnwand")
+        return True
     return False
 
 
@@ -6077,7 +6267,8 @@ def update_kiez_timeouts():
         SHUTDOWN_VISIBLE = False
         EGG = None
         return
-    if HOME_WINDOW is not None and now - HOME_WINDOW_LAST_ACTIVITY_TS > HOME_WINDOW_IDLE_TIMEOUT_SECONDS:
+    idle_limit = PINNWAND_IDLE_TIMEOUT_SECONDS if HOME_WINDOW == "pinnwand" else HOME_WINDOW_IDLE_TIMEOUT_SECONDS
+    if HOME_WINDOW is not None and now - HOME_WINDOW_LAST_ACTIVITY_TS > idle_limit:
         close_home_window("idle-timeout")
     if DADA is not None and now - DADA["opened_at"] > DADA_AUTO_CLOSE_SECONDS:
         DADA = None
@@ -6262,11 +6453,45 @@ def draw_dashboard_overlays():
     draw_egg()
 
 
+# Night mode: the screen is the hallway's light at night, so it stays bright
+# but warm/reddish instead of going dark (config NIGHT_MODE).
+NIGHT_CONFIG = config.get("NIGHT_MODE", {})
+
+
+def night_mode_active(now=None):
+    if not NIGHT_CONFIG.get("ENABLED", False):
+        return False
+    t = (now or datetime.datetime.now()).strftime("%H:%M")
+    start, end = NIGHT_CONFIG.get("FROM", "23:00"), NIGHT_CONFIG.get("TO", "07:00")
+    return start <= t or t < end if start > end else start <= t < end
+
+
+def apply_night_mode(surf):
+    """Multiplies the finished frame with the warm tint (once per frame,
+    right before display.update(): every screen redraws fully each frame)."""
+    if night_mode_active():
+        surf.fill(tuple(NIGHT_CONFIG.get("TINT", [255, 150, 90])), special_flags=pygame.BLEND_MULT)
+
+
+def _load_tictacdada_avatars():
+    """TIC-TAC-DADA's MoaBeats profile pictures, once at start (placeholders
+    stay if MoaBeats can't be reached)."""
+    try:
+        tictacdada.load_avatars(config["MOABEATS"]["API_URL"])
+    except Exception as e:
+        logger.error(f"TIC-TAC-DADA avatars not loaded: {e}")
+
+
 def loop():
+    global GAMES_LAST_ACTIVITY_TS  # refreshed by game drags in the event loop
     # Start the new scheduler
     scheduler.start_weather_updates()
     scheduler.start_bvg_updates()
     scheduler.start_moabeats_updates()
+    if GAMES_ENABLED and config.get("MOABEATS", {}).get("ENABLED", False):
+        threading.Thread(target=_load_tictacdada_avatars, daemon=True).start()
+    if PINNWAND is not None:
+        PINNWAND.start_polling(lambda: not DISPLAY_BLANK)
 
     # Set X11 display power management settings
     # Sync OS blanking with app blanking timer
@@ -6398,6 +6623,7 @@ def loop():
             draw_dashboard_overlays()
             if SHOW_FPS:
                 draw_fps()
+            apply_night_mode(tft_surf)
             pygame.display.update()
 
         elif datetime.datetime.today().weekday() == CLEANING_DAY:
@@ -6477,11 +6703,18 @@ def loop():
                     handle_quiz_results_release()
                 if MERZ_VISIBLE:
                     handle_merz_release()  # stops the BURN flamethrower stream
+                if ACTIVE_GAME is not None:
+                    ACTIVE_GAME.release()  # ENTEIGNEN!: end of a swipe
 
             elif event.type == pygame.MOUSEMOTION:
                 # Only used to pan the zoomed AFM results triangle by drag.
                 if QUIZ_STAGE == "results":
                     handle_quiz_results_motion(*event.pos)
+                # Party games see the finger moving while it's down (ENTEIGNEN!'s blade);
+                # every event's own position, so fast swipes keep all their points.
+                if ACTIVE_GAME is not None and event.buttons[0]:
+                    GAMES_LAST_ACTIVITY_TS = time.time()
+                    ACTIVE_GAME.drag(event.pos[0], event.pos[1] - GAME_TITLE_HEIGHT)
 
             elif event.type == pygame.KEYDOWN:
 

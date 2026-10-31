@@ -68,11 +68,19 @@ def driver():
             time.sleep(0.2)
         time.sleep(1.0)
         check("home drawn", P.START_BUTTON_RECT is not None and "mehr" in P.HOME_RECTS)
+        fresh = P.UPDATED_BVG_TIME
+        P.UPDATED_BVG_TIME = time.time() - 20  # Stand = BVG's realtimeDataUpdatedAt, the live feed's own age
+        check("20 s old BVG Stand isn't stale", not P.bvg_data_stale())
+        P.UPDATED_BVG_TIME = time.time() - 120  # Stand 14:49 while the clock says 14:51
+        check("2 min old BVG Stand is stale (red)", P.bvg_data_stale())
+        P.UPDATED_BVG_TIME = fresh
 
         tap(P.START_BUTTON_RECT)
         check("Start opens the menu", P.START_MENU_OPEN)
         tap(next(r for r, a in P.START_MENU_RECTS if a == "games_sub"))
-        tap(next(r for r, a in P.START_MENU_RECTS if a == "game:STAPEL-TURM"))
+        tap(next(r for r, a in P.START_MENU_RECTS if a == "game:__more__"))
+        check("Mehr Spiele... opens the spiele.exe folder", P.GAMES_MENU_OPEN and P.GAMES_MENU_PAGE == "more")
+        tap(next(r for r, k in P.GAMES_MENU_RECTS if k == "STAPEL-TURM"))
         check("STAPEL-TURM running", P.ACTIVE_GAME is not None and P.ACTIVE_GAME.NAME == "STAPEL-TURM")
         check("emergency exit off in the game", not P.emergency_exit_active())
         for _ in range(3):
@@ -84,8 +92,8 @@ def driver():
         check("Mehr... opens wetter details", P.HOME_WINDOW == "wetter")
         tap(P.HOME_WINDOW_RECTS["back"])
         check("< Zurück back home", P.HOME_WINDOW is None)
-        tap(P.K.title_buttons(P.WIN_UHR)["o"])
-        check("uhr.exe o maximises", P.HOME_WINDOW == "clock")
+        tap((360, 60))
+        check("tap on the clock maximises", P.HOME_WINDOW == "clock")
         tap((240, 400))
         check("tap restores the clock", P.HOME_WINDOW is None)
         bar = P.K.title_buttons(P.WIN_BVG)["bar"]
@@ -102,7 +110,7 @@ def driver():
         check("Nein! closes it", P.DADA is None)
 
         # Popups have one x (no o/_), and it closes them.
-        tap(P.K.title_buttons(P.WIN_UHR)["x"])
+        tap(P.K.title_buttons(P.WIN_WETTER)["x"])
         tap(next(r for r, label in P.DADA_BUTTON_RECTS if label == "x"))
         check("dada box x closes it", P.DADA is None)
         tap(P.HOME_RECTS["mehr"])
@@ -139,6 +147,9 @@ def driver():
         check("tap closes the surprise", P.EGG is None)
         time.sleep(0.3)
         check("emotion prompt follows", P.EMOTION_PROMPT_VISIBLE)
+        check("mood.exe rows = one mood family each",
+              all(any(set(row) <= set(g) for g in P.EMOTION_GROUPS) for row in P.EMOTION_SHUFFLED_ROWS[:4])
+              and {e for row in P.EMOTION_SHUFFLED_ROWS for e in row} == set(P.get_emotion_prompt_options(16)))
         tap(P.EMOTION_ACTION_RECTS["cancel"])
         check("Cancel logs a skip", not P.EMOTION_PROMPT_VISIBLE and LOGGED and LOGGED[-1].get("skipped"))
 
