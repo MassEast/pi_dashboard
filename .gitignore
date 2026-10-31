@@ -105,3 +105,4 @@ media/secret_clips/*
 # the committed fallback everyone else's clone actually gets).
 icons/*_ios.png
 scratch/
+future_massive_prompt.txt

@@ -67,6 +67,11 @@ After `git pull` on the Pi, restart whichever process actually changed:
   at it. A full `sudo reboot` restarts both processes cleanly via the `pidashboard.desktop`
   autostart entry and is often simpler than manually managing the foregrounded process, but is
   even more visible/disruptive — same rule applies.
+- `pidashboard.desktop` starts `PiDashboard.py` through `run_dashboard.sh`, which restarts it after
+  a crash (exit code != 0) but not after the 5-tap emergency exit / ESC (exit 0), and gives up after
+  more than 5 crashes in 10 minutes. So once that's deployed, a manual restart is just
+  `pkill -f PiDashboard.py` (the wrapper starts it again) — launching a second copy by hand would
+  run two dashboards.
 
 ## Configuration
 
@@ -127,11 +132,27 @@ through the JSON files in `logs/`:
   a chore stays in the app on purpose. `dev/test_moabeats_checklist.py` tests it headless against
   `dev/fake_moabeats_server.py`, which also runs standalone for a local look (point
   `MOABEATS.API_URL` at it; never test ticking against the real instance).
-- **Spiele** — Start -> Spiele opens a submenu (and a game's MENÜ button the `spiele.exe` window): MERZ plus the tap-only
-  party games in `party_games.py` (STAPEL-TURM, FLAPPY BVG), all behind one `GAMES` config section.
-  Each game is a self-contained object (`update(now)`, `draw(surf)`, `tap(x, y)`) that
-  `PiDashboard.py` only drives; an all-time top 5 per game (MERZ too, by time, via `party_games.MerzResult`) is persisted via `highscore_store.py`
-  (`logs/game_highscores.json`, name typed on an on-screen keyboard in the game-over panel).
+- **Spiele** — Start -> Spiele opens a submenu (and a game's MENÜ button the `spiele.exe` window) with
+  only the config `GAMES.FEATURED` games (one of them, rotating daily, as "Spiel des Tages",
+  `games_menu_split()`) plus a "Mehr Spiele..." folder (`GAMES_MENU_PAGE` "more") with the rest: MERZ
+  (in `PiDashboard.py`) plus the party games, all behind one `GAMES` config section: STAPEL-TURM and
+  FLAPPY BVG (`party_games.py`), ENTEIGNEN! (`enteignen.py`, swipe-to-cut), KIEZBLOCK
+  (`games_kiezblock.py`), TIC-TAC-DADA (`tictacdada.py` + `tictacdada_lines.py`, 2 players with the
+  WG's MoaBeats avatars; special lines naming real people only in config `GAMES.TICTACTOE`),
+  PATRIAPUTT (`patriaputt.py`, brick-breaker), KIEZ KAPERN (`kiezkapern.py`, tap-to-drive
+  Kiez sandbox), KIEZ-KURIER (`kiezkurier.py`, daily route puzzle seeded by the date, own
+  `IDLE_TIMEOUT_SECONDS` class attribute read by `update_games_timeout()`) and LASTENRAVE
+  (`lastenrave.py`, crane stacking with its own small physics). Each is a `party_games._Game` subclass (`update(now)`, `draw(surf)`, `tap(x, y)`,
+  optional `drag(x, y)`/`release()` — PiDashboard routes MOUSEMOTION with the finger down and
+  MOUSEBUTTONUP to the active game) registered in `PiDashboard.py` with `party_games.GAMES.append`
+  and its icon in `kiezos.ICON_MAKERS`. Every finished round (score, time, optional name) is kept via
+  `highscore_store.py` (`logs/game_highscores.json`); the KiezOS game-over dialog shows the whole,
+  scrollable Bestenliste. Each game has a headless `dev/test_<game>.py`, most a `dev/play_<game>.py`.
+- `pinnwand.py` — pinnwand.exe: MoaBeats' "pinnwand" chat channel read/written via a guest account
+  (config `MOABEATS.PINNWAND_USER/PASSWORD`), opened from the strip at the bottom of wg.txt;
+  `dev/test_pinnwand.py` runs against `dev/fake_moabeats_server.py`.
+- Night mode (config `NIGHT_MODE`): the finished frame is multiplied with a warm tint in the time
+  window (`apply_night_mode()`, once per frame right before `display.update()`; `dev/test_night_mode.py`).
 - Two built-in safety mechanisms exist specifically because this runs headless/unattended on a
   touchscreen with no keyboard: an emergency-exit corner tap (top-left corner, 5 rapid taps
   anywhere within the hitbox — deliberately generous, not pixel-exact, because real touchscreen

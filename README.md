@@ -10,6 +10,18 @@
 | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | <img src="images/kiezos_home.png" alt="KiezOS 161 home screen" width="300"> | <img src="images/example_installation.jpg" alt="Dashboard wall installation" width="300"> |
 
+| pinnwand.exe (WG chat for guests)                                    | Night mode                                                          | ENTEIGNEN!                                                        |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| <img src="images/kiezos_pinnwand.png" alt="pinnwand.exe" width="240"> | <img src="images/kiezos_night.png" alt="Night mode" width="240">    | <img src="images/game_enteignen.png" alt="ENTEIGNEN!" width="240"> |
+
+| TIC-TAC-DADA                                                            | PATRIAPUTT                                                            | KIEZ KAPERN                                                         |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| <img src="images/game_tictacdada.png" alt="TIC-TAC-DADA" width="240">   | <img src="images/game_patriaputt.png" alt="PATRIAPUTT" width="240"> | <img src="images/game_kiezkapern.png" alt="KIEZ KAPERN" width="240"> |
+
+| KIEZ-KURIER (daily puzzle)                                              | LASTENRAVE                                                               |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| <img src="images/game_kiezkurier.png" alt="KIEZ-KURIER" width="240">    | <img src="images/game_lastenrave.png" alt="LASTENRAVE" width="240">      |
+
 ## Abstract
 In here, I explain (for my future me and anyone else reading this, feel free to share!) how to successfully set up on a Pi 4B with the Waveshare 4,3 Zoll QLED Touch Display (DSI, 800x480) and Pi OS 20241119 (bookworm).
 
@@ -21,8 +33,9 @@ The 480x800 screen is dressed up as *KiezOS 161*, a purple 90s desktop, ordered 
 - `uhr.exe`: a big 7-segment clock with a blinking colon.
 - `wetter.exe`: current weather, today's low/high and whether rain is coming in the next 12 hours (hourly forecast from [Open-Meteo](https://open-meteo.com/), no API key needed). `Mehr...` opens the details: feels-like, humidity, wind, UV, the rain chart, sunrise/sunset, moon phase and the next 3 days.
 - `bvg.exe`: one row per configured bus connection with its destination landmark, "in x min" plus the departures after it, and delays in red. `Karte...` draws the same connections on a little map of the Kiez.
-- `wg.txt`: what's due, what to buy and who's visiting (optional MoaBeats integration, see below).
-- The `Start` menu bundles everything else: Spiele, AFM-Quiz, Putzdienste, WLAN-Zugang, Stimmung & Stats and `Herunterfahren...` (try it).
+- `wg.txt`: what's due, what to buy and who's visiting, plus a strip that opens `pinnwand.exe`, the WG's chat, where guests can read along and leave a message (optional MoaBeats integration, see below).
+- The `Start` menu bundles everything else: Spiele (a game of the day, a few favourites and a folder with the rest), AFM-Quiz, Putzdienste, WLAN-Zugang, Stimmung & Stats and `Herunterfahren...` (try it).
+- At night the whole screen turns warm red, so it doesn't light up the hallway (optional).
 - Some surprises when you walk past. Not telling.
 
 ## Cost estimate
@@ -264,16 +277,18 @@ The KiezOS 161 look has one theme file, set in `config.json` via
 
 #### MoaBeats WG Integration
 MoaBeats is a separate (not public) web app this WG uses to track chores, a shared shopping list,
-and upcoming guest visits. This integration is a one-way, read-only pull: `PiDashboard.py`
-periodically fetches a small JSON summary from MoaBeats' API and renders it on the display - it
-doesn't write anything back. If you don't run MoaBeats yourself, just leave `ENABLED: false` (the
+and upcoming guest visits. `PiDashboard.py` periodically fetches a small JSON summary from
+MoaBeats' API and renders it on the display; the only things it writes back are checklist ticks
+and Pinnwand messages (below). If you don't run MoaBeats yourself, just leave `ENABLED: false` (the
 default) and ignore this section entirely.
 ```json
 "MOABEATS": {
   "ENABLED": false,
   "API_URL": "https://your-moabeats-instance.up.railway.app",
   "DISPLAY_SECRET": "shared secret, set as DISPLAY_SECRET on the MoaBeats side too",
-  "POLL_INTERVAL": 1800
+  "POLL_INTERVAL": 1800,
+  "PINNWAND_USER": "FlurPi",
+  "PINNWAND_PASSWORD": "the guest account's password"
 }
 ```
 - Polls a MoaBeats instance's `GET /api/display/status` for WG chores, shopping list, and upcoming
@@ -287,6 +302,12 @@ default) and ignore this section entirely.
 - `Start` → `Putzdienste` lists today's and overdue cleaning chores (the same list as the cleaning-day
   screen); chores with a checklist show their progress and open on tap, where sub-items can be
   ticked (ticking only - completing a chore stays in the MoaBeats app).
+- **Pinnwand**: if `PINNWAND_USER`/`PINNWAND_PASSWORD` are set (a normal MoaBeats account just for
+  the display), the bottom strip of `wg.txt` shows the newest message of MoaBeats' `pinnwand` chat
+  channel and an unread badge; tapping it opens `pinnwand.exe` (`pinnwand.py`): the last messages as
+  chat bubbles, and an on-screen keyboard to write one, with an optional name ("Oma Erna: ...").
+  Bot reminders and emoji are left out. A wrong password is tried once and then not again (MoaBeats
+  would lock the account); without network it just says so and retries.
 - Polling pauses while the display is blank, same as weather/BVG, *except* on `CLEANING_DAY`: the
   blanked screen is actively showing the cleaning-day fullscreen then, so it keeps polling to stay
   current through the day rather than freezing on stale data.
@@ -309,6 +330,7 @@ default) and ignore this section entirely.
   "CONFIRMATION_SECONDS": 5,
   "CATALOG": [{"name": "happy", "emoji": "😊", "color": "#16a34a"}, ...],
   "CUSTOM_SLOTS": [],
+  "GROUPS": [["happy", "excited", "energized", "wild"], ["grateful", "relaxed", "proud", "focused"], ...],
   "FALLBACK_STYLE": {"emoji": "?", "color": "#9ca3af"},
   "LLM": {
     "ENABLED": false,
@@ -321,10 +343,22 @@ default) and ignore this section entirely.
 - Whenever the display is reactivated from blank state (touch or PIR motion), an emotion popup can appear.
 - Prompt frequency is rate-limited by `COOLDOWN_SECONDS` (default: once every 30 minutes).
 - The post-save confirmation popup stays visible for `CONFIRMATION_SECONDS` (default: 5 seconds).
-- Emotion buttons show up to 16 options (default catalog + custom slots), plus `Cancel` and `Show results` actions (also under `Start` → `Stimmung & Stats`). This window (`mood.exe`) is English, like the emotion names it logs.
+- Emotion buttons show up to 16 options (default catalog + custom slots), one row per mood family (`GROUPS`, shuffled each time so nobody always taps the first one), plus `Cancel` and `Show results` actions (also under `Start` → `Stimmung & Stats`). This window (`mood.exe`) is English, like the emotion names it logs.
 - `Show results` opens a second overlay with a QR code to the web results page.
 - If nobody interacts, prompt dismissal follows `TIMER.DISPLAY_BLANK` timing and is not logged.
 - **Custom emotions**: Tap `custom...` to enter text. New emotions auto-deduplicate against catalog. If LLM enabled, auto-classifies with emoji, color, and position on sentiment spectrum (green=positive→red=negative). Spelling fixes from LLM map back to existing entries.
+
+#### Night mode
+```json
+"NIGHT_MODE": {
+  "ENABLED": false,
+  "FROM": "23:00",
+  "TO": "07:00",
+  "TINT": [255, 150, 90]
+}
+```
+- Between `FROM` and `TO` (also across midnight) every frame is multiplied with `TINT`: a warm,
+  dimmer red-orange that doesn't light up a dark hallway. Purely a filter, everything works as usual.
 
 #### Local Web Dashboard
 ```json
@@ -390,19 +424,43 @@ default) and ignore this section entirely.
 "GAMES": {
   "ENABLED": false,
   "IDLE_TIMEOUT_SECONDS": 60,
-  "FPS": 30
+  "FPS": 30,
+  "FEATURED": ["ENTEIGNEN!", "KIEZ-KURIER", "LASTENRAVE", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT"],
+  "TICTACTOE": {"SPECIAL_LINES": {"ROUNDS": [6, 12], "WIN": ["{winner}, deine Oma wäre stolz auf dich."], "PLAY": ["Oma freut sich, dass ihr spielt."]}}
 }
 ```
-- `Start` → `Spiele` opens a menu with MERZ (below) and two
-  tap-only games from `party_games.py`: **STAPEL-TURM** (tap to drop
-  a sliding Plattenbau floor on the tower, overhang gets cut off) and **FLAPPY BVG** (tap to hop a
-  BVG bus through gaps between Baustellen barriers).
-- One flag/timeout/FPS for all three games (MERZ had its own `MERZ` section before; it's no
-  longer read). All-time top 5 per game in `logs/game_highscores.json` (MERZ: by time from the
-  first throw to the explosion, fastest first)
-  (`highscore_store.py`, gitignored); getting into it asks for a name on an on-screen keyboard
-  in the game-over panel (empty -> "ANONYM", also saved if the game is closed mid-entry). The menu/game closes after `IDLE_TIMEOUT_SECONDS` without a tap or when the display
-  blanks.
+- `Start` → `Spiele` (and `spiele.exe`, where a game's MENÜ button leads) shows the `FEATURED`
+  games: one of them, rotating daily, as the big "SPIEL DES TAGES", then the others, then a
+  "Mehr Spiele..." folder with everything else. Fewer choices, more playing. All games are drawn
+  in code, tap/swipe only, no sound:
+  - **ENTEIGNEN!** (`enteignen.py`): swipe to cut flying money, yachts and private jets in half
+    (but not the neighbours' cat or the BVG bus); uncut money escapes as Steuerflucht. Streaks
+    multiply the points, three bosses (das Patriarchat, Mietenhai AG, das Kapital) show up during a run.
+  - **KIEZ-KURIER** (`kiezkurier.py`): one new route puzzle a day, the same for the whole WG:
+    drag the Lastenrad from the Kollektiv to the Späti through every free street exactly once;
+    Baustellen are closed, at a Kreisel you must turn, on a Fahrradstraße go straight, an
+    Einbahnstraße is left in the arrow's direction. Generated from the date and checked by a
+    solver to have exactly one solution; fastest time of the day wins.
+  - **LASTENRAVE** (`lastenrave.py`): stack ever more absurd rave gear (speakers, Mischpult,
+    Discokugel, XXL-Pfeffi, Sperrmüll-Sofa, ...) from a swinging crane onto a Lastenrad riding over
+    Kopfsteinpflaster, without the pile tipping over.
+  - **TIC-TAC-DADA** (`tictacdada.py`): tic-tac-toe for 2 Spieler*innen with the WG's MoaBeats
+    profile pictures (pixelated) or X/O, a different win line every round (`tictacdada_lines.py`)
+    and dadaist rule breaks. `TICTACTOE.SPECIAL_LINES` adds lines for one random round between
+    `ROUNDS` per session (`{winner}` / `{loser}` = the players' names, checked at start) - keep
+    lines naming real people in your config, not in the code.
+  - **KIEZ KAPERN** (`kiezkapern.py`): a 3-minute shift on a Lastenrad in a made-up Kiez: tap the
+    map to ride there, free Lastenräder, deliver Soli-Suppe, topple a luxury-loft crane, and keep
+    the Mietspiegel (the wanted level) down.
+  - **PATRIAPUTT** (`patriaputt.py`): brick-breaker against a slowly descending wall of
+    patriarchy, with ball upgrades.
+  - In the folder: **KIEZBLOCK** (`games_kiezblock.py`, tap SUVs into Hochbeete), **STAPEL-TURM** (tap to drop a Plattenbau floor on the
+    tower) and **FLAPPY BVG** (hop a BVG bus through Baustellen) from `party_games.py`, and MERZ (below).
+- Every finished round is kept with its score and time in `logs/game_highscores.json`
+  (`highscore_store.py`, gitignored), the name is optional (on-screen keyboard in the game-over
+  dialog, also kept if the game is closed mid-entry). The game-over dialog shows the whole list,
+  scrollable, so a statistic over the year is possible later. The menu/game closes after
+  `IDLE_TIMEOUT_SECONDS` without a tap or when the display blanks.
 - Disabled by default.
 
 #### MERZ (dadaist easter-egg minigame, part of GAMES)
@@ -467,6 +525,10 @@ We use the standard Desktop autostart mechanism.
    ```bash
    cp pidashboard.desktop ~/.config/autostart/
    ```
+   It starts `web_server.py` and `run_dashboard.sh`, which restarts `PiDashboard.py` after a crash,
+   but not after the emergency exit or ESC (those exit with code 0), and gives up after more than
+   5 crashes in 10 minutes. To restart the dashboard by hand, `pkill -f PiDashboard.py` is enough -
+   the wrapper starts it again (don't start a second copy).
 
 3. **Reboot**: `sudo reboot`
   The dashboard and local web server should now start automatically, and the screen should blank after the configured timeout.
