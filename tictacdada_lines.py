@@ -64,6 +64,13 @@ WIN_LINES = [
     "Preis: ein Stück Berliner Mauer. Von IKEA.",
     "Preis: du darfst den FlurPi streicheln. Vorsichtig.",
     "Preis: ein Gutschein für 1x Ausreden lassen im Plenum.",
+    "Preis: ein Pronomen-Sticker. Du suchst aus.",
+    "Preis: 5 Minuten auf dem CSD-Wagen. Winken üben!",
+    "Preis: ein Platz auf der Admiralbrücke. Bis 22 Uhr.",
+    "Preis: eine Stunde ohne Plenum. Unbezahlbar.",
+    "Preis: die WG-Bohrmaschine. Mit Einweisung.",
+    "Preis: Gästeliste im Club. Plus null.",
+    "Preis: ein Glitzerpflaster für {loser}. Geteilt.",
     # Urteile
     "Sieg! Wird im nächsten Plenum angefochten.",
     "Glückwunsch! Der Sieg gehört natürlich uns allen.",
@@ -107,6 +114,13 @@ WIN_LINES = [
     "Antifa-Dreier! Also, drei in einer Reihe.",
     "Sieg! {loser} schreibt das Protokoll.",
     "Offiziell: {winner} hat drei Kreuze gemacht.",
+    "Die Brandmauer hält. Das Spielfeld auch.",
+    "Deutsche Wohnen enteignen. Dieses Feld gleich mit.",
+    "Das Feld wird umbenannt: {winner}-Platz. Antrag läuft.",
+    "Slay! Sagt der ganze Kiez. Na ja, die Hälfte.",
+    "{loser}: Danke fürs Mitmachen. Ehrlich, ohne Ironie.",
+    "Sieg! Bitte nicht in die Kommentarspalte posten.",
+    "Care-Arbeit nicht vergessen: {winner} macht Tee für alle.",
 ]
 
 

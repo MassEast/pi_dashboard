@@ -102,7 +102,10 @@ def test_ready_and_start(g):
     g.tap(240, 600)
     assert g.state == "play"
     frames(g, 12)
+    assert g.banner[0] == KK.INTRO[0] and g.mission is None, "the Schicht starts with the story intro"
+    frames(g, 52)
     assert g.mission is not None and g.mission["kind"] == "rad", g.mission
+    assert g.banner[0] == KK.STORY["rad1"][0], g.banner
     print("ready -> play ok, first mission: Lastenrad befreien", flush=True)
 
 
@@ -257,6 +260,42 @@ def test_spaeti(g):
     print("Späti hiding ok: Mietspiegel 3 -> 0", flush=True)
 
 
+def test_spaeti_one_tap(g):
+    """Ju: "checke das mit dem Späti abtauchen nich". While chased, ONE tap on a Späti
+    rides there and ducks in on arrival (no second tap on ABTAUCHEN needed)."""
+    g.mission = None
+    g.next_mission_t = 1e9
+    g.invuln_until = 1e9
+    door = min(g.city.spaeti_doors, key=lambda d: abs(d[0] - g.bike_tile()[0]) + abs(d[1] - g.bike_tile()[1]))
+    away = g.city.nearest_bikeable(door[0] + 4, door[1] + 3)
+    drive_to(g, KK.tile_center(*away))
+    g.set_level(3)
+    frames(g, 2)
+    def on_screen(wx, wy):  # inverse of g.to_world (the camera the tap uses)
+        return wx - g.cam[0] + KK.VIEW.x, wy - g.cam[1] + KK.VIEW.y
+    sx, sy = on_screen(*KK.tile_center(*door))
+    assert KK.VIEW.collidepoint(sx, sy), "door not on screen for the test"
+    g.tap(sx, sy)
+    assert g.auto_hide == door and g.path, ("tap on the Späti didn't route there", g.state, g.level, g.hidden,
+                                            g.auto_hide, door, (sx, sy), g._spaeti_at(sx, sy), len(g.path))
+    for _ in range(int(20 / FRAME)):
+        frames(g, 1)
+        if g.hidden:
+            break
+    assert g.hidden == door, "didn't duck in on arrival"
+    frames(g, int(KK.HIDE_DROP_SECONDS / FRAME) + 4)
+    assert g.level <= 2
+    g.tap(sx, sy)  # a tap while hidden only leaves (doesn't re-hide)
+    assert g.hidden is None and g.auto_hide is None
+    # at Mietspiegel 0 a tap on a Späti is just a normal ride
+    g.set_level(0)
+    frames(g, 2)
+    sx, sy = on_screen(*KK.tile_center(*door))
+    g.tap(sx, sy)
+    assert g.auto_hide is None
+    print("Späti one tap ok: tap -> ride -> abgetaucht", flush=True)
+
+
 def test_kiezblock(g):
     g.set_level(2)
     a, b = KK.POLLER[0]
@@ -277,12 +316,12 @@ def test_kiezblock(g):
 def test_mietenhai(g):
     g.invuln_until = 0
     g.set_level(3)
+    assert g.banner and g.banner[0] == "WARNUNG" and "MIETENHAI" in g.banner[1]
     for _ in range(80):
         frames(g, 1)
         if any(mb.kind == "shark" for mb in g.mobs):
             break
     shark = next(mb for mb in g.mobs if mb.kind == "shark")
-    assert g.banner and g.banner[1] == "MIETENHAI IM KIEZ"
     g.invuln_until = 1e9  # watch the chase without being caught
     d0 = ((shark.x - g.x) ** 2 + (shark.y - g.y) ** 2) ** 0.5
     frames(g, 40)
@@ -346,7 +385,7 @@ def test_schicht_end():
     frames(g, 10)
     g.schicht = KK.SCHICHT_SECONDS - 0.2
     frames(g, 6)
-    assert g.state == "over" and g.over_text in KK.OVER_TIME and not g.rausmod
+    assert g.state == "over" and g.over_text == KK.OVER_TEXT["open"] and not g.rausmod
     assert len(party_games.top_list(g.NAME)) == 2
     frames(g, 34)
     shot(g, "17_schicht_vorbei.png")
@@ -616,7 +655,6 @@ def test_bot_rounds():
     results = []
     for seed, careful in [(1, True), (2, True), (3, True), (4, False), (5, False)]:
         g, times, stuck = bot_round(seed, careful)
-        c = g.counts
         print(f"  bot seed {seed} {'careful ' if careful else 'reckless'}: {g.over_text:40s} {KK.fmt_eur(g.score):>9s}, "
               f"{g.missions_started} missions, max Mietspiegel {g.max_level}, frame p95 {sorted(times)[int(len(times) * .95)]:.2f} ms",
               flush=True)
@@ -628,6 +666,111 @@ def test_bot_rounds():
     for g in held:
         assert g.missions_started >= 10 and min(g.counts[k] for k in ("rad", "suppe", "kran", "malen", "pfand")) >= 1, g.counts
     print("bot rounds ok: careful bots finish the Schicht with every mission type done, no mission ever stuck", flush=True)
+
+
+def test_onboarding():
+    """The game teaches itself at the moment it matters: intro, one-time tips (Mietspiegel, escape,
+    KLINGEL, 4/5 danger), a free first catch, contextual hints, Späti marker / arrow, KLINGEL feedback."""
+    g = new_game()
+    g.draw(GAME_SURF)  # ready screen with the "Wie geht's?" card
+    g.tap(240, 600)
+    frames(g, 2)
+    assert g.banner[0] == "SCHICHTBEGINN"
+    frames(g, 62)
+    assert g.mission["kind"] == "rad" and g.banner[0].startswith("AKT 1")
+    # Mietspiegel 1: tip waits for the story banner, then shows
+    g.set_level(1)
+    assert "level" in g.tips_shown and g.banner[0] != "TIPP"
+    frames(g, int(3.6 / FRAME))
+    assert g.banner[0] == "TIPP" and g.banner[1] == KK.TIPS["level"], g.banner
+    g.draw(GAME_SURF)
+    assert g.hint[0].startswith("Keiner folgt"), g.hint  # the lose-track countdown
+    # a bot close by: KLINGEL tip + hint, ringing confuses it and says so
+    g.banner, g.tip_queue = None, []
+    bot = KK.Mob("bot", g.x + 120, g.y)
+    g.mobs = [bot]
+    frames(g, 2)
+    g.draw(GAME_SURF)
+    assert g.bot_near and "KLINGEL" in g.hint[0] and g.banner[1] == KK.TIPS["bell"], (g.hint, g.banner)
+    g.tap(*KK.BELL_RECT.center)
+    assert g.t < bot.stun_until and g.bell_hits == 1
+    assert any("verwirrt" in p[0] for p in g.popups), [p[0] for p in g.popups]
+    g.tap(*KK.BELL_RECT.center)
+    assert any("lädt" in p[0] for p in g.popups), "a KLINGEL on cooldown says so"
+    # first catch in the grace minute: a warning, no house
+    g.invuln_until = 0
+    lvl = g.level
+    g.caught(bot)
+    assert g.level == lvl and g.warned and g.banner[1] == KK.TIPS["warn"]
+    g.invuln_until = 0
+    g.caught(bot)
+    assert g.level == lvl + 1, "the second catch counts"
+    assert "escape" in g.tips_shown
+    # 2/5 + nearest Späti off screen: green arrow; next to it: pulsing marker
+    g.mobs, g.banner, g.tip_queue, g.invuln_until = [], None, [], 1e9
+    g.x, g.y = KK.tile_center(60, 10)
+    g.cam = [g.x - KK.VIEW.w / 2, g.y - KK.VIEW.h / 2 + 30]
+    g._clamp_cam()
+    g.draw(GAME_SURF)
+    assert g.escape_hint == "arrow" and not KK.NO_TAP.collidepoint(g.escape_at), g.escape_hint
+    g.x, g.y = KK.tile_center(39, 27)
+    g.cam = [g.x - KK.VIEW.w / 2, g.y - KK.VIEW.h / 2 + 30]
+    g._clamp_cam()
+    g.draw(GAME_SURF)
+    assert g.escape_hint == "marker", g.escape_hint
+    # 4/5: urgent danger tip, and actions that would push to 5/5 warn on the button
+    g.set_level(4)
+    assert g.banner[1] == KK.TIPS["danger"]
+    m = fresh_mission(g, "malen")
+    g.x, g.y = m["target"]
+    assert g.action_label()[1].startswith("VORSICHT"), g.action_label()
+    print("onboarding ok: intro, tips at the right moment, free first catch, KLINGEL feedback, Späti marker/arrow", flush=True)
+
+
+def test_story_arc():
+    """Akt 1 Lastenrad -> Akt 2 Suppe / Gegenkampagne / Pfand -> finale crane at FINALE_AT ->
+    Feierabend ride to the Hausprojekt -> ending "held"."""
+    g = new_game()
+    g.tap(240, 600)
+    g.invuln_until = 1e9
+    frames(g, 64)
+    kinds = [g.mission["kind"]]
+    for _ in range(3):
+        g.mission = None
+        g.new_mission()
+        kinds.append(g.mission["kind"])
+    assert kinds == ["rad", "suppe", "malen", "pfand"], kinds
+    assert g.banner[0] == "KAMPAGNENKASSE"
+    g.schicht = KK.FINALE_AT
+    frames(g, 1)
+    m = g.mission
+    assert m["kind"] == "kran" and g.banner[0] == "AKT 3: FINALE", (m["kind"], g.banner)
+    m["loose"], m["phase"] = [True] * 3, "tip"
+    g.x, g.y = KK.tile_center(*m["bolts"][0])
+    press_act(g, "KIPPEN!")
+    frames(g, 40)
+    assert g.mission["kind"] == "heim" and g.banner[0] == "FEIERABEND"
+    drive_to(g, g.mission["target"], max_s=60, r=30)
+    frames(g, 2)
+    assert g.heim_done and g.ending() == "held"
+    g.schicht = KK.SCHICHT_SECONDS - 0.05
+    frames(g, 40)
+    assert g.state == "over" and g.over_text == KK.OVER_TEXT["held"]
+    g.draw(GAME_SURF)
+    print("story ok: Akt 1 -> Akt 2 -> finale crane -> Feierabend -> 'Kiez gehalten'", flush=True)
+
+
+def test_balance():
+    """Balance: a reckless player (never hides) survives the forgiving first minute but usually
+    gets Rausmodernisiert later; careful players finish (bot numbers in the log).
+    Before the onboarding pass reckless bots lasted 41 s (median, min 23 s)."""
+    import statistics
+    reck = [bot_round(seed, careful=False)[0] for seed in range(10, 16)]
+    secs = [g.schicht for g in reck]
+    print(f"  reckless: survived median {statistics.median(secs):.0f} s, min {min(secs):.0f} s, "
+          f"rausmodernisiert {sum(g.rausmod for g in reck)}/{len(reck)}", flush=True)
+    assert min(secs) >= 60, "the first minute must be forgiving"
+    assert sum(g.rausmod for g in reck) >= len(reck) // 2, "later it must stay challenging"
 
 
 def main():
@@ -643,6 +786,7 @@ def main():
     test_malen(g)
     test_pfand(g)
     test_spaeti(g)
+    test_spaeti_one_tap(g)
     test_kiezblock(g)
     test_mietenhai(g)
     test_caught_and_rausmodernisiert(g)
@@ -654,6 +798,9 @@ def main():
     test_overlay_layout()
     test_slow_frames()
     test_bot_rounds()
+    test_onboarding()
+    test_story_arc()
+    test_balance()
     mean, p95, worst = test_perf()
     print(f"\nALL KIEZ KAPERN CHECKS PASSED in {time.perf_counter() - t0:.1f} s; busy frame mean {mean:.2f} ms / "
           f"p95 {p95:.2f} ms (budget 25 ms); screenshots in {OUT}", flush=True)

@@ -281,6 +281,10 @@ def test_bots():
               f" kiezblocks {g.kiezblock_count}", flush=True)
     print(f"  idle: {idle_s:.1f} s", flush=True)
     assert idle_s < 25, "doing nothing should lose quickly"
+    # first-timers (1.5 taps/s): before the warm-up they lasted 57 s (median, min 31 s)
+    novice = sorted(bot_round(1.5, seed)[0] for seed in range(1, 7))
+    print(f"  novice 1.5/s: median {novice[3]:.1f} s, min {novice[0]:.1f} s", flush=True)
+    assert novice[0] > 45 and novice[3] > 60, novice
     mids = [s for s, _ in results[:3]]
     goods = [s for s, _ in results[3:]]
     assert 25 < sum(mids) / 3 < 150, f"3 taps/s bot round length {mids} outside the fun range"
@@ -366,6 +370,36 @@ def test_bubble_and_shake_regressions():
     print("BUBBLE/SHAKE/SLOW FRAMES: bubble beside entering cars, HUD steady, 10 FPS keeps real time ok", flush=True)
 
 
+def test_first_timer_hints():
+    """A first-timer sees on the street what to do: hand + ANTIPPEN! on the front car until the first
+    conversion, "NICHT antippen!" over the first good movers, ANTIPPEN! over the golden Poller, and
+    the first leak explains itself. The warm-up keeps the first 25 s slow."""
+    game = new_game()
+    game.tap(240, 500)
+    quiet(game)
+    now = game.last_tick
+    front = place(game, "suv", 1, 420)
+    place(game, "van", 2, 250)
+    bike = place(game, "lastenrad", 3, 300)
+    place(game, "poller", 0, 330)
+    game.draw(GAME_SURF)
+    assert game.hint_target is front, "the hand must point at the car closest to the Spielstraße"
+    assert id(bike) in game.hinted_good
+    shot(game, "09_first_timer_hints.png")
+    game.tap(*center(front))
+    now = run(game, now, 0.15)
+    game.tap(*center(front))
+    now = run(game, now, 0.1)
+    game.draw(GAME_SURF)
+    assert game.conversions == 1 and game.hint_target is None, "hints stop after the first conversion"
+    car = place(game, "suv", 0, game.play_bottom - 90)
+    car.speed = 200.0
+    now = run(game, now, 0.5)
+    assert game.leaks == 1 and any("Herz" in p["text"] for p in game.popups)
+    assert game._difficulty()[0] < 70 and game._difficulty()[1] > 1.3, "warm-up: slow start"
+    print("FIRST-TIMER: hand on the front car, NICHT antippen!, first leak explained, slow warm-up ok", flush=True)
+
+
 if __name__ == "__main__":
     test_ready_and_corner()
     test_hit_convert_combo()
@@ -373,6 +407,7 @@ if __name__ == "__main__":
     test_kiezblock_and_boss()
     test_einsicht()
     test_bubble_and_shake_regressions()
+    test_first_timer_hints()
     test_bots()
     test_performance()
     print(f"ALL PASSED - screenshots in {OUT_DIR}", flush=True)

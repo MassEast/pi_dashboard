@@ -120,7 +120,7 @@ def brute_force_count(p, limit=2):
 
 
 def test_generation():
-    times, sigs = [], set()
+    times, sigs, by_level = [], set(), {}
     d0 = datetime.date(2026, 11, 1)
     for i in range(60):
         day = d0 + datetime.timedelta(days=i)
@@ -132,8 +132,10 @@ def test_generation():
         assert finished and len(routes) == 1, (day, len(routes))
         assert routes[0] == p.solution
         assert len(p.solution) == p.total and p.solution[0] == p.start and p.solution[-1] == p.end
-        assert KK.MIN_CLUES <= len(p.clues) <= KK.MAX_CLUES, (day, len(p.clues))
-        assert KK.MIN_NODES <= p.nodes <= KK.MAX_NODES, (day, p.nodes)
+        lv = KK.level_of(day)
+        assert p.level is lv and lv.min_clues <= len(p.clues) <= lv.max_clues, (day, len(p.clues))
+        assert p.variant >= KK.RELAX_AFTER or lv.min_nodes <= p.nodes <= lv.max_nodes, (day, p.nodes)
+        by_level.setdefault(lv.stars, []).append((p.nodes, len(p.clues), p.total))
         assert 1 <= len(p.blocked) <= 4 * KK.MAX_CUT
         assert p.start not in p.clues and p.end not in p.clues
         if i < 12:  # the brute force is slow-ish, a dozen days is plenty
@@ -143,6 +145,18 @@ def test_generation():
         assert (q.blocked, q.start, q.end, q.clues) == (p.blocked, p.start, p.end, p.clues), day
         sigs.add((tuple(p.blocked), p.start, p.end, tuple(sorted(p.clues.items(), key=str))))
     assert len(sigs) == 60, "every day a different puzzle"
+    # difficulty curve: solver effort up, clues down from leicht to schwer
+    for k in sorted(by_level):
+        v = by_level[k]
+        print(f"level {k} stars: {len(v)} days, solver nodes median {sorted(n for n, _, _ in v)[len(v) // 2]}, "
+              f"clues median {sorted(c for _, c, _ in v)[len(v) // 2]}, streets median {sorted(t for _, _, t in v)[len(v) // 2]}",
+              flush=True)
+    stars = sorted(by_level)
+    assert stars == [1, 2, 3, 4], stars
+    nodes_med = [sorted(n for n, _, _ in by_level[k])[len(by_level[k]) // 2] for k in stars]
+    clues_med = [sorted(c for _, c, _ in by_level[k])[len(by_level[k]) // 2] for k in stars]
+    assert nodes_med == sorted(nodes_med) and nodes_med[0] * 3 < nodes_med[-1], nodes_med
+    assert clues_med == sorted(clues_med, reverse=True) and clues_med[0] > clues_med[-1], clues_med
     times.sort()
     mean_ms, max_ms = 1000 * sum(times) / len(times), 1000 * times[-1]
     print(f"generation: 60 days, mean {mean_ms:.0f} ms, max {max_ms:.0f} ms (dev machine)", flush=True)
@@ -415,6 +429,64 @@ def test_dashboard_menu_and_timeout():
     print("DASHBOARD: in spiele.exe, idle timeout 180 s instead of 60 s", flush=True)
 
 
+def test_feedback_and_onboarding():
+    """Level label, "Zieh mich!" before the first move, tips after idling,
+    Sackgasse warning (never on the real solution, always once a street is cut off)."""
+    assert KK.level_text(datetime.date(2026, 11, 2)) == "Montag: leicht"
+    assert KK.level_text(datetime.date(2026, 11, 8)) == "Sonntag: schwer"
+    KK._RESUME = None
+    game = started(7000.0)
+    text, alarm = game.status_text()
+    assert "Finger aufs Rad" in text and not alarm
+    frames(game, 6)
+    shot(game, "12_onboarding.png")
+    game.update(game.last_tick + KK.TIP_AFTER + 0.1)
+    text, alarm = game.status_text()
+    assert text.startswith("Tipp:") and not alarm, text
+    sol = game.puzzle.solution
+    for i in range(1, len(sol)):  # no false alarm along the real route
+        game.path = list(sol[:i])
+        assert not game.find_stranded(), (i, game.find_stranded())
+    # a random legal walk soon strands something -> red warning, then undo clears it
+    import random
+    rng = random.Random(3)
+    for attempt in range(200):
+        game.path = [game.puzzle.start]
+        game._save()
+        while not game.stranded:
+            options = [nb for _, nb in KK._neighbours(*game.head) if game.why_not(nb) is None]
+            if not options:
+                break
+            game.path.append(rng.choice(options))
+            game._save()
+        if game.stranded and len(game.path) > 3:
+            break
+    assert game.stranded
+    text, alarm = game.status_text()
+    assert alarm and "Sackgasse" in text, text
+    frames(game)
+    shot(game, "13_sackgasse.png")
+    game.path = [game.puzzle.start]
+    game._save()
+    assert not game.stranded and not game.status_text()[1]
+    # a refused move turns the status line red too
+    tap_cell(game, sol[0])
+    far = next(c for c in sol if abs(c[0] - sol[0][0]) + abs(c[1] - sol[0][1]) > 2)
+    tap_cell(game, far)
+    assert game.status_text()[1]
+    shot(game, "14_refused_far.png")
+    KK._RESUME = None
+    global DAY
+    saved, DAY = DAY, datetime.date(2026, 11, 9)  # a Monday: leicht, more signs, fewer streets
+    monday = started(7500.0)
+    monday.path = list(monday.puzzle.solution[:12])
+    monday._save()
+    frames(monday)
+    shot(monday, "15_monday_leicht.png")
+    DAY = saved
+    KK._RESUME = None
+
+
 mean_ms, max_ms = test_generation()
 test_ready_and_corner()
 test_draw_undo_reset()
@@ -423,6 +495,7 @@ test_win_and_store()
 test_resume()
 ms = test_perf()
 test_icon()
+test_feedback_and_onboarding()
 test_dashboard_menu_and_timeout()
 print(f"All KIEZ-KURIER tests passed - generation mean {mean_ms:.0f} ms / max {max_ms:.0f} ms per day, "
       f"frame {ms:.2f} ms - screenshots in {OUT}", flush=True)

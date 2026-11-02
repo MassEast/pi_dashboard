@@ -16,6 +16,10 @@ A round is a survival run until the hearts are gone. Uncut money that falls
 back down is Steuerflucht: it fills a meter (FLUCHT_MAX), a full meter costs
 a heart. Hearts come back for good play: a 4+ KIEZFEST, STREAK_HEART cuts in
 a row without a miss, every boss beaten. Waves get denser over time.
+Learning phase: no protected things in the first PROTECTED_FROM s, and before
+the first boss the meter forgives a miss now and then (FLUCHT_DRAIN).
+First-time hints (speech bubbles at the thing) explain cutting, protected
+things, Steuerflucht, the streak multiplier and GELDREGEN, once each.
 
 Bosses (BOSS_TIMES, then every BOSS_REPEAT s, one level stronger per cycle),
 announced by a warning box, with a Win95 health-bar window:
@@ -1263,6 +1267,10 @@ WARN_SECONDS = 2.6
 VICTORY_SECONDS = 4.4
 BOSS_GRAVITY = 520.0
 BOSS_HIT_COOLDOWN = 0.2
+FLUCHT_DRAIN = 6.0  # learning phase (before the first boss): the meter loses a cell per this many s without an escape
+PROTECTED_FROM = 8.0  # no cat & co. in the first seconds: first-timers learn to cut before they learn not to
+HINT_SECONDS = 3.2  # a first-time hint (speech bubble pointing at the thing) stays this long
+OVER_LINES = ["Kündigung nach {t}!", "Zwangsräumung nach {t}!", "Rausmodernisiert nach {t}!", "Eigenbedarf nach {t}!"]
 
 
 def combo_bonus(n):
@@ -1969,6 +1977,7 @@ class EnteignenGame(party_games._Game):
         self.flucht = 0  # Steuerflucht meter, 0..FLUCHT_MAX
         self.flucht_at = -9.0
         self.flucht_pop_at = -9.0
+        self.flucht_t = 0.0  # play_t of the last escape / drain
         self.boss = None
         self.boss_phase = None  # None, "warn", "fight", "victory"
         self.phase_at = 0.0  # play_t when the phase began
@@ -1978,6 +1987,8 @@ class EnteignenGame(party_games._Game):
         self.next_minion_at = 0.0
         self.victory = None  # (wordart lines, born)
         self.heart_flies = []  # [(x, y, born)] hearts flying up into the HUD
+        self.hint = None  # (key, lines, target: _Thing or (x, y), born): first-time explanation bubble
+        self.hints_seen = set()
 
     # ---- input --------------------------------------------------------
     def tap(self, x, y):
@@ -2088,6 +2099,7 @@ class EnteignenGame(party_games._Game):
                                         math.cos(ang) * v, math.sin(ang) * v, WHITE, 8, 0.25, "spark", g=0))
         if self.streak % STREAK_STEP == 0:
             self.serie = (f"{self.streak}er-Serie!", self.t)
+            self._show_hint("serie", ["Ohne Fehler am Stück:", "Punkte x2, x3 ... bis x5!"], (self.width // 2 + 40, 48))
         if self.streak % STREAK_HEART == 0:
             self._gain_life(x, y, f"{STREAK_HEART} am Stück!")
         return first
@@ -2134,11 +2146,13 @@ class EnteignenGame(party_games._Game):
     def _add_flucht(self, n, x, text="STEUERFLUCHT!"):
         self.flucht += n
         self.flucht_at = self.t
+        self.flucht_t = self.play_t
         self._break_streak()
         if self.t - self.flucht_pop_at > 0.35:
             self.flucht_pop_at = self.t
             px = max(130, min(self.width - 130, x))
             self.popups.append(_Popup(text, px, self.height - KIEZ_H - 26, (255, 90, 110), 17, life=1.1, rise=50))
+        self._show_hint("flucht", ["Geld unten raus = Steuerflucht.", "Meter voll = -1 Herz!"], (self.width - 140, 62))  # tail to the meter, past "Rekord"
         if self.flucht >= FLUCHT_MAX:
             self.flucht = 0
             self._lose_life("steuerflucht.exe", ["Zu viel Geld ist in", "Steueroasen verschwunden!"])
@@ -2218,7 +2232,7 @@ class EnteignenGame(party_games._Game):
         k = min(1.0, self.play_t / 120.0)
         e = min(1.0, max(0.0, self.play_t - 300.0) / 240.0)  # escalation after boss 3
         sizes = [1, 1, 1, 2, 2] if k < 0.4 else [1, 1, 2, 2, 3] if e < 0.3 else [1, 2, 2, 3, 3]
-        protected_chance = 0.10 + 0.07 * k + 0.07 * e
+        protected_chance = 0.10 + 0.07 * k + 0.07 * e if self.play_t >= PROTECTED_FROM else 0.0
         kinds = list(MONEY)
         weights = [MONEY[m][1] for m in kinds]
         for _ in range(random.choice(sizes)):
@@ -2244,6 +2258,7 @@ class EnteignenGame(party_games._Game):
                                     base_vy * random.uniform(0.9, 1.06)))
             due += random.uniform(0.15, 0.35)
         self.popups.append(_Popup("GELDREGEN!", self.width / 2, self.height - KIEZ_H - 40, GOLD, 26, life=1.2, rise=60))
+        self._show_hint("regen", ["Mehrere in EINEM Wisch", "= KIEZFEST-Bonus!"], (self.width // 2, self.height - KIEZ_H - 70))
         self.next_rain_at = self.play_t + random.uniform(*RAIN_GAP)
         self.next_wave_at = max(self.next_wave_at, self.play_t + 1.6)
 
@@ -2318,8 +2333,63 @@ class EnteignenGame(party_games._Game):
         self.halves = [h for h in self.halves if h.y < self.height + 160]
         self.blade = [b for b in self.blade if self.t - b[2] < BLADE_SECONDS]
         self.heart_flies = [h for h in self.heart_flies if self.t - h[2] < 0.9]
+        if self.state == "play":
+            self._check_hints()
+            if self.flucht and self.play_t < BOSS_TIMES[0] and self.play_t - self.flucht_t >= FLUCHT_DRAIN:
+                self.flucht -= 1  # first-timers: a few misses early on are forgiven
+                self.flucht_t = self.play_t
         if self.state == "play" and self.lives <= 0:
-            self.game_over(f"Kündigung nach {_clock(self.play_t)}!")
+            self.game_over(random.choice(OVER_LINES).format(t=_clock(self.play_t)))  # bosses: stars in the Bestenliste
+
+    # ---- first-time hints --------------------------------------------
+    def _show_hint(self, key, lines, target):
+        """Explain something the first time it matters (once per round, one at
+        a time; a busy bubble means: try again next frame)."""
+        if key in self.hints_seen or self.state != "play":
+            return False
+        if self.hint and self.hint[0] == "cut" and self.cuts:  # done: they got it
+            self.hint = None
+        if self.hint and self.t - self.hint[3] < HINT_SECONDS:
+            return False
+        self.hints_seen.add(key)
+        self.hint = (key, lines, target, self.t)
+        return True
+
+    def _check_hints(self):
+        if self.boss_phase is not None:
+            return
+        visible = [th for th in self.things if 150 < th.y < self.height - KIEZ_H - 40]
+        if not self.cuts and self.play_t > 2.0:
+            money = [th for th in visible if not th.protected]
+            if money:
+                self._show_hint("cut", ["Wisch mit dem Finger", "durchs Geld!"], money[0])
+        protected = [th for th in visible if th.protected]
+        if protected:
+            self._show_hint("protected", ["Geschützt! NICHT", "schneiden: -1 Herz"], protected[0])
+
+    def _hint_target(self):
+        key, lines, target, born = self.hint
+        if isinstance(target, _Thing):
+            return target.x, target.y - target.r
+        return target
+
+    def _draw_hint(self, surf):
+        if not self.hint or self.t - self.hint[3] >= HINT_SECONDS or self.state != "play" or self.boss_phase == "warn":
+            return
+        key, lines, target, born = self.hint
+        if key == "cut" and self.cuts:  # done: they got it
+            return
+        if isinstance(target, _Thing) and target not in self.things:
+            return
+        tx, ty = self._hint_target()
+        f = K.font(16)
+        r = pygame.Rect(0, 0, max(f.size(ln)[0] for ln in lines) + 22, 14 + 24 * len(lines))
+        above = ty - 30 - r.h > 96
+        r.midbottom = (int(tx), int(ty - 30)) if above else (int(tx), int(ty + 50 + r.h))
+        r.clamp_ip(pygame.Rect(4, 96, self.width - 8, self.height - KIEZ_H - 100))
+        if key == "serie":  # under the "5er-Serie!" WordArt, not over it
+            r.top = max(r.top, 176)
+        K.speech(surf, r, lines, (int(tx), int(ty - 6 if above else ty + 6)), size=16)
 
     def _entry_extra(self):
         return {"bosses": self.bosses_beaten, "seconds": int(self.play_t)}
@@ -2373,6 +2443,7 @@ class EnteignenGame(party_games._Game):
         self._draw_boss_bar(surf)
         self._draw_warn(surf)
         self._draw_toast(surf)
+        self._draw_hint(surf)
         if self.state == "over":
             self._draw_over(surf)
 
@@ -2526,8 +2597,8 @@ class EnteignenGame(party_games._Game):
         progress95(surf, bar, self.flucht / FLUCHT_MAX, BOSS_RED, cells=FLUCHT_MAX)
         if hot:
             pygame.draw.rect(surf, (255, 90, 110), bar.inflate(4, 4), 2)
-        rec = party_games._fit(K.font(12), party_games.record_line(type(self), short=True), 150)
-        outlined(surf, rec, 12, WHITE, (w - 6, 70), anchor="topright")
+        rec = party_games._fit(K.font(14), party_games.record_line(type(self), short=True), 170)
+        outlined(surf, rec, 14, WHITE, (w - 6, 70), anchor="topright")
         outlined(surf, _clock(self.play_t), 24, WHITE, (58, 24))
         if self.boss_phase in ("warn", "fight"):
             if int(self.t * 3) % 2 == 0:
@@ -2561,14 +2632,17 @@ class EnteignenGame(party_games._Game):
             surf.blit(img, img.get_rect(midleft=(x, inner.y + 224)))
             x += img.get_width() + 24
         K.t95(surf, "Katze, Bus, Späti, Pfand: geschützt!", 15, (inner.x + 14, inner.y + 268), bold=False)
-        y = inner.y + 304
-        for text, color in [("Geld fallen lassen füllt Steuerflucht.", None),
-                            ("Meter voll oder Katze & Co. = -1 Herz.", None),
-                            ("Alle Herzen weg = Kündigung.", K.F_LATE),
-                            ("Ab 0:45 kommen BOSSE. Zerschlagen!", K.F_ACCENT),
-                            ("Serie ohne Fehler = Punkte x2..x5", K.F_ACCENT)]:
-            K.t95(surf, text, 15, (inner.x + 14, y), color=color)
-            y += 22
+        K.groupbox(surf, pygame.Rect(inner.x + 4, inner.y + 314, inner.w - 8, 106), "Wie geht's?")
+        y = inner.y + 330
+        for i, (text, color) in enumerate([("Mehrere in einem Wisch = Bonus", None),
+                                           ("Geld fällt runter = Steuerflucht", None),
+                                           ("3 Herzen. Ab 0:45: BOSSE!", K.F_LATE)]):
+            if i == 2:
+                K.heart(surf, (inner.x + 20, y + 7), 2, PINK)
+            else:
+                _star(surf, (inner.x + 22, y + 10), 7, 3, GOLD_D, None)
+            K.t95(surf, text, 16, (inner.x + 36, y), color=color)
+            y += 26
         if int(self.last_tick * 2) % 2 == 0:
             outlined(surf, self.READY_TEXT, 20, WHITE, (w // 2, 676), thick=2)
         outlined(surf, party_games.record_line(type(self)), 15, GOLD, (w // 2, 710))

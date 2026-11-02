@@ -330,10 +330,13 @@ class TicTacDadaGame(party_games._Game):
         empty = [i for i in range(9) if self.board[i] is None]
         mine = [i for i in range(9) if self.board[i] is not None]
         self.egg_live = True
+        # every surprise explains itself in the status box when it happens (first-timers)
         if self.egg == "urlaub" and len(empty) > 2:
             self.holiday = (random.choice(empty), self.moves + 2)
+            self.note = ("Ein Feld ist im Urlaub!", "2 Züge gesperrt. Postkarte folgt.")
         elif self.egg == "feld10":
             self.feld10_until = self.moves + 3
+            self.note = ("Feld 10 (Beta) ist da!", "Antippen kostet den Zug.")
         elif self.egg == "melt" and mine:
             self.melt_cell = random.choice(mine)
             self.melt_at = self.last_tick
@@ -344,6 +347,9 @@ class TicTacDadaGame(party_games._Game):
             xs = [i for i in mine if self.board[i] == 0]
             if xs:
                 self.close_cell = random.choice(xs)
+                self.note = ("Ein X hat jetzt ein x.", "Antippen auf eigene Gefahr.")
+            else:
+                self.egg_live = False
         else:
             self.egg_live = False
 
@@ -482,8 +488,9 @@ class TicTacDadaGame(party_games._Game):
         win = pygame.Rect(12, 10, w - 24, self.height - 22)
         inner = K.window(surf, win, "Wer spielt?", buttons=None)
         K.t95(surf, "Zwei Leute, ein Bildschirm.", 17, (inner.centerx, inner.y + 10), anchor="midtop")
-        sub = "X gegen O, ganz klassisch." if self.classic else "Gesichter werden zugelost."
-        K.t95(surf, sub, 16, (inner.centerx, inner.y + 34), anchor="midtop", color=K.F_DARK, bold=False)
+        sub = "Abwechselnd tippen. Drei in einer Reihe gewinnt."  # the whole rule, for passers-by
+        K.t95(surf, sub, K.fit_size(sub, inner.w - 8, sizes=(16, 15, 14), bold=False), (inner.centerx, inner.y + 34),
+              anchor="midtop", color=K.F_DARK, bold=False)
         for p in (0, 1):
             box = pygame.Rect(inner.x + 8, inner.y + 76 + p * 250, inner.w - 16, 190)
             K.groupbox(surf, box, f"Spieler*in {p + 1}" + ("  (fängt an)" if p == 0 else ""))
@@ -653,8 +660,9 @@ class TicTacDadaGame(party_games._Game):
     def _draw_play_status(self, surf):
         feld10 = self.moves < self.feld10_until
         width = 316 if feld10 else None  # room for the taped-on Feld 10 tile
-        if self.note:
-            self._status(surf, [(self.note[0], True), (self.note[1], False)], self.turn, width)
+        if self.note:  # the surprise, and still whose turn it is
+            self._status(surf, [(self.note[0], True), (self.note[1], False), (("{} ist dran.", self.name(self.turn)), False)],
+                         self.turn, width)
         else:
             self._status(surf, [(("{} ist dran.", self.name(self.turn)), True), ("Tip: Tippe ein freies Feld.", False)], self.turn, width)
         egg_label = {"urlaub": "Feld im Urlaub", "feld10": "Felder: 10 (?)", "melt": "Flur: 31 °C", "swap": "SchirIne: übermütig",

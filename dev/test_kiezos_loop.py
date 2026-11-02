@@ -16,6 +16,7 @@ highscores go to a temp copy. Uses live weather file/BVG/MoaBeats (read-only).
 SDL_VIDEODRIVER=dummy .venv/bin/python dev/test_kiezos_loop.py
 """
 
+import datetime
 import os
 import shutil
 import sys
@@ -62,6 +63,9 @@ def check(name, cond):
 
 
 def driver():
+    # On the configured cleaning day the blank screen shows the Putzdienste instead of
+    # waking on touch: test an ordinary day (the cleaning day has its own test).
+    P.CLEANING_DAY = (datetime.datetime.today().weekday() + 1) % 7
     try:
         deadline = time.time() + 30  # the schedulers' first BVG/weather/MoaBeats fetches run first
         while P.START_BUTTON_RECT is None and time.time() < deadline:

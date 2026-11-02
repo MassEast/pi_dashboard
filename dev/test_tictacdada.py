@@ -313,6 +313,37 @@ def test_long_names(game):
     print("LONG NAMES: all win lines/draws/status texts fit, nothing lost", flush=True)
 
 
+def test_first_timers(game):
+    """Setup states the rule; every surprise explains itself in the status
+    box when it happens, which still says whose turn it is; texts gendered."""
+    game.reset(game.last_tick)
+    with TextLog() as log:
+        frame(game)
+    rule = next((r for s, r in log.items if s == "Abwechselnd tippen. Drei in einer Reihe gewinnt."), None)
+    assert rule is not None and pygame.Rect(12, 10, game.width - 24, game.height).contains(rule), rule
+    for egg, classic in (("urlaub", False), ("feld10", False), ("melt", False), ("x_close", True)):
+        game.classic = classic
+        game.new_round(0)
+        game.egg, game.egg_at = egg, 1
+        frame(game)
+        tap(game, "cell4")
+        assert game.egg_live and game.note, f"{egg} came without an explanation"
+        with TextLog() as log:
+            frame(game)
+        texts = [s for s, _ in log.items]
+        assert f"{game.name(game.turn)} ist dran." in texts, (egg, texts)
+        assert game.note[0] in texts, (egg, texts)
+    game.classic = False
+    game.new_round(0)
+    game.egg, game.egg_at = "x_close", 1  # face mode has no X: no surprise, no stale note
+    frame(game)
+    tap(game, "cell4")
+    for line in T.WIN_LINES + [d[2] for d in T.DRAW_WINNERS] + T.EINSPRUCH:
+        assert "Carl" not in line and "Merz" not in line, line
+    assert len(T.WIN_LINES) >= 110 and len(set(T.WIN_LINES)) == len(T.WIN_LINES), "duplicate win line"
+    print("FIRST-TIMERS: rule on setup, every egg explains itself, turn stays visible", flush=True)
+
+
 def test_menu(game):
     game.new_round(0)
     game.egg = None
@@ -341,6 +372,7 @@ test_draw(g)
 test_special_round(g)
 test_eggs(g)
 test_long_names(g)
+test_first_timers(g)
 test_menu(g)
 print(f"All TIC-TAC-DADA tests passed - screenshots in {OUT}", flush=True)
 P.quit_all()

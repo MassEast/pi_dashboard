@@ -79,6 +79,7 @@ COMBO_WORDS = {5: "GRÜNE WELLE!", 10: "ENTSIEGELT!", 15: "VERKEHRSWENDE!", 20: 
                40: "DADA-WENDE!!!", 50: "UTOPIE!!!"}
 HEARTS = 3
 MAX_PARTICLES = 450
+WARMUP_SECONDS = 25.0  # slower, sparser traffic at the start
 MAX_FRAME_SECONDS = 0.25  # longest frame that is caught up in sub-steps (see update())
 
 
@@ -453,6 +454,9 @@ class KiezblockGame(party_games._Game):
         self.kiezblock_count = 0
         self.leak_flash_until = 0.0
         self.taps = 0
+        self.hinted_good = set()  # ids of the first good movers labelled "NICHT antippen!"
+        self.hint_target = None   # the car with the "ANTIPPEN!" hand (until the first conversion)
+        self.leaks = 0
         self._tap_xy = (0, 0)
         self._bg_key = None
         self._bg = None
@@ -742,9 +746,18 @@ class KiezblockGame(party_games._Game):
             self.bubble = None
 
     def _difficulty(self):
-        base_speed = min(265.0, 78.0 + 1.6 * self.t)
-        interval = max(0.34, 1.25 - 0.0115 * self.t)
-        return base_speed, interval
+        """Gentle warm-up (first-timers are still reading the hints), then a linear ramp that
+        reaches the old maximum (265 px/s, a car every 0.34 s) about 25 s later than before."""
+        t = self.t
+        speed = lambda t: 70.0 + 1.6 * t  # noqa: E731  (was 78 + 1.6 t)
+        gap = lambda t: 1.55 - 0.0115 * t  # noqa: E731  (was 1.25 - 0.0115 t: too much for first-timers)
+        if t < WARMUP_SECONDS:
+            k = t / WARMUP_SECONDS
+            base_speed = 58.0 + (speed(WARMUP_SECONDS) - 58.0) * k
+            interval = 1.8 + (gap(WARMUP_SECONDS) - 1.8) * k
+        else:
+            base_speed, interval = speed(t), gap(t)
+        return min(265.0, base_speed), max(0.34, interval)
 
     def _free(self, lane, gap=14):
         tops = [m.y for m in self.movers if lane in m.lanes]
@@ -833,7 +846,11 @@ class KiezblockGame(party_games._Game):
             if not m.leaked and m.y + m.h >= self.play_bottom + 14:
                 m.leaked = True
                 if m.bad and m.kind != "poller":
+                    self.leaks += 1
                     self.popups.append(dict(text="HUUUP!", x=m.x, y=self.play_bottom - 20, age=0.0, color=RED, size=30))
+                    if self.leaks == 1:  # say once what just happened
+                        self.popups.append(dict(text="Spielstraße zu = ein Herz weg!", x=self.width // 2, y=HUD_HEIGHT + 140,
+                                                age=-0.6, color=WHITE, size=18))
                     self._say(m, random.choice(LEAK_LINES), 1.8)
                     self._lose_heart(m.x, self.play_bottom)
                     if self.state != "play":
@@ -965,6 +982,30 @@ class KiezblockGame(party_games._Game):
             bar = pygame.Rect(rect.x + 20, rect.y - 16, rect.w - 40, 12)
             pygame.draw.rect(surf, INK, bar)
             pygame.draw.rect(surf, (240, 60, 60), (bar.x + 2, bar.y + 2, int((bar.w - 4) * m.hp / m.max_hp), bar.h - 4))
+
+    def _draw_hints(self, surf):
+        """First-timer hints right on the street: a tapping hand + "ANTIPPEN!" on the car closest
+        to the Spielstraße until the first conversion, "NICHT antippen!" over the first good movers,
+        "ANTIPPEN!" over the golden Poller."""
+        live = [m for m in self.movers if not m.leaked and m.y + m.h > HUD_HEIGHT + 20]
+        self.hint_target = None
+        if self.conversions == 0:
+            bad = [m for m in live if m.bad and m.kind != "poller"]
+            if bad:
+                m = max(bad, key=lambda m: m.y)
+                self.hint_target = m
+                r = m.rect()
+                press = int(self.last_tick * 3) % 2 == 0
+                surf.blit(_hand(46), (r.centerx - 6, r.centery + (4 if press else 14)))
+                self._otext(surf, "ANTIPPEN!", 20, K.SUN, midbottom=(r.centerx, max(HUD_HEIGHT + 26, r.top - 4)))
+        for m in live:
+            if not m.bad and (id(m) in self.hinted_good or len(self.hinted_good) < 2):
+                self.hinted_good.add(id(m))
+                r = m.rect()
+                self._otext(surf, "NICHT antippen!", 16, (255, 140, 150), midbottom=(r.centerx, max(HUD_HEIGHT + 24, r.top - 14)))
+            elif m.kind == "poller" and self.kiezblock_count == 0:
+                r = m.rect()
+                self._otext(surf, "ANTIPPEN!", 18, GOLD, midbottom=(r.centerx, max(HUD_HEIGHT + 24, r.top - 48)))
 
     def _draw_hud(self, surf):
         hud = pygame.Rect(0, 0, self.width, HUD_HEIGHT)
@@ -1129,6 +1170,8 @@ class KiezblockGame(party_games._Game):
             surf.blit(spr, spr.get_rect(center=(x, y - bounce)))
         for m in self.movers:
             self._draw_mover(surf, m)
+        if self.state == "play":
+            self._draw_hints(surf)
         if self.kiezblock is not None:
             self._draw_kiezblock_barrier(surf)
         for f in self.flying:

@@ -25,6 +25,7 @@ SDL_VIDEODRIVER=dummy .venv/bin/python dev/test_enteignen.py
 import math
 import os
 import random
+import statistics
 import sys
 import tempfile
 import time
@@ -207,7 +208,7 @@ def test_steuerflucht_and_hearts():
         swipe(game, [(150, 300), (200, 300), (260, 300), (320, 300)])
         game.things.clear()
     frames(game, 6)
-    assert game.state == "over" and game.over_text.startswith("Kündigung"), game.over_text
+    assert game.state == "over" and any(game.over_text == ln.format(t="0:01") for ln in E.OVER_LINES), game.over_text
     assert party_games.best(E.EnteignenGame.NAME)["score"] == game.score
     frames(game, 20)
     shot("06_gameover.png")
@@ -566,17 +567,61 @@ def test_qa_regressions():
     P.close_games("test")
 
 
+def test_onboarding():
+    """First-time hints (speech bubbles pointing at the thing), once each; no cat & co. in the first seconds."""
+    game = started()
+    game.next_wave_at, game.next_rain_at = 0.6, 1e9
+    assert game.play_t < E.PROTECTED_FROM
+    for _ in range(50):
+        game._spawn_wave()
+    assert not any(th.protected for th in game.things), "no protected things while people learn to cut"
+    game.things.clear()
+    game.next_wave_at = 1e9
+    frames(game, int(2.2 / FRAME))
+    money = throw(game, "note", 240, 400, vy=-50)
+    frames(game, 2)
+    assert game.hint and game.hint[0] == "cut" and game.hint[2] is money
+    shot("qa_hint_cut.png")
+    swipe(game, [(150, money.y), (200, money.y), (260, money.y), (330, money.y)])
+    cat = throw(game, "cat", 300, 450, vy=-300)
+    frames(game, E.HIT_STOP_FRAMES + 2)
+    assert game.hint[0] == "protected" and game.hint[2] is cat, "a finished cut hint makes room at once"
+    shot("qa_hint_protected.png")
+    game.things.clear()
+    frames(game, int(E.HINT_SECONDS / FRAME) + 1)
+    throw(game, "coin", 240, game.height + 50, vy=200)
+    frames(game, 2)
+    assert game.hint[0] == "flucht" and game.flucht == 1
+    # learning phase: the Steuerflucht meter forgives a miss after FLUCHT_DRAIN s ...
+    frames(game, int(E.FLUCHT_DRAIN / FRAME) + 2)
+    assert game.flucht == 0
+    # ... but not after the first boss
+    game.play_t = E.BOSS_TIMES[0] + 30
+    game.next_boss_at = 1e9
+    game._add_flucht(1, 240)
+    frames(game, int(E.FLUCHT_DRAIN / FRAME) + 2)
+    assert game.flucht == 1
+    n = len(game.hints_seen)
+    game._add_flucht(1, 240)
+    assert len(game.hints_seen) == n, "each hint once"
+    print("ONBOARDING: cut / protected / Steuerflucht hints, no early protected, early drain ok", flush=True)
+    P.close_games("test")
+
+
 def _bot_targets(game):
     out = []
     b = game.boss
     if b is not None and game.boss_phase == "fight":
         if isinstance(b, E._Patriarchat):
             if b.body.down_at is None and b.body.vy > 0 and b.body.y > 380:
-                out.append((b.body.x, b.body.y, 60))
+                (x0, x1), _ = b._span()  # aim at the letters that are left, not the plaque's centre
+                out.append(E._to_screen(((x0 + x1) / 2, b._by()), (b.body.x, b.body.y), b.body.angle) + (40,))
         elif isinstance(b, E._Mietenhai):
             out += [(p.x, p.y, 40) for p in b.pieces if p.down_at is None and p.vy > 0 and p.y > 380]
         elif b.t > b.ENTER:
             out.append((b.cx, b.cy + 12, 50))
+    if out and not isinstance(b, E._Kapital):
+        return out  # a falling boss first: like a person would
     out += [(th.x, th.y, th.r) for th in game.things if not th.protected and th.vy > -100 and 120 < th.y < game.height - 40]
     return out
 
@@ -586,10 +631,23 @@ def _bot_safe(game, a, b):
     return not any(E._seg_circle_hit(a, b, (th.x, th.y), th.r + 12) for th in game.things + shield if th.protected)
 
 
-def bot_run(seed, minutes, immortal, frame=FRAME):
+# Human-ish bot profiles: frames between two swipes, aim error (px, sd), chance
+# to swipe without checking for protected things.
+BOT_SKILL = {
+    "perfect": (2, 0.0, 0.0),
+    "good": (3, 10.0, 0.01),
+    "casual": (5, 22.0, 0.05),
+    "newbie": (8, 34.0, 0.12),
+    "slow": (16, 40.0, 0.15),  # a first-timer in the hallway: ~1 swipe per second, sloppy
+}
+
+
+def bot_run(seed, minutes, immortal, frame=FRAME, skill="perfect"):
     """A swiping bot through the real input API: cuts what it can reach,
-    juggles bosses, avoids protected things. immortal: hearts topped up, to
-    get through many boss cycles. Returns the game and per-frame ms."""
+    juggles bosses, avoids protected things (BOT_SKILL: how well). immortal:
+    hearts topped up, to get through many boss cycles. Returns the game and
+    per-frame ms."""
+    pause, err, careless = BOT_SKILL[skill]
     random.seed(seed)
     game = started()
     game.next_wave_at, game.next_rain_at = 0.6, 12.0
@@ -604,12 +662,13 @@ def bot_run(seed, minutes, immortal, frame=FRAME):
         targets = _bot_targets(game) if cooldown <= 0 else []
         if targets:
             x, y, r = random.choice(targets)
+            x, y = x + random.gauss(0, err), y + random.gauss(0, err)
             ang = random.uniform(-0.6, 0.6)
             a = (x - math.cos(ang) * (r + 30), y - math.sin(ang) * (r + 30))
             b = (x + math.cos(ang) * (r + 30), y + math.sin(ang) * (r + 30))
-            if _bot_safe(game, a, b):
+            if random.random() < careless or _bot_safe(game, a, b):
                 swipe(game, [(a[0] + (b[0] - a[0]) * k / 4, a[1] + (b[1] - a[1]) * k / 4) for k in range(5)])
-                cooldown = 2
+                cooldown = pause
         cooldown -= 1
         game.update(game.last_tick + frame)
         game.draw(surf)
@@ -633,10 +692,36 @@ def test_long_run():
         game, _ = bot_run(5, 1, immortal=True, frame=frame)
         assert game.state == "play"
         P.close_games("test")
-    game, _ = bot_run(6, 10, immortal=False)
-    assert game.state == "over", "without help the bot loses"
-    print(f"EXTREME DT ok; mortal bot lost after {game.play_t:.0f} s", flush=True)
-    P.close_games("test")
+    print("EXTREME DT ok", flush=True)
+
+
+def test_balance():
+    """Difficulty curve (Ju: hard but fair, first 45 s learnable, then ramping):
+    a first-timer keeps all hearts through most of the first 45 s and loses
+    within a few minutes; a good player gets much further."""
+    lost_at = []
+    orig = E.EnteignenGame._lose_life
+
+    def lose(self, title, lines):
+        lost_at.append(self.play_t)
+        orig(self, title, lines)
+    E.EnteignenGame._lose_life = lose
+    runs = {}
+    for skill, seeds in (("slow", range(30, 38)), ("good", range(40, 44))):
+        runs[skill] = []
+        for seed in seeds:
+            lost_at.clear()
+            game, _ = bot_run(seed, 12, immortal=False, skill=skill)
+            runs[skill].append((game.play_t, lost_at[0] if lost_at else game.play_t, game.bosses_beaten))
+            P.close_games("test")
+    E.EnteignenGame._lose_life = orig
+    for skill, rs in runs.items():
+        print(f"BOT {skill:5s}: survival median {statistics.median(r[0] for r in rs):.0f} s, first heart lost median "
+              f"{statistics.median(r[1] for r in rs):.0f} s, bosses beaten mean {statistics.mean(r[2] for r in rs):.1f}", flush=True)
+    slow, good = runs["slow"], runs["good"]
+    assert statistics.median(r[1] for r in slow) >= 40, "first 45 s must be learnable"
+    assert 75 <= statistics.median(r[0] for r in slow) <= 300, "a first-timer loses within a few minutes"
+    assert statistics.median(r[0] for r in good) > 2.5 * statistics.median(r[0] for r in slow)
 
 
 test_play()
@@ -645,6 +730,8 @@ test_patriarchat()
 test_combos()
 test_routing()
 test_qa_regressions()
+test_onboarding()
 test_long_run()
+test_balance()
 print(f"All ENTEIGNEN! tests passed - screenshots in {OUT}", flush=True)
 P.quit_all()

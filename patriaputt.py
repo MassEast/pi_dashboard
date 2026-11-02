@@ -8,8 +8,10 @@ One continuous round, no levels: a wall of patriarchal STRUCTURES and
 BEHAVIOURS (Sexismus, Pay Gap, Mansplaining ... never groups of people)
 creeps down towards the rainbow PLENUM paddle, faster and tougher over time.
 Every brick shows its hit points. If any brick reaches the red danger line
-above the paddle: DURCHBRUCH, one of 3 hearts is gone and the bottom rows are
-wiped. Special bricks: armoured HERRENCLUB (every hit does 1 damage, no
+above the paddle: DURCHBRUCH, one of 3 hearts is gone, the bottom rows are
+wiped and the wall pauses briefly (no instant death spiral). The first minute
+is gentler (dropped balls push the wall less); first-time hints (speech
+bubbles) explain the red line, Solidarität and the pause when they matter. Special bricks: armoured HERRENCLUB (every hit does 1 damage, no
 matter what), STAMMTISCH (breaks into two HAHA minions), glass-ceiling rows
 (one pane breaks -> the whole row shatters in a chain, "KLIRR!"), and every
 ~55 s the PATRIARCHAT itself: a full-width two-row block with lots of HP
@@ -69,7 +71,10 @@ GLASS_FROM, GLASS_EVERY = 15.0, 8  # glass rows from 15 s on, every ~8th row
 XP_FIRST, XP_GROWTH = 8, 1.5
 GEM_SPEED, MAGNET_RANGE = 170.0, 110
 MAGNET_SIDE = 40  # px beside the paddle the magnet reaches
-DROP_PUSH = 10  # px the wall jumps forward when a ball is dropped
+DROP_PUSH = 10  # px the wall jumps forward when a ball is dropped ...
+EASY_DROP_PUSH, EASY_SECONDS = 4, 60.0  # ... only this much in the first minute (first-timers drop a lot)
+BREACH_WIPE_ROWS = 4  # a breach wipes the bottom rows ...
+BREACH_PAUSE = 3.0  # ... and the wall stands still this long ("Atempause"), no instant death spiral
 CARD_TAP_DELAY = 0.45  # a finger still dragging when the cards pop up doesn't pick one
 CARD_AUTO_PICK = 15.0
 MAX_PARTICLES = 260
@@ -169,7 +174,8 @@ BOSS_QUIPS = [
     "Jetzt mal nicht hysterisch!",
 ]
 BREACH_LINES = ["Das Patriarchat rückt vor!", "Die Decke drückt!", "Zu spät, Genoss*in!"]
-OVER_LINES = ["DURCHBRUCH!", "Plenum überrannt!", "Vertagt!"]
+OVER_LINES = ["Plenum überrannt nach {t}!", "Vertagt nach {t}!", "Durchbruch nach {t}!", "Die Decke fiel nach {t}!"]
+HINT_SECONDS = 3.2  # a first-time hint (speech bubble pointing at the thing) stays this long
 
 
 # ------------------------------------------------------------ basics (from the mockup)
@@ -836,6 +842,7 @@ class PatriaputtGame(party_games._Game):
         self.lv = {}  # upgrade kind -> level
         self.wut = 0
         self.streik_until = -1.0
+        self.pause_until = -1.0  # wall stands still after a breach
         self.streik_ready = 0.0
         self.konfetti_next = 0.0
         self.shots = []  # [x, y]
@@ -862,6 +869,8 @@ class PatriaputtGame(party_games._Game):
         self.breaches = 0
         self.over_at_t = 0.0
         self._hud_key = None
+        self.hint = None  # (key, lines, target: Gem or (x, y), born): first-time explanation bubble
+        self.hints_seen = set()
         self._hud = None
         self._start_surf = None
 
@@ -988,7 +997,7 @@ class PatriaputtGame(party_games._Game):
 
     # ---- helpers ------------------------------------------------------
     def wall_speed(self):
-        if self.t < self.streik_until:
+        if self.t < self.streik_until or self.t < self.pause_until:
             return 0.0
         v = min(MAX_WALL_SPEED, WALL_SPEED + WALL_SPEED_RAMP * self.play_t)
         return v * (BOSS_WALL_FACTOR if self.boss else 1.0)
@@ -1080,10 +1089,11 @@ class PatriaputtGame(party_games._Game):
                     self.balls.remove(b)
                 else:  # dropped: the wall uses the gap
                     self._park(b)
-                    self.wall_y += DROP_PUSH
+                    self.wall_y += EASY_DROP_PUSH if self.play_t < EASY_SECONDS else DROP_PUSH
                     self._popup("Lücke! Die Wand rückt nach.", self.width / 2, self.danger_y + 40, (255, 140, 160), 15, life=1.0, rise=10)
         self._step_konfetti(dt)
         self._step_gems(dt)
+        self._check_hints()
         if self.pending_levelups and self.cards is None:
             self.pending_levelups -= 1
             self._open_cards()
@@ -1116,7 +1126,8 @@ class PatriaputtGame(party_games._Game):
         self.red_until = self.t + 0.6
         self.shake = 16
         self._hitstop(6, force=True)
-        limit = self.danger_y - 3 * ROW_STEP
+        self.pause_until = self.t + BREACH_PAUSE
+        limit = self.danger_y - BREACH_WIPE_ROWS * ROW_STEP
         for b in list(self.bricks):
             r = self.brick_rect(b)
             if r.bottom > limit or b is self.boss and r.bottom > limit - ROW_STEP:
@@ -1126,7 +1137,7 @@ class PatriaputtGame(party_games._Game):
                                  for _ in range(6)])
         if self.hearts <= 0:
             secs = int(self.play_t)
-            self.game_over(f"{random.choice(OVER_LINES)} {secs // 60}:{secs % 60:02d} durchgehalten")
+            self.game_over(random.choice(OVER_LINES).format(t=f"{secs // 60}:{secs % 60:02d}"))
             return
         self.banner = ("DURCHBRUCH!", random.choice(BREACH_LINES), f"-1 Herz, noch {self.hearts}", self.t)
 
@@ -1534,6 +1545,7 @@ class PatriaputtGame(party_games._Game):
         for p in self.parts:
             p.draw(surf, ox, oy)
         self._draw_texts(surf)
+        self._draw_hint(surf)
         if self.flash > 3:
             fl = solid_surface(self.width, self.height, WHITE)
             fl.set_alpha(int(min(170, self.flash)))
@@ -1623,6 +1635,43 @@ class PatriaputtGame(party_games._Game):
             surf.blit(img, img.get_rect(center=(int(b.x + ox), int(b.y + oy))))
             if b.pierce > 0 and not b.stuck:  # Demo-Zug: little banner flag behind it
                 pygame.draw.line(surf, WHITE, (b.x + ox, b.y + oy), (b.x - b.dx * 22 + ox, b.y - b.dy * 22 + oy), 2)
+
+    # ---- first-time hints --------------------------------------------
+    def _show_hint(self, key, lines, target):
+        """Explain something the first time it matters (once per round, one at
+        a time, never over a banner; busy means: try again next frame)."""
+        if key in self.hints_seen or self.state != "play" or self.cards is not None:
+            return False
+        if self.hint and self.t - self.hint[3] < HINT_SECONDS or self.banner and self.t - self.banner[3] < 1.7:
+            return False
+        self.hints_seen.add(key)
+        self.hint = (key, lines, target, self.t)
+        return True
+
+    def _check_hints(self):
+        line = (110, self.danger_y)
+        if self.play_t > 2.5:
+            self._show_hint("danger", ["Rote Linie: erreicht die", "Wand sie, ist ein Herz weg!"], line)
+        gems = [g for g in self.gems if 250 < g.y < self.paddle_y - 120]
+        if gems:
+            self._show_hint("gem", ["Solidarität fangen", "= Level-up!"], gems[0])
+        if self.breaches:
+            self._show_hint("pause", ["Atempause: die Wand", "steht kurz still."], line)
+
+    def _draw_hint(self, surf):
+        if not self.hint or self.t - self.hint[3] >= HINT_SECONDS or self.state != "play" or self.cards is not None:
+            return
+        key, lines, target, born = self.hint
+        if isinstance(target, Gem):
+            if target not in self.gems:
+                return
+            target = (target.x, target.y - 8)
+        tx, ty = target
+        f = K.font(16)
+        r = pygame.Rect(0, 0, max(f.size(ln)[0] for ln in lines) + 22, 14 + 24 * len(lines))
+        r.midbottom = (int(tx) + 60, int(ty) - 34)
+        r.clamp_ip(pygame.Rect(4, HUD_H + 4, self.width - 8, self.height - HUD_H - 8))
+        K.speech(surf, r, lines, (int(tx), int(ty) - 4), size=16)
 
     def _draw_texts(self, surf):
         w = self.width
@@ -1757,24 +1806,35 @@ class PatriaputtGame(party_games._Game):
         K.t95(s, "Zerschlag es, bevor es unten ist!", 17, (w // 2, 142), color=WHITE, anchor="center")
         win = pygame.Rect(14, 168, w - 28, 456)
         inner = K.dialog(s, win, "anleitung.txt", icon="note", buttons=None)
-        K.groupbox(s, pygame.Rect(inner.x + 4, inner.y + 16, inner.w - 8, 136), "Die Wand:")
-        bw = (inner.w - 34) // 2
-        for i, (kind, label, hp) in enumerate([("normal", "MANSPLAINING", 3), ("armor", "HERRENCLUB", 9),
-                                               ("stammtisch", "STAMMTISCH", 4), ("normal", "PAY GAP", 2)]):
-            r = pygame.Rect(inner.x + 12 + (i % 2) * (bw + 10), inner.y + 32 + (i // 2) * 42, bw, BRICK_H)
-            s.blit(brick_surface(kind, label, r.w, r.h, hp, hp), (r.x - 1, r.y - 1))
-        K.t95(s, "Zahl = Treffer. Rote Linie erreicht", 15, (inner.x + 12, inner.y + 116), bold=False)
-        K.t95(s, "= -1 Herz. 3 Herzen.", 15, (inner.x + 12, inner.y + 134), bold=False)
-        K.groupbox(s, pygame.Rect(inner.x + 4, inner.y + 172, inner.w - 8, 154), "Solidarität sammeln:")
-        g = gem_surface(20)
-        s.blit(g, (inner.x + 14, inner.y + 190))
-        K.t95(s, "fällt aus Steinen -> fangen", 15, (inner.x + 44, inner.y + 201), anchor="midleft", bold=False)
-        K.t95(s, "Level-up = neuer Ball:", 15, (inner.x + 14, inner.y + 226))
+        # "Wie geht's?": one picture + one short line per rule, readable in a few seconds
+        K.groupbox(s, pygame.Rect(inner.x + 4, inner.y + 16, inner.w - 8, 228), "Wie geht's?")
+        x, tx = inner.x + 14, inner.x + 140
+        y = inner.y + 34
+        s.blit(paddle_surface(96, "PLENUM"), (x, y + 18))  # 1: paddle + ball
+        ball = disco_frames()[0]
+        s.blit(ball, ball.get_rect(center=(x + 50, y + 8)))
+        K.t95(s, "Ziehen: das PLENUM", 16, (tx, y + 4))
+        K.t95(s, "spielt den Ball zurück", 16, (tx, y + 24), bold=False)
+        y += 52
+        s.blit(brick_surface("normal", "PAY GAP", 116, BRICK_H, 3, 3), (x - 1, y + 3))  # 2: a brick
+        K.t95(s, "Zahl = Treffer,", 16, (tx, y + 4))
+        K.t95(s, "bis der Stein bricht", 16, (tx, y + 24), bold=False)
+        y += 52
+        s.blit(brick_surface("normal", "SEXISMUS", 116, BRICK_H, 5, 5), (x - 1, y))  # 3: wall at the red line
+        for lx in range(x, x + 116, 20):
+            pygame.draw.line(s, (255, 60, 90), (lx, y + 38), (lx + 11, y + 38), 3)
+        K.t95(s, "Wand an der roten", 16, (tx, y + 4), color=K.F_LATE)
+        K.t95(s, "Linie = -1 Herz (von 3)", 16, (tx, y + 24), bold=False)
+        y += 52
+        gem = gem_surface(20)
+        for i in range(3):  # 4: gems falling to the paddle
+            s.blit(gem, (x + 20 + i * 30, y + 4 + (i % 2) * 8))
+        K.t95(s, "Solidarität fangen", 16, (tx, y + 4))
+        K.t95(s, "= Level-up, neue Bälle", 16, (tx, y + 24), bold=False)
+        K.groupbox(s, pygame.Rect(inner.x + 4, inner.y + 264, inner.w - 8, 82), "Neue Bälle beim Level-up:")
         for i, kind in enumerate(BALL_KINDS):
             img = pygame.transform.scale(ball_frames(kind, BALL_R)[0], (40, 40))
-            s.blit(img, (inner.x + 14 + i * 58, inner.y + 250))
-        K.t95(s, "Glitzer Streik Soli Demo Plenum Brand Quote", 15, (inner.x + 12, inner.y + 300), bold=False)
-        K.t95(s, "Ziehen = Plenum bewegen.", 16, (inner.x + 12, inner.y + 342))
-        K.t95(s, "1 Spieler*in, 3 Herzen, 0 Kompromisse.", 15, (inner.x + 12, inner.y + 368), color=K.F_ACCENT)
-        K.t95(s, "Alle ~1 Min: das PATRIARCHAT selbst.", 15, (inner.x + 12, inner.y + 390), bold=False)
+            s.blit(img, (inner.x + 14 + i * 58, inner.y + 288))
+        K.t95(s, "Alle ~1 Min: das PATRIARCHAT selbst.", 16, (inner.x + 12, inner.y + 362), color=K.F_ACCENT)
+        K.t95(s, "1 Spieler*in, 3 Herzen, 0 Kompromisse.", 15, (inner.x + 12, inner.y + 388), bold=False)
         outlined(s, party_games.record_line(type(self)), 15, GOLD, (w // 2, self.height - 13))

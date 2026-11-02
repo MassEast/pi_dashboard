@@ -142,7 +142,8 @@ def test_basics():
     b.y, b.dy = game.height + 30, 1.0
     y = game.wall_y
     frames(game, 1)
-    assert b.stuck and b in game.balls and game.wall_y >= y + PK.DROP_PUSH, "dropped: the wall jumps forward"
+    push = PK.EASY_DROP_PUSH if game.play_t < PK.EASY_SECONDS else PK.DROP_PUSH  # gentler in the first minute
+    assert b.stuck and b in game.balls and game.wall_y >= y + push, "dropped: the wall jumps forward"
     frames(game, int((PK.RESPAWN_SECONDS + PK.LAUNCH_DELAY) / FRAME) + 2)
     assert not b.stuck
     print("BALL LOST: wall jumps forward, ball comes back and launches by itself", flush=True)
@@ -204,8 +205,11 @@ def test_danger_and_over():
     frames(game, 1)
     assert game.hearts == hearts - 1 and game.banner[0] == "DURCHBRUCH!"
     lowest = max((game.brick_rect(b).bottom for b in game.bricks), default=0)
-    assert lowest < game.danger_y - 2 * PK.ROW_STEP, "bottom rows wiped"
-    print("DANGER: line costs a heart, bottom rows wiped", flush=True)
+    assert lowest < game.danger_y - 3 * PK.ROW_STEP, "bottom rows wiped"
+    assert game.wall_speed() == 0, "Atempause: the wall stands still after a breach"
+    frames(game, int(PK.BREACH_PAUSE / FRAME) + 2)
+    assert game.wall_speed() > 0, "... and moves on"
+    print("DANGER: line costs a heart, bottom rows wiped, short pause", flush=True)
     while game.state == "play":
         frames(game, 8)
         lowest = max((game.brick_rect(b).bottom for b in game.bricks), default=game.danger_y - 100)
@@ -514,8 +518,19 @@ def play_round(seed, good, max_seconds=420.0, shots=False):
 
 
 def test_bots():
+    first_breach = {}
+    orig = PK.PatriaputtGame._breach
+
+    def breach(self):
+        first_breach.setdefault(id(self), self.play_t)
+        orig(self)
+    PK.PatriaputtGame._breach = breach
     casual = [play_round(100 + s, good=False) for s in range(10)]
     good = [play_round(200 + s, good=True, shots=(s == 0)) for s in range(5)]
+    PK.PatriaputtGame._breach = orig
+    fb = statistics.median(first_breach.get(id(g), g.play_t) for g in casual)
+    print(f"BOT: casual first breach median {fb:.0f} s", flush=True)
+    assert fb >= 60, "the first minute must be forgiving"
     for name, games in (("casual", casual), ("good", good)):
         for g in games:
             print(f"BOT {name:6s}: {g.play_t:5.0f} s, state {g.state}, Lv{g.player_lv}, score {PK.fmt(g.score)}, "
@@ -612,6 +627,32 @@ def test_qa_regressions():
     print("QA: gap/edge/wedge collisions, brick labels, HUD fit, cards, stamps, boss layout ok", flush=True)
 
 
+def test_onboarding():
+    """First-time hints at the moment they matter, once each; compact ready screen."""
+    game = new_game(5)
+    game.draw(GAME_SURF)  # ready screen with "Wie geht's?"
+    shot(game, "qa_ready.png")
+    game.tap(240, 500)
+    game.release()
+    frames(game, int(3.0 / FRAME))
+    assert game.hint and game.hint[0] == "danger", game.hint
+    shot(game, "qa_hint_danger.png")
+    frames(game, int(PK.HINT_SECONDS / FRAME) + 1)
+    game.gems.append(PK.Gem(200, 300, 3))
+    frames(game, 2)
+    assert game.hint[0] == "gem"
+    game.draw(GAME_SURF)
+    frames(game, int(PK.HINT_SECONDS / FRAME) + 1)
+    game.gems.append(PK.Gem(220, 300, 3))
+    frames(game, 2)
+    assert game.hint[0] == "gem" and game.t - game.hint[3] > PK.HINT_SECONDS, "each hint only once"
+    game._breach()
+    frames(game, int(1.8 / FRAME))
+    assert game.hint[0] == "pause", "after the banner, not over it"
+    assert game.over_text == "" and all("{t}" in ln for ln in PK.OVER_LINES)
+    print("ONBOARDING: danger line / gem / pause hints once each, ready screen ok", flush=True)
+
+
 def test_long_run():
     """15 min, hearts topped up: no stuck balls, bounded lists, cheap frames; extreme frame times."""
     for seed, minutes, frame in ((7, 15, FRAME), (8, 2, 0.0005), (9, 2, 1.0)):
@@ -655,6 +696,7 @@ test_ball_types()
 test_boss()
 ms = test_perf()
 test_qa_regressions()
+test_onboarding()
 test_long_run()
 c, gd = test_bots()
 print(f"All PATRIAPUTT tests passed - busy frame {ms:.1f} ms, casual bot median {c:.0f} s, good bot median {gd:.0f} s - "

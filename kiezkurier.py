@@ -27,8 +27,10 @@ a few cells cut off its ends as Baustellen and backbitten on; then clues are
 added where a second solution differs from the planted one until the solver
 (bitboard DFS with dead-end, clue and connectivity pruning and a node budget,
 so the result doesn't depend on machine speed) proves it unique, then
-redundant clues are removed down to MIN_CLUES. A variant outside the quality
+redundant clues are removed down to the weekday's minimum (easy days get
+extra gift clues from the planted route). A variant outside the weekday's
 window (clue count, solver effort) is skipped for the next seed variant.
+Difficulty by weekday (LEVELS): Monday leicht ... weekend schwer.
 
 Closing the game mid-route (x, the 60 s games idle timeout) keeps the route
 and time in memory for RESUME_SECONDS: the start screen then offers WEITER.
@@ -50,11 +52,38 @@ import party_games
 # ------------------------------------------------------------ puzzle tuning
 ROWS, COLS = 7, 6  # portrait grid
 BACKBITE_MOVES = 300
-MAX_CUT = 2  # Baustellen: up to this many cells cut off each end of the route, twice (see random_route)
-MIN_CLUES, MAX_CLUES = 5, 10
-MIN_NODES, MAX_NODES = 80, 800  # solver nodes to prove uniqueness: fewer = just follow forced moves, more = too much trial and error
+MAX_CUT = 2  # Baustellen: up to this many cells cut off each end of the route per round (see random_route)
 NODE_BUDGET = 3000  # per solver call; over budget = variant rejected
-MAX_VARIANTS = 40
+MAX_VARIANTS = 60
+RELAX_AFTER = 8  # variants; after that the solver-effort window is dropped (bounds the time on a Pi)
+
+
+class Level:
+    """Difficulty of one weekday, like newspaper puzzles: easy on Monday,
+    hard on the weekend. Knobs: Baustellen per cut round (more = fewer streets),
+    clue count (redundant extra clues are footholds) and the solver nodes
+    needed to prove uniqueness (fewer = more forced moves, less trial and error)."""
+
+    def __init__(self, name, stars, cut, clues, nodes):
+        self.name, self.stars = name, stars
+        self.cut = cut  # (min, max) cells cut off the route ends per round, 2 rounds
+        self.min_clues, self.max_clues = clues
+        self.min_nodes, self.max_nodes = nodes
+
+
+LEVELS = [  # Monday .. Sunday
+    Level("leicht", 1, (3, 4), (9, 12), (0, 250)),
+    Level("leicht", 1, (2, 4), (8, 11), (0, 350)),
+    Level("mittel", 2, (2, 3), (7, 10), (60, 500)),
+    Level("mittel", 2, (1, 3), (6, 9), (100, 700)),
+    Level("knackig", 3, (1, 3), (5, 8), (150, 1000)),
+    Level("schwer", 4, (1, 2), (4, 7), (200, 1600)),
+    Level("schwer", 4, (1, 2), (4, 6), (250, 2200)),
+]
+
+
+def level_of(day):
+    return LEVELS[day.weekday()]
 
 UP, RIGHT, DOWN, LEFT = 0, 1, 2, 3
 DIR_RC = ((-1, 0), (0, 1), (1, 0), (0, -1))
@@ -254,15 +283,15 @@ def backbite(path, rng, moves):
     return path
 
 
-def random_route(rng):
+def random_route(rng, cut=(1, 4)):
     """(blocked cells, planted route): a random Hamiltonian path of the full
-    grid, then twice: cut 0-MAX_CUT cells off each end as Baustellen and
-    backbite on, so Baustellen and ends end up spread out."""
+    grid, then twice: cut 0-MAX_CUT cells off each end as Baustellen (cut[0]
+    to cut[1] in all) and backbite on, so Baustellen and ends end up spread out."""
     path = [(r, c if r % 2 == 0 else COLS - 1 - c) for r in range(ROWS) for c in range(COLS)]
     path = backbite(path, rng, BACKBITE_MOVES)
     blocked = []
     for _ in range(2):
-        a, b = rng.choice([(a, b) for a in range(MAX_CUT + 1) for b in range(MAX_CUT + 1) if 1 <= a + b])
+        a, b = rng.choice([(a, b) for a in range(MAX_CUT + 1) for b in range(MAX_CUT + 1) if cut[0] <= a + b <= cut[1]])
         blocked += path[:a] + path[len(path) - b:]
         path = backbite(path[a:len(path) - b], rng, BACKBITE_MOVES // 3)
     return blocked, path
@@ -296,13 +325,14 @@ def _clue_against(planted, other, rng):
     return rng.choice(cand) if cand else None
 
 
-def generate(day, variant):
+def generate(day, variant, relaxed=False):
     """Puzzle of one seed variant, or None if it's not good enough."""
+    lv = level_of(day)
     rng = random.Random(f"kiezkurier-{day.isoformat()}-{variant}")
-    blocked, planted = random_route(rng)
+    blocked, planted = random_route(rng, lv.cut)
     p = Puzzle(blocked, planted[0], planted[-1], {}, solution=planted, day=day)
     # Add clues until the planted route is the only one.
-    for _ in range(3 * MAX_CLUES):
+    for _ in range(30):
         routes, nodes, finished = solve(p)
         if not finished:
             return None
@@ -319,20 +349,29 @@ def generate(day, variant):
     keys = list(p.clues)
     rng.shuffle(keys)
     for cell in keys:
-        if len(p.clues) <= MIN_CLUES:  # a few redundant clues keep it friendly
+        if len(p.clues) <= lv.min_clues:  # redundant clues keep easy days friendly
             break
         clue = p.clues.pop(cell)
         routes, nodes, finished = solve(p)
         if not finished or len(routes) != 1:
             p.clues[cell] = clue
-    routes, nodes, finished = solve(p)
-    if not finished or len(routes) != 1 or not MIN_CLUES <= len(p.clues) <= MAX_CLUES or not MIN_NODES <= nodes <= MAX_NODES:
+    # Easy days: top up with gift clues from the planted route (can't add solutions).
+    gifts = [i for i in range(1, len(planted) - 1) if planted[i] not in p.clues]
+    rng.shuffle(gifts)
+    while len(p.clues) < lv.min_clues and gifts:
+        i = gifts.pop()
+        din, dout = shape(planted, i)
+        p.clues[planted[i]] = dout if rng.random() < 0.25 else (TURN if din != dout else STRAIGHT)
+    routes, nodes, finished = solve(p, budget=NODE_BUDGET)
+    if (not finished or len(routes) != 1 or not lv.min_clues <= len(p.clues) <= lv.max_clues
+            or not (relaxed or lv.min_nodes <= nodes <= lv.max_nodes)):
         return None
     kinds = {TURN if v == TURN else STRAIGHT if v == STRAIGHT else "arrow" for v in p.clues.values()}
     if len(kinds) < 2:
         return None
     p.nodes = nodes
     p.variant = variant
+    p.level = lv
     return p
 
 
@@ -343,7 +382,7 @@ def daily_puzzle(day):
     """The puzzle of a day (cached; deterministic, same on every start)."""
     if day not in _DAILY:
         for variant in range(MAX_VARIANTS):
-            p = generate(day, variant)
+            p = generate(day, variant, relaxed=variant >= RELAX_AFTER)
             if p is not None:
                 break
         else:
@@ -370,7 +409,10 @@ WHITE = (255, 255, 255)
 
 EPOCH = datetime.date(2026, 10, 31)  # Tour #1
 RESUME_SECONDS = 600  # closed mid-route (idle timeout, x): the route waits this long
-REFUSE_FLASH = 0.45
+REFUSE_FLASH = 0.6
+TIP_AFTER = 15.0  # seconds without a move -> a general (non-spoiling) tip in the status line
+TIP_EVERY = 7.0
+STRANDED = (255, 196, 200)  # streets the route can't reach anymore
 WIN_ROLL_SECONDS = 1.6  # the wheel rolls the finished route ...
 WIN_BANNER_SECONDS = 1.2  # ... then GELIEFERT! ... then the Bestenliste
 
@@ -389,6 +431,14 @@ REFUSE_TEXT = {
     "early": "Späti hat noch zu - erst alle Straßen!",
     "far": "Fang am Rad an, Feld für Feld ziehen.",
 }
+TIPS = [
+    "Tipp: Eckfelder gehen nur ums Eck.",
+    "Tipp: Feld mit nur 2 freien Nachbarn? Rein über den einen, raus über den anderen.",
+    "Tipp: Ein Kreisel am Rand verrät oft schon die Richtung.",
+    "Tipp: Fahrradstraße an der Wand? Dann geht's an der Wand entlang.",
+    "Tipp: Erst die Ecken und Ränder durchdenken, dann die Mitte.",
+]
+WEEKDAYS_LONG = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 WIN_LINES = [
     "Mate geliefert!",
     "Der Späti dankt.",
@@ -435,6 +485,21 @@ def _arrow_poly(cx, cy, length, width, d):
     a = d * math.pi / 2
     ca, sa = math.cos(a), math.sin(a)
     return [(cx + x * ca - y * sa, cy + x * sa + y * ca) for x, y in pts]
+
+
+def draw_stars(surf, x, cy, stars, r=8, total=4):
+    """Difficulty stars (filled = level), left edge x. Returns the right edge."""
+    for i in range(total):
+        cx = x + r + i * (2 * r + 4)
+        pts = [(cx + (r if k % 2 == 0 else r * 0.45) * math.sin(k * math.pi / 5),
+                cy - (r if k % 2 == 0 else r * 0.45) * math.cos(k * math.pi / 5)) for k in range(10)]
+        pygame.draw.polygon(surf, (255, 200, 40) if i < stars else K.F_FACE, pts)
+        pygame.draw.polygon(surf, K.INK, pts, 1)
+    return x + total * (2 * r + 4)
+
+
+def level_text(day):
+    return f"{WEEKDAYS_LONG[day.weekday()]}: {level_of(day).name}"
 
 
 def sign_surface(kind, size):
@@ -544,6 +609,40 @@ def place_surface(kind, size):
     return _cached(("place", kind, size), make)
 
 
+DEMO_CELL = 40
+
+
+def draw_demo(surf, kind, x, y):
+    """Rules row example: three mini street cells, the sign in the middle and
+    a correct bit of route through it (cached). Returns its rect."""
+    def make():
+        s = pygame.Surface((3 * DEMO_CELL + 4, DEMO_CELL + 16), pygame.SRCALPHA)
+        oy = 8
+        for i in range(3):
+            r = pygame.Rect(2 + i * DEMO_CELL, oy, DEMO_CELL, DEMO_CELL).inflate(-4, -4)
+            pygame.draw.rect(s, (70, 44, 110) if kind == "blocked" and i == 1 else STREET, r, border_radius=4)
+            pygame.draw.rect(s, KERB, r, 1, border_radius=4)
+        c = [(2 + DEMO_CELL // 2 + i * DEMO_CELL, oy + DEMO_CELL // 2) for i in range(3)]
+        top, bottom = (c[1][0], 0), (c[1][0], s.get_height())
+        route = {
+            "blocked": None,
+            TURN: [(0, c[0][1]), c[0], c[1], bottom],
+            STRAIGHT: [(0, c[0][1]), c[0], c[1], c[2], (s.get_width(), c[2][1])],
+            RIGHT: [top, c[1], c[2], (s.get_width(), c[2][1])],
+        }[kind]
+        if route:
+            pygame.draw.lines(s, K.INK, False, route, 12)
+            pygame.draw.lines(s, ROUTE, False, route, 7)
+            for q in route[1:-1]:
+                pygame.draw.circle(s, ROUTE, q, 3)
+        img = sign_surface(kind, DEMO_CELL - 6)
+        s.blit(img, img.get_rect(center=c[1]))
+        return s
+    img = _cached(("demo", kind), make)
+    surf.blit(img, (x, y))
+    return pygame.Rect(x, y, img.get_width(), img.get_height())
+
+
 def menu_icon_surface(size=32):
     """16px menu/title icon: a mini street map with a pink route snaking from
     a little house to a shop, scaled nearest-neighbour. No fonts."""
@@ -591,6 +690,8 @@ class KiezKurierGame(party_games._Game):
         self.refused = None  # (cell, reason, time)
         self.message = None  # (text, until)
         self.won_at = None
+        self.last_move_at = now
+        self.stranded = set()
         self.resume = None
         if (_RESUME is not None and _RESUME["day"] == self.day and len(_RESUME["path"]) > 1
                 and 0 <= now - _RESUME["saved_at"] <= RESUME_SECONDS):
@@ -621,7 +722,10 @@ class KiezKurierGame(party_games._Game):
         self._save()
 
     def _save(self):
+        """Called after every route change: stranded streets, move clock, resume copy."""
         global _RESUME
+        self.last_move_at = self.last_tick
+        self.stranded = self.find_stranded()
         if self.state == "play" and self.won_at is None:
             _RESUME = {"day": self.day, "path": list(self.path), "elapsed": self.elapsed, "saved_at": self.last_tick}
 
@@ -647,6 +751,28 @@ class KiezKurierGame(party_games._Game):
 
     def remaining(self):
         return self.puzzle.total - len(self.path)
+
+    def find_stranded(self):
+        """Free streets the route can never reach anymore: cut off from the
+        head, or (not the Späti) with fewer than 2 ways in/out left."""
+        p = self.puzzle
+        if self.head == p.end:
+            return set()
+        on = set(self.path)
+        rest = {(r, c) for r in range(ROWS) for c in range(COLS) if p.is_free(r, c) and (r, c) not in on}
+        seen, todo = set(), [self.head]
+        while todo:
+            cell = todo.pop()
+            for _, nb in _neighbours(*cell):
+                if nb in rest and nb not in seen:
+                    seen.add(nb)
+                    todo.append(nb)
+        out = rest - seen
+        for cell in rest & seen:
+            ways = sum(1 for _, nb in _neighbours(*cell) if nb in rest or nb == self.head)
+            if ways < (1 if cell == p.end else 2):
+                out.add(cell)
+        return out
 
     # ---- input --------------------------------------------------------
     def tap(self, x, y):
@@ -843,9 +969,9 @@ class KiezKurierGame(party_games._Game):
             p = self.puzzle
             hud = pygame.Rect(8, 6, self.width - 16, 92)
             K.bevel(s, hud)
-            K.t95(s, f"TOUR #{tour_number(self.day)}", 24, (hud.x + 12, hud.y + 10))
-            K.t95(s, day_label(self.day), 18, (hud.x + 12, hud.y + 42), color=K.F_DARK)
-            K.t95(s, f"{p.total} Straßen", 15, (hud.x + 12, hud.y + 66), color=K.F_DARK, bold=False)
+            tour = K.t95(s, f"TOUR #{tour_number(self.day)}", 22, (hud.x + 12, hud.y + 6))
+            draw_stars(s, tour.right + 10, tour.centery, level_of(self.day).stars, r=8)
+            K.t95(s, f"{day_label(self.day)} {level_of(self.day).name}", 17, (hud.x + 12, hud.y + 36), color=K.F_DARK)
             win = pygame.Rect(GRID_X - 12, GRID_Y - 40, COLS * CELL + 24, ROWS * CELL + 52)
             K.window(s, win, "kiezplan.txt - Kollektiv -> Späti", icon=self.ICON, buttons=None)
             board = pygame.Rect(GRID_X - 4, GRID_Y - 4, COLS * CELL + 8, ROWS * CELL + 8)
@@ -864,8 +990,8 @@ class KiezKurierGame(party_games._Game):
             bottom = win.bottom + 6
             half = (self.width - 16 - 8) // 2
             self.play_buttons = {
-                "help": pygame.Rect(8, self.height - 62, half, 54),
-                "reset": pygame.Rect(8 + half + 8, self.height - 62, half, 54),
+                "help": pygame.Rect(8, self.height - 56, half, 50),
+                "reset": pygame.Rect(8 + half + 8, self.height - 56, half, 50),
             }
             K.button(s, self.play_buttons["help"], "Wie geht's?", size=18)
             K.button(s, self.play_buttons["reset"], "Von vorn", size=18)
@@ -891,11 +1017,14 @@ class KiezKurierGame(party_games._Game):
                 continue
             K.seven_seg(surf, ch, x, y, dw, dh)
             x += dw + gap
+        bar = pygame.Rect(20, 66, 200, 22)
+        K.progress95(surf, bar, len(self.path), self.puzzle.total)
+        K.t95(surf, f"{len(self.path)}/{self.puzzle.total}", 16, (bar.right + 8, bar.centery), color=K.F_INK, anchor="midleft")
         entries = today_entries(self.NAME, self.day)
-        line = (f"Heute best: {fmt_time(entries[0]['score'])} {party_games.entry_name(entries[0])}" if entries
-                else "Heute noch niemand durch")
-        K.t95(surf, party_games._fit(K.font(14, False), line, 250), 14, (self.width - 18, 82), color=K.F_DARK, bold=False,
-              anchor="midright")
+        line = (f"Best {fmt_time(entries[0]['score'])} {party_games.entry_name(entries[0])}" if entries
+                else "Heute: noch niemand")
+        K.t95(surf, party_games._fit(K.font(15, False), line, 180), 15, (self.width - 18, 82), color=K.F_DARK,
+              bold=False, anchor="midright")
 
     def _draw_route(self, surf):
         p = self.puzzle
@@ -904,6 +1033,10 @@ class KiezKurierGame(party_games._Game):
         # visited streets get a warm tint, clue signs + start/end on top
         for cell in self.path:
             pygame.draw.rect(surf, STREET_DONE, self.cell_rect(cell).inflate(-10, -10), border_radius=5)
+        for cell in self.stranded:
+            rect = self.cell_rect(cell).inflate(-10, -10)
+            pygame.draw.rect(surf, STRANDED, rect, border_radius=5)
+            pygame.draw.rect(surf, K.F_LATE, rect, 2, border_radius=5)
         pts = [self.cell_center(c) for c in self.path]
         col = ROUTE_WIN if win else ROUTE
         if len(pts) >= 2:
@@ -926,12 +1059,28 @@ class KiezKurierGame(party_games._Game):
             img = place_surface(kind, 46)
             cx, cy = self.cell_center(cell)
             surf.blit(img, img.get_rect(center=(cx, cy - 6)))
-            label = "KOLLEKTIV" if kind == "start" else "SPÄTI"
-            K.t95(surf, label, 11 if kind == "start" else 13, (cx, cy + 25), color=K.INK, anchor="center")
+            K.t95(surf, "START" if kind == "start" else "SPÄTI", 14, (cx, cy + 25), color=K.INK, anchor="center")
         if self.refused is not None and self.last_tick - self.refused[2] < REFUSE_FLASH:
             rect = self.cell_rect(self.refused[0]).inflate(-4, -4)
             pygame.draw.rect(surf, K.F_LATE, rect, 5, border_radius=7)
+            c = rect.center
+            for a, b in (((-14, -14), (14, 14)), ((-14, 14), (14, -14))):
+                pygame.draw.line(surf, K.F_LATE, (c[0] + a[0], c[1] + a[1]), (c[0] + b[0], c[1] + b[1]), 6)
         self._draw_wheel(surf)
+        if len(self.path) == 1 and self.won_at is None:
+            self._draw_onboarding(surf)
+
+    def _draw_onboarding(self, surf):
+        """Before the first move: a pulsing ring round the wheel and a
+        "Zieh mich!" balloon - which way is up to you (no spoiler)."""
+        cx, cy = self.cell_center(self.head)
+        pulse = (self.last_tick - self.started_at) % 1.2 / 1.2
+        pygame.draw.circle(surf, K.F_LATE if pulse < 0.5 else ROUTE, (cx, cy), int(26 + 14 * pulse), 4)
+        w, h = 150, 40
+        left = cx + 40 if cx < self.width // 2 else cx - 40 - w
+        top = cy - 70 if cy > GRID_Y + 90 else cy + 34
+        K.speech(surf, pygame.Rect(left, top, w, h), ["Zieh mich!"], (cx + (12 if left > cx else -12), cy + (-16 if top < cy else 16)),
+                 size=18)
 
     def _wheel_pos(self):
         """Centre and roll angle of the wheel: at the route's head, or rolling
@@ -950,6 +1099,8 @@ class KiezKurierGame(party_games._Game):
         """The friend's dadaist wheel: one wheel, a spoke cross that rolls
         with the route, a pink flag on a stick."""
         (cx, cy), angle, dx = self._wheel_pos()
+        if self.refused is not None and self.last_tick - self.refused[2] < 0.3:  # "nope" wobble
+            cx += math.sin((self.last_tick - self.refused[2]) * 60) * 5
         cx, cy = int(cx), int(cy)
         r = 21
         flip = -1 if dx < 0 else 1
@@ -967,23 +1118,37 @@ class KiezKurierGame(party_games._Game):
         pygame.draw.circle(surf, ROUTE, (cx, cy), 5)
         pygame.draw.circle(surf, K.INK, (cx, cy), 5, 1)
 
+    def status_text(self):
+        """(text, alarm) for the status line."""
+        if self.won_at is not None:
+            return "Geliefert! Der Späti klatscht.", False
+        if self.message is not None and self.last_tick < self.message[1]:
+            return self.message[0], self.refused is not None and self.refused[2] + 2.5 > self.message[1]
+        if self.stranded:
+            n = len(self.stranded)
+            return f"Sackgasse! {n} Straße{'' if n == 1 else 'n'} (rot) abgehängt. Zurückziehen!", True
+        idle = self.last_tick - self.last_move_at
+        if idle >= TIP_AFTER:
+            return TIPS[int((idle - TIP_AFTER) / TIP_EVERY) % len(TIPS)], False
+        if len(self.path) == 1:
+            return "Finger aufs Rad und Feld für Feld ziehen!", False
+        n = self.remaining()
+        return f"Noch {n} Straße{'' if n == 1 else 'n'} bis zum Späti. " + STATUS_IDLE[int(self.last_tick / 6) % len(STATUS_IDLE)], False
+
     def _draw_status(self, surf):
         rect = self.status_rect
-        K.tooltip(surf, rect)
-        if self.won_at is not None:
-            text = "Geliefert! Der Späti klatscht."
-        elif self.message is not None and self.last_tick < self.message[1]:
-            text = self.message[0]
-        elif len(self.path) == 1:
-            text = "Zieh das Rad mit dem Finger los!"
+        text, alarm = self.status_text()
+        if alarm:
+            pygame.draw.rect(surf, (255, 220, 220), rect)
+            pygame.draw.rect(surf, K.F_LATE, rect, 3)
         else:
-            n = self.remaining()
-            text = f"Noch {n} Straße{'' if n == 1 else 'n'} bis zum Späti. " + STATUS_IDLE[int(self.last_tick / 6) % len(STATUS_IDLE)]
-        lines = K.wrap(text, 16, rect.w - 20)[:2]
-        y = rect.centery - (len(lines) * 20) // 2
+            K.tooltip(surf, rect)
+        size = 17 if len(K.wrap(text, 17, rect.w - 20, bold=alarm)) <= 2 else 15
+        lines = K.wrap(text, size, rect.w - 20, bold=alarm)[:2]
+        y = rect.centery - (len(lines) * (size + 3)) // 2
         for ln in lines:
-            K.t95(surf, ln, 16, (rect.x + 10, y), color=K.F_INK, bold=False)
-            y += 20
+            K.t95(surf, ln, size, (rect.x + 10, y), color=K.F_LATE if alarm else K.F_INK, bold=alarm)
+            y += size + 3
 
     # ---- rules / ready screen ------------------------------------------
     def _draw_ready_screen(self, surf):
@@ -1007,30 +1172,32 @@ class KiezKurierGame(party_games._Game):
         if not help_mode:
             K.wordart(surf, "KIEZ-KURIER", 34, (inner.centerx, y + 26), wave=5)
             y += 58
-            K.t95(surf, f"Das tägliche Lastenrad-Rätsel  ·  Tour #{tour_number(self.day)}  ·  {day_label(self.day)}", 14,
+            K.t95(surf, f"Das tägliche Lastenrad-Rätsel · Tour #{tour_number(self.day)}", 15,
                   (inner.centerx, y), color=K.F_ACCENT, anchor="midtop")
-            y += 26
-        for ln in K.wrap("Fahr vom KOLLEKTIV zum SPÄTI: eine Route, durch JEDE freie Straße genau einmal. "
-                         "Finger aufs Rad und ziehen.", 17, inner.w - 16):
+            y += 24
+            lt = level_text(self.day)
+            tw = K.font(18).size(lt)[0]
+            x0 = inner.centerx - (tw + 12 + 4 * 20) // 2
+            K.t95(surf, lt, 18, (x0, y + 10), anchor="midleft")
+            draw_stars(surf, x0 + tw + 12, y + 10, level_of(self.day).stars, r=8)
+            y += 28
+        for ln in K.wrap("Fahr vom KOLLEKTIV (START) zum SPÄTI: eine Route durch JEDE freie Straße, "
+                         "jede genau einmal.", 17, inner.w - 16):
             K.t95(surf, ln, 17, (inner.x + 8, y))
-            y += 23
+            y += 22
         y += 8
         rows = [
-            ("blocked", "Baustelle", "gesperrt. Wie immer."),
+            ("blocked", "Baustelle", "gesperrt. Wie immer. Außenrum!"),
             (TURN, "Kreisel", "hier musst du abbiegen."),
             (STRAIGHT, "Fahrradstraße", "hier geradeaus durch."),
-            (RIGHT, "Einbahnstraße", "raus nur in Pfeilrichtung (rein egal)."),
+            (RIGHT, "Einbahnstraße", "raus nur in Pfeilrichtung."),
         ]
         for kind, name, rule in rows:
-            box = pygame.Rect(inner.x + 8, y, 52, 52)
-            pygame.draw.rect(surf, STREET, box, border_radius=6)
-            pygame.draw.rect(surf, KERB, box, 2, border_radius=6)
-            img = sign_surface(kind, 44)
-            surf.blit(img, img.get_rect(center=box.center))
-            K.t95(surf, name, 18, (box.right + 12, y + 3))
-            lines = K.wrap(rule, 15, inner.right - box.right - 20, bold=False)
+            box = draw_demo(surf, kind, inner.x + 6, y + 2)
+            K.t95(surf, name, 17, (box.right + 10, y + 2))
+            lines = K.wrap(rule, 15, inner.right - box.right - 16, bold=False)
             for i, ln in enumerate(lines[:2]):
-                K.t95(surf, ln, 15, (box.right + 12, y + 26 + i * 18), color=K.F_DARK, bold=False)
+                K.t95(surf, ln, 15, (box.right + 10, y + 24 + i * 18), color=K.F_DARK, bold=False)
             y += 62
         y += 2
         for ln in K.wrap("Zurückziehen = rückgängig. Jeden Tag ein neues Rätsel, für die ganze WG dasselbe - "

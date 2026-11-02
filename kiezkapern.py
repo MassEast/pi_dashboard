@@ -9,11 +9,21 @@ the bike pathfinds there (BFS on the tile grid). One context button (AKTION:
 KAPERN!, LOCKERN, KIPPEN!, MALEN, AUFLADEN, ABTAUCHEN, RAUS, NAVI) and the
 KLINGEL (scares pedestrians, confuses Hausverwaltungs-Bots) in a bottom bar.
 
-Random chain of short missions: Lastenrad befreien (ROLLKAPITAL rack, then
-bring it to the Hausprojekt), Soli-Suppe (pick up at the Soli-Küche, deliver
-before the thermometer drops), Kran kippen (loosen 3 bolts, topple the
-LUXUS-LOFTS crane), Werbung übermalen (paint.exe) and Pfand sammeln. Score =
-Kiezkasse in cents.
+A light story arc (STORY): Akt 1 free a Lastenrad from the ROLLKAPITAL rack and
+bring it to the Hausprojekt; Akt 2 Widerstand: Soli-Suppe (deliver before it
+cools), Werbung übermalen (paint.exe), Pfand sammeln, then shuffled repeats;
+Akt 3 from FINALE_AT: topple BETONGOLD's LUXUS-LOFTS crane (3 bolts, KIPPEN!),
+then the Feierabend ride home. The Bilanz ending depends on how far you got.
+Score = Kiezkasse in cents.
+
+Onboarding: a "Wie geht's?" card on the start screen, one-time TIPP banners at
+the moment they matter (first Mietspiegel, escape, a bot in KLINGEL range, 4/5),
+a contextual hint between the buttons (KLINGEL!, verfolgt, lose-track
+countdown), green on-map labels for everything that lowers the Mietspiegel
+(nearest Späti pulses or gets a green arrow, Kiezblock-Poller, Hausprojekt) and
+action sub-labels that say what they cost ("Miete +2", "VORSICHT: = raus!").
+The first minute is forgiving (GRACE_SECONDS: slower chasers, the first catch
+is only a warning), the finale a bit faster.
 
 The wanted level is the MIETSPIEGEL (0-5 little houses): kapern, kippen and
 malen raise it, so does getting caught (bots, SCHNELLR drones, the Mietenhai
@@ -75,6 +85,9 @@ INVULN_SECONDS = 2.5
 STUN_SECONDS = 0.5
 LOSE_TRACK_SECONDS = 9.0
 HIDE_DROP_SECONDS = 2.4
+BELL_COOLDOWN = 2.5
+BELL_RANGE = 170         # px
+BELL_STUN = 2.0          # s a bot stands confused
 HAUSPROJEKT_COOLDOWN = 25.0
 POLLER_COOLDOWN = 12.0
 FIELD_EVERY = 0.4
@@ -118,6 +131,7 @@ SHARK = (52, 56, 74)
 RED = (220, 40, 60)
 WHITE = (255, 255, 255)
 GREEN = (40, 160, 90)
+ESCAPE_BG = (150, 240, 170)  # everything that lowers the Mietspiegel is labelled in this green
 RAINBOW = [(230, 50, 50), (250, 150, 40), (250, 230, 60), (60, 180, 80), (60, 110, 230), (150, 60, 200)]
 
 BRIDGE_COLS = {9, 10, 36, 37, 54, 55}
@@ -154,7 +168,42 @@ BOT_LINES = ["Modernisierungsumlage!", "Mieterhöhung gem. §559!", "Ihr Antrag 
              "Heizung? Kostet extra.", "Bitte Ticket ziehen."]
 SHARK_LINES = ["INDEX-MIETE! INDEX-MIETE!", "Platz da, Rendite!", "Ich muss nur kurz aufwerten!"]
 DRONE_LINES = ["SCHNELLR scannt...", "Kiez wird bewertet.", "Lieferung: Ihre Kündigung."]
-OVER_TIME = ["Schicht vorbei!", "Feierabend! Kiez gehalten.", "Schichtende. Solidarisch ausgestempelt."]
+
+# ------------------------------------------------------------------ the story of one Schicht
+# Akt 1: you free a Lastenrad for the Hausprojekt (tutorial). Akt 2: Widerstand - soup, paint,
+# Pfand for the campaign. Akt 3 (from FINALE_AT): BETONGOLD's LUXUS-LOFTS crane goes up today,
+# topple it; then Feierabend: ride home to the Hausprojekt. The Bilanz tells how it went.
+FINALE_AT = 115.0
+INTRO = ("SCHICHTBEGINN", "Lastenrad-Schicht fürs Hausprojekt. BETONGOLD will den Kiez. Nö!")
+STORY = {  # mission kind -> (banner title, story line); the HUD field shows the concrete task
+    "rad1": ("AKT 1: ANKOMMEN", "Das Plenum braucht ein Lastenrad. ROLLKAPITAL hat 300: befrei eins!"),
+    "rad": ("PLENUM", "Noch ein Rad für die Kiezflotte. ROLLKAPITAL merkt's eh nicht."),
+    "suppe": ("SOLI-KÜCHE", "Die Soli-Küche hat gekocht. Bring Suppe zu den Nachbar*innen!"),
+    "malen": ("GEGENKAMPAGNE", "BETONGOLD plakatiert den Kiez zu. Zeit für Farbe!"),
+    "pfand": ("KAMPAGNENKASSE", "Die Kasse der Mieter*innen-Initiative ist leer: Pfand sammeln!"),
+    "kran": ("AKT 3: FINALE", "BETONGOLD stellt heute den LUXUS-LOFTS-Kran auf. Kipp ihn um!"),
+    "heim": ("FEIERABEND", "Der Kran liegt! Ab ins Hausprojekt, das Plenum feiert dich."),
+}
+ACT2_TITLE = "AKT 2: WIDERSTAND"
+OVER_TEXT = {"held": "Kiez gehalten, Kran gekippt!", "crane": "Kran gekippt, Heimweg verpasst!",
+             "open": "Schicht vorbei. Der Kran steht noch."}
+ENDINGS = {  # Bilanz headline + 2 lines, by how the Schicht went
+    "held": ("KIEZ GEHALTEN!", "Kran liegt, Garten wächst.", "BETONGOLD zieht nach Monaco."),
+    "crane": ("KRAN GEKIPPT!", "Die LUXUS-LOFTS sind Geschichte.", "Nur heim kamst du nicht mehr."),
+    "open": ("SCHICHT VORBEI", "Der LUXUS-LOFTS-Kran steht noch.", "Morgen: Plenum. Und Schrauben."),
+}
+
+# ------------------------------------------------------------------ onboarding: one-time tips (banner "TIPP")
+TIPS = {
+    "level": "Mietspiegel 1/5: Hausverwaltungs-Bots jagen dich. Erwischt = +1!",
+    "escape": "Runter damit: Späti antippen = abtauchen. Oder Kiezblock-Poller, Hausprojekt.",
+    "bell": "KLINGEL drücken: Bots in der Nähe stehen 2 Sekunden verwirrt rum!",
+    "danger": "4/5! Noch einmal erwischt = rausmodernisiert. Ab in den Späti!",
+    "warn": "Verwarnung, diesmal gratis. Ab jetzt: erwischt = Mietspiegel +1!",
+}
+GRACE_SECONDS = 60.0    # first minute: slower chasers, first catch is only a warning
+GRACE_SPEED = 0.7
+LATE_SPEED = 1.1        # from the finale on
 
 
 def block_kind(bx, by):
@@ -884,6 +933,16 @@ def _label_box(surf, text, center, fg=None, bg=None, size=15, area=None):
     return r
 
 
+_WRAP = {}
+
+
+def _banner_wrap(text):
+    """Banner text in 1 line, or 2 if it doesn't fit at 15 px (cached: asked several times a frame)."""
+    if text not in _WRAP:
+        _WRAP[text] = [text] if K.font(15).size(text)[0] <= BANNER_TEXT_W else K.wrap(text, 15, BANNER_TEXT_W)[:2]
+    return _WRAP[text]
+
+
 # ------------------------------------------------------------------ moving things
 
 class Mob:
@@ -956,11 +1015,14 @@ class KiezKapernGame(party_games._Game):
         self.invuln_until = 0.0
         self.stun_until = 0.0
         self.hidden = None        # Späti door tile while hiding
+        self.auto_hide = None     # Späti door tapped while chased: ride there and duck in on arrival
+        self.escape_arrow = None  # (rect, door) of the green Späti arrow, tappable
         self.hide_next_drop = 0.0
         self.hp_cooldown_until = 0.0
         self.poller_cd = {}
         self.bell_cd_until = 0.0
         self.bell_ring_until = 0.0
+        self.bell_hits = 0
         self.pressed = None       # ("bell"|"act", until)
         self.ped_rng = random.Random()  # own stream: pedestrians must not shift the missions' / chasers' rng
         self.peds = [Ped(self.ped_rng.choice(self.city.walk), i, self.ped_rng) for i in range(70)]
@@ -985,7 +1047,16 @@ class KiezKapernGame(party_games._Game):
         self.painted = set()
         self.ads = {i: ADS[i % len(ADS)] for i in range(len(self.city.billboards))}
         self.paint = None         # paint.exe state while open
-        self.counts = {"rad": 0, "suppe": 0, "kran": 0, "malen": 0, "pfand": 0, "hai": 0, "erwischt": 0, "mate": 0}
+        self.counts = {"rad": 0, "suppe": 0, "kran": 0, "malen": 0, "pfand": 0, "heim": 0, "hai": 0, "erwischt": 0, "mate": 0}
+        self.finale_started = self.finale_done = False
+        self.heim_started = self.heim_done = False
+        self.tips_shown = set()
+        self.tip_queue = []
+        self.warned = False       # the first catch in the grace minute was only a warning
+        self.chased = False       # a chaser is close (set by _step_level)
+        self.bot_near = False     # a bot is within KLINGEL range
+        self.hint = None          # the control bar's current hint
+        self.escape_hint = None   # "marker" / "arrow" while the map points to the nearest Späti
         self.max_level = 0
         self.rausmod = False
         self.bilanz = False
@@ -1050,6 +1121,29 @@ class KiezKapernGame(party_games._Game):
         if len(self.parts) > 320:
             del self.parts[:len(self.parts) - 320]
 
+    def tip(self, key, urgent=False):
+        """One-time onboarding tip (banner "TIPP"), queued behind story banners unless urgent."""
+        if key in self.tips_shown:
+            return
+        self.tips_shown.add(key)
+        if urgent:
+            self.banner = ("TIPP", TIPS[key], self.t, 3.4)
+        else:
+            self.tip_queue.append(key)
+
+    def _step_tips(self):
+        if self.tip_queue and self._banner_lines() is None:
+            self.banner = ("TIPP", TIPS[self.tip_queue.pop(0)], self.t, 3.4)
+
+    def chase_k(self):
+        """Chaser speed factor: forgiving first minute, faster in the finale."""
+        if self.schicht < GRACE_SECONDS:
+            return GRACE_SPEED
+        return LATE_SPEED if self.finale_started else 1.0
+
+    def lose_track_seconds(self):
+        return LOSE_TRACK_SECONDS * (0.7 if self.schicht < GRACE_SECONDS else 1.0)
+
     def _freeze(self, seconds):
         self.freeze_until = max(self.freeze_until, self.t + seconds)
 
@@ -1084,10 +1178,16 @@ class KiezKapernGame(party_games._Game):
         self.unseen = 0.0
         if why:
             self._popup(why, self.x, self.y - 56, (255, 120, 140) if up else (120, 255, 160), 18, 1.5)
+        if up and new >= 1:
+            self.tip("level")
+        if up and new >= 2:
+            self.tip("escape")
         if up and new >= SHARK_LEVEL and not self.shark_warned:
             self.shark_warned = True
-            self.banner = ("WARNUNG", "MIETENHAI IM KIEZ", self.t, 2.6)
+            self.banner = ("WARNUNG", "MIETENHAI! Kommt nicht durch Kiezblock-Poller & Parks.", self.t, 3.0)
             self.news("WARNUNG: Mietenhai im Kiez gesichtet. Poller bereithalten.")
+        if up and new == 4:  # after the shark warning: this one matters more
+            self.tip("danger", urgent=True)
         if new < SHARK_LEVEL:
             self.shark_warned = False
         if new >= 5 and self.state == "play":
@@ -1101,6 +1201,16 @@ class KiezKapernGame(party_games._Game):
 
     def caught(self, mob):
         if self.t < self.invuln_until or self.hidden:
+            return
+        if self.schicht < GRACE_SECONDS and not self.warned:
+            # first minute: one free catch, so the player learns what a catch is without losing a house
+            self.warned = True
+            self.invuln_until = self.t + INVULN_SECONDS
+            self.stun_until = self.t + STUN_SECONDS
+            self.shake = 6
+            mob.stun_until = self.t + 2.5
+            self._popup("VERWARNUNG!", self.x, self.y - 56, K.SUN, 20, 1.5)
+            self.tip("warn", urgent=True)
             return
         self.counts["erwischt"] += 1
         self.invuln_until = self.t + INVULN_SECONDS
@@ -1136,8 +1246,9 @@ class KiezKapernGame(party_games._Game):
     def start(self):
         self.t = 0.0
         self.schicht = 0.0
-        self.next_mission_t = 0.4
-        self.news("Schichtbeginn! Liebe Nachbar*innen: Der Kiez gehört uns.")
+        self.next_mission_t = 3.0  # the intro banner first
+        self.banner = (INTRO[0], INTRO[1], self.t, 3.0)
+        self.news("Schichtbeginn! Liebe Kiezbewohner*innen: Der Kiez gehört uns.")
 
     def play_tap(self):
         x, y = self.tap_pos
@@ -1154,13 +1265,30 @@ class KiezKapernGame(party_games._Game):
             return
         if not VIEW.collidepoint(x, y) or MINI.inflate(8, 8).collidepoint(x, y):
             return
+        was_hidden = self.hidden
         if self.hidden:
             self.leave_spaeti()
+        self.auto_hide = None
+        if self.level > 0 and not was_hidden:  # one tap on a Späti (or its green arrow) = ride there + duck in
+            door = self._spaeti_at(x, y)
+            if door is not None and self.route_to_tile(door):
+                self.auto_hide = door
+                self._popup("Ab in den Späti!", self.x, self.y - 44, WHITE, 16, 1.0)
+                return
         if self.arrow_rect and self.arrow_rect.collidepoint(x, y) and self.mission:
             self.route_to_tile(tile_of(*self.mission["target"]))
             return
         wx, wy = self.to_world(x, y)
         self.route_to_tile(tile_of(wx, wy))
+
+    def _spaeti_at(self, x, y):
+        """Späti door tapped on screen (the shop or its door, or the green arrow), or None."""
+        if self.escape_arrow and self.escape_arrow[0].collidepoint(x, y):
+            return self.escape_arrow[1]
+        wx, wy = self.to_world(x, y)
+        door = min(self.city.spaeti_doors, key=lambda d: (tile_center(*d)[0] - wx) ** 2 + (tile_center(*d)[1] - wy) ** 2)
+        dx, dy = tile_center(*door)
+        return door if (dx - wx) ** 2 + (dy - wy) ** 2 <= (1.6 * TS) ** 2 else None
 
     def drag(self, x, y):
         if self.state == "play" and self.paint is not None:
@@ -1177,7 +1305,9 @@ class KiezKapernGame(party_games._Game):
         if m:
             k, ph = m["kind"], m["phase"]
             if k == "rad" and ph == "find" and self._near(m["target"]):
-                return "KAPERN!", f"Schloss {m['lock']}/3", True, "kapern"
+                if m["lock"] < 2:
+                    return "KAPERN!", f"Schloss {m['lock'] + 1}/3", True, "kapern"
+                return "KAPERN!", self._raise_sub(1, "letztes Schloss"), True, "kapern"
             if k == "suppe" and ph == "pickup" and self._near(m["target"]):
                 return "AUFLADEN", "Suppe einladen", True, "aufladen"
             if k == "kran" and ph == "bolts":
@@ -1185,16 +1315,22 @@ class KiezKapernGame(party_games._Game):
                     if not done and self._near(tile_center(*b)):
                         return "LOCKERN", f"Schraube {sum(m['loose']) + 1}/3", True, ("lockern", i)
             if k == "kran" and ph == "tip" and any(self._near(tile_center(*b)) for b in m["bolts"]):
-                return "KIPPEN!", "Kran umlegen", True, "kippen"
+                return "KIPPEN!", self._raise_sub(2, "Kran umlegen"), True, "kippen"
             if k == "malen" and ph == "go" and self._near(m["target"]):
-                return "MALEN", "paint.exe", True, "malen"
+                return "MALEN", self._raise_sub(1, "paint.exe"), True, "malen"
         if self.level > 0:  # at 0 hiding would only cost a Mate: keep NAVI on the button
             for door in self.city.spaeti_doors:
                 if self._near(tile_center(*door)):
-                    return "ABTAUCHEN", "Eine Mate, bitte", True, ("spaeti", door)
+                    return "ABTAUCHEN", "Mietspiegel sinkt", True, ("spaeti", door)
         if m and m.get("target"):
             return "NAVI", "Route zum Ziel", True, "navi"
         return "NAVI", "kein Ziel", False, None
+
+    def _raise_sub(self, n, what):
+        """Sub-label of an action that raises the Mietspiegel: says by how much, warns at 5/5."""
+        if self.level + n >= 5:
+            return "VORSICHT: = raus!"
+        return f"{what} · Miete +{n}"
 
     def _near(self, pos, r=NEAR):
         return (self.x - pos[0]) ** 2 + (self.y - pos[1]) ** 2 <= r * r
@@ -1260,18 +1396,30 @@ class KiezKapernGame(party_games._Game):
             self.enter_spaeti(kind[1])
 
     def ring(self):
+        """KLINGEL: bots (and drones) within BELL_RANGE stand confused for a moment, pedestrians
+        hop aside. The popup says what it did, so the button explains itself."""
         if self.t < self.bell_cd_until:
+            self._popup("Klingel lädt noch...", self.x, self.y - 44, WHITE, 15, 0.7)
             return
-        self.bell_cd_until = self.t + 2.5
+        self.bell_cd_until = self.t + BELL_COOLDOWN
         self.bell_ring_until = self.t + 0.6
         self._popup("KLING KLING!", self.x, self.y - 44, K.SUN, 18, 0.8)
         for p in self.peds:
             if (p.x - self.x) ** 2 + (p.y - self.y) ** 2 < 130 ** 2:
                 p.hop_until = self.t + 0.5
+        n = 0
         for mob in self.mobs:
-            if mob.kind == "bot" and (mob.x - self.x) ** 2 + (mob.y - self.y) ** 2 < 150 ** 2:
-                mob.stun_until = max(mob.stun_until, self.t + 1.8)
+            if mob.kind in ("bot", "drone") and (mob.x - self.x) ** 2 + (mob.y - self.y) ** 2 < BELL_RANGE ** 2:
+                mob.stun_until = max(mob.stun_until, self.t + (BELL_STUN if mob.kind == "bot" else BELL_STUN * 0.6))
                 self._popup("?!", mob.x, mob.y - 30, WHITE, 20, 0.9)
+                n += 1
+        self.bell_hits += n
+        if n:
+            self._popup(f"{n} Verfolger verwirrt!", self.x, self.y - 44, (120, 255, 160), 18, 1.2)
+        elif any(mob.kind == "shark" for mob in self.mobs):
+            self._popup("Der Hai hört nix. Poller!", self.x, self.y - 44, WHITE, 16, 1.2)
+        else:
+            self._popup("Keine Bots in der Nähe", self.x, self.y - 44, WHITE, 16, 1.0)
 
     # ------------------------------------------------------------ Späti
     def enter_spaeti(self, door):
@@ -1306,23 +1454,37 @@ class KiezKapernGame(party_games._Game):
         b = min(open_bolts, key=lambda b: (tile_center(*b)[0] - self.x) ** 2 + (tile_center(*b)[1] - self.y) ** 2)
         return tile_center(*b)
 
+    def _next_kind(self):
+        """Akt 1: Lastenrad. Akt 2: Soli-Suppe, Gegenkampagne, Pfand first, then shuffled
+        repeats (the crane is saved for the finale, see step())."""
+        if self.missions_started == 0:
+            return "rad"
+        if self.finale_done and not self.heim_done and not self.heim_started:
+            return "heim"
+        if not self.mission_bag:
+            self.mission_bag = ["pfand", "malen", "suppe"] if self.missions_started == 1 else ["suppe", "rad", "malen", "pfand"]
+            if self.missions_started > 1:
+                self.rng.shuffle(self.mission_bag)
+        kind = self.mission_bag.pop()
+        if kind == "malen" and len(self.painted) == len(self.city.billboards):
+            kind = "suppe"
+        return kind
+
     def new_mission(self, kind=None):
         if kind is None:
-            if self.missions_started == 0:
-                kind = "rad"
-            else:
-                if not self.mission_bag:
-                    self.mission_bag = ["suppe", "rad", "kran", "malen", "pfand"]
-                    self.rng.shuffle(self.mission_bag)
-                kind = self.mission_bag.pop()
-                if kind == "kran" and len(self.toppled) == len(SITES):
-                    kind = "pfand"
-                if kind == "malen" and len(self.painted) == len(self.city.billboards):
-                    kind = "suppe"
-                if self.mission and kind == self.mission["kind"] and self.mission_bag:
-                    kind = self.mission_bag.pop()
+            kind = self._next_kind()
+        if kind == "kran" and len(self.toppled) == len(SITES):
+            kind = "pfand"
+        story = STORY["rad1" if kind == "rad" and self.missions_started == 0 else kind]
+        if self.missions_started == 1 and kind != "kran":
+            story = (ACT2_TITLE, story[1])
         self.missions_started += 1
         m = {"kind": kind, "born": self.schicht}
+        if kind == "kran":
+            self.finale_started = True
+        if kind == "heim":
+            self.heim_started = True
+            m.update(phase="go", target=tile_center(*HAUSPROJEKT_DOOR), icon="heart", text="Feierabend: ab ins HAUSPROJEKT!")
         if kind == "rad":
             # only road tiles with a sidewalk next to them: on a crossing the rack stood on the road
             # and the bike parked right on top of it
@@ -1355,7 +1517,14 @@ class KiezKapernGame(party_games._Game):
                      text="Pfand sammeln: 0/6 Flaschen")
             m["target"] = self._nearest_bottle(m)
         self.mission = m
-        self.banner = ("NEUE MISSION", m["text"], self.t, 2.0)
+        self.banner = (story[0], story[1], self.t, 3.4)
+        self.news(story[1])
+
+    def ending(self):
+        """How the Schicht went: "held" (crane down and home), "crane" (crane down), "open"."""
+        if self.finale_done:
+            return "held" if self.heim_done else "crane"
+        return "open"
 
     def _soup_dest(self):
         bt = SOLI_DOOR
@@ -1390,6 +1559,7 @@ class KiezKapernGame(party_games._Game):
         cx, cy = (bx * PER + 2) * TS + 84, (by * PER + 2) * TS + 84
         self.toppled.add(m["site"])
         self.topple_t[m["site"]] = self.t
+        self.finale_done = True
         self.path = []
         self._freeze(0.35)
         self.shake = 16
@@ -1487,7 +1657,9 @@ class KiezKapernGame(party_games._Game):
         self.schicht += dt
         if self.schicht >= SCHICHT_SECONDS:
             self.path = []
-            self.game_over(self.rng.choice(OVER_TIME))
+            self.news({"held": "Kiez gehalten! Plenum tanzt bis morgens.", "crane": "Kran liegt! Plenum feiert ohne dich, aber für dich.",
+                       "open": "Die LUXUS-LOFTS wachsen. Noch. Morgen neue Schicht."}[self.ending()])
+            self.game_over(OVER_TEXT[self.ending()])
             return
         if self.paint is not None:
             p = self.paint
@@ -1498,8 +1670,14 @@ class KiezKapernGame(party_games._Game):
                 self.complete_mission(400, "KIEZ BLEIBT!", "Werbefläche verschwunden. Wand jetzt schöner. ROLLKAPITAL prüft rechtliche Schritte.")
                 self.set_level(self.level + 1, "Mietspiegel +1")  # after paying: 5/5 here ends the round
             return
-        if self.mission is None and self.schicht >= self.next_mission_t:
+        if not self.finale_started and self.schicht >= FINALE_AT:
+            if self.mission is not None:  # whatever it was: the crane is more important now
+                self.news("Plenum: Planänderung! Alle zur Baustelle!")
+            self.mission = None
+            self.new_mission("kran")
+        elif self.mission is None and self.schicht >= self.next_mission_t:
             self.new_mission()
+        self._step_tips()
         self._step_bike(dt)
         self._step_places()
         self._step_mission(dt)
@@ -1577,7 +1755,10 @@ class KiezKapernGame(party_games._Game):
         if m is None:
             return
         k = m["kind"]
-        if k == "rad" and m["phase"] == "bring" and self._near(m["target"], 44):
+        if k == "heim" and self._near(m["target"], 44):
+            self.heim_done = True
+            self.complete_mission(500, "FEIERABEND!", "Plenum feiert: Kran liegt, Kiez steht. Der Mietenhai weint in seinen SUV.")
+        elif k == "rad" and m["phase"] == "bring" and self._near(m["target"], 44):
             self.complete_mission(800, "ANGEKOMMEN!", "Ein Lastenrad mehr für alle. ROLLKAPITAL-Aktie fällt um 0,0001 %.")
         elif k == "suppe" and m["phase"] == "deliver":
             m["temp"] -= SOUP_DROP * dt
@@ -1662,12 +1843,12 @@ class KiezKapernGame(party_games._Game):
             tx, ty = self.x, self.y
         d = math.hypot(tx - mob.x, ty - mob.y)
         if d > 1:
-            s = min(d, mob.speed * dt)
+            s = min(d, mob.speed * self.chase_k() * dt)
             mob.x += (tx - mob.x) / d * s
             mob.y += (ty - mob.y) / d * s
 
     def _drive(self, mob, dt):
-        step = mob.speed * dt
+        step = mob.speed * self.chase_k() * dt
         cur = tile_of(mob.x, mob.y)
         # the shark is stuck exactly when the bike can't be reached by car (park path, Späti)
         mob.stuck = mob.kind == "shark" and not self.field
@@ -1755,20 +1936,30 @@ class KiezKapernGame(party_games._Game):
                 p.y += (gy - p.y) / d * s
 
     def _step_level(self, dt):
+        if self.auto_hide is not None and not self.hidden and self._near(tile_center(*self.auto_hide)):
+            door, self.auto_hide = self.auto_hide, None
+            if self.level > 0:
+                self.enter_spaeti(door)
         if self.hidden:
             if self.level > 0 and self.t >= self.hide_next_drop:
                 self.hide_next_drop = self.t + HIDE_DROP_SECONDS
                 self.set_level(self.level - 1, "Mate wirkt: -1")
             return
+        self.bot_near = any(mb.kind == "bot" and self.t >= mb.stun_until and
+                            (mb.x - self.x) ** 2 + (mb.y - self.y) ** 2 < (BELL_RANGE + 40) ** 2 for mb in self.mobs)
+        if self.bot_near and self.t >= self.bell_cd_until:
+            self.tip("bell")
         if self.level == 0:
             self.unseen = 0.0
+            self.chased = False
             return
         close = any((mb.x - self.x) ** 2 + (mb.y - self.y) ** 2 < 260 ** 2 and not mb.stuck for mb in self.mobs)
+        self.chased = close
         if close:
             self.unseen = 0.0
         else:
             self.unseen += dt
-            if self.unseen >= LOSE_TRACK_SECONDS:
+            if self.unseen >= self.lose_track_seconds():
                 self.set_level(self.level - 1, "Spur verloren: -1")
         # now and then a chaser says something
         if self.t >= self.next_bubble_t:
@@ -2013,10 +2204,7 @@ class KiezKapernGame(party_games._Game):
         """The mission/warning banner's text lines (1, or 2 if it doesn't fit at 15 px) or None."""
         if not (self.banner and self.t - self.banner[2] < self.banner[3] and self.state == "play"):
             return None
-        text = self.banner[1]
-        if K.font(15).size(text)[0] <= BANNER_TEXT_W:
-            return [text]
-        return K.wrap(text, 15, BANNER_TEXT_W)[:2]
+        return _banner_wrap(self.banner[1])
 
     def _banner_rect(self):
         lines = self._banner_lines()
@@ -2062,26 +2250,25 @@ class KiezKapernGame(party_games._Game):
                     r.top = min(ty + 30, VIEW.bottom - 4 - h)
                 K.speech(surf, r, lines, (tx, ty), size=15)
                 self.bubble_rect = r
-        # banners: mission / warning
+        # banners: story / tip / warning (one cached picture per text and colour)
         lines = self._banner_lines()
         if lines is not None:
             title, text, born, secs = self.banner
-            win = self._banner_rect()
-            inner = K.dialog(surf, win, title, icon="power" if title == "WARNUNG" else "note", buttons=None)
             col = K.F_LATE if title in ("WARNUNG", "MISSION VERPASST") else K.F_INK
             if title == "WARNUNG" and int(self.t * 6) % 2:
                 col = K.F_ACCENT
-            if len(lines) == 1:
-                size = K.fit_size(text, BANNER_TEXT_W, sizes=(17, 16, 15))
-                K.t95(surf, text, size, (inner.centerx, inner.centery + 1), color=col, anchor="center")
-            else:
-                for i, ln in enumerate(lines):
-                    K.t95(surf, ln, 15, (inner.centerx, inner.centery + 1 + (i * 2 - 1) * 11), color=col, anchor="center")
-        # target arrow last: on top of bubbles (it moves below the banner by itself)
+            win = self._banner_rect()
+            img = _cached(("banner", title, text, col), lambda: self._make_banner(win.size, title, lines, col))
+            surf.blit(img, win.topleft)
+        # target arrow on top of bubbles (it moves below the banner by itself)
         if m and m.get("target") and self.state == "play":
             sx, sy = self._ws(*m["target"])
             if not VIEW.inflate(-60, -60).collidepoint(sx, sy):
                 self._edge_arrow(surf, sx, sy, m["target"])
+        # escape guidance while the Mietspiegel is up: where to go to get it down (never over the arrow)
+        self.escape_hint = None
+        if self.state == "play" and self.level > 0 and not self.hidden and self.paint is None:
+            self._draw_escape(surf)
         if self.hidden and self.state == "play":
             _label_box(surf, "Untergetaucht. Mate läuft.", (W // 2 + 40, VIEW.bottom - 24), size=15)
         if self.wordart and self.t - self.wordart[1] < 1.3 and self.state == "play":
@@ -2089,6 +2276,98 @@ class KiezKapernGame(party_games._Game):
             age = self.t - born
             pop = 6 if age < 0.12 else 0
             K.wordart(surf, text, size + pop, (W // 2 + 30, VIEW.y + 135 - int(age * 14)), wave=5)
+
+    def _draw_escape(self, surf):
+        """Kiezblock bollards and the Hausprojekt on screen say what they do; the nearest Späti
+        pulses ("Späti: abtauchen!"), or from 2/5 on a green arrow on an inner ring points to it."""
+        self.escape_arrow = None
+        onscreen = VIEW.inflate(-40, -40)
+        banner = self._banner_rect()
+        busy = [MINI.inflate(6, 6)] + ([banner.inflate(4, 4)] if banner else [])
+        if self.arrow_label is not None:
+            arrow = pygame.Rect(0, 0, 48, 48)
+            arrow.center = self.arrow_at
+            busy += [self.arrow_label.inflate(4, 4), arrow]
+
+        def label(text, center):  # only where it hides nothing important (minimap, banner)
+            img = _label_img(text, OUT, ESCAPE_BG, 15)
+            r = img.get_rect(center=(int(center[0]), int(center[1])))
+            r.clamp_ip(VIEW)
+            if r.collidelist(busy) < 0:
+                surf.blit(img, r)
+                busy.append(r)
+                return r
+            return None
+        hard = len(busy)
+        for a, b in POLLER:
+            if self.t >= self.poller_cd.get(a, 0.0):
+                sx, sy = self._ws((a[0] + b[0] + 1) * TS / 2, (a[1] + b[1] + 1) * TS / 2)
+                if onscreen.collidepoint(sx, sy):
+                    label("Kiezblock: -1", (sx, sy - 30))
+        if self.t >= self.hp_cooldown_until:
+            sx, sy = self._ws(*tile_center(*HAUSPROJEKT_DOOR))
+            if onscreen.collidepoint(sx, sy):
+                label("Hausprojekt: -2", (sx, sy - 32))
+        n_soft = len(busy) - hard
+        door = min(self.city.spaeti_doors, key=lambda d: (tile_center(*d)[0] - self.x) ** 2 + (tile_center(*d)[1] - self.y) ** 2)
+        wx, wy = tile_center(*door)
+        if self._near((wx, wy)):
+            self.escape_hint = "here"  # the AKTION button says ABTAUCHEN now
+            return
+        sx, sy = self._ws(wx, wy)
+        pulse = int(abs(math.sin(self.t * 5)) * 6)
+        if onscreen.collidepoint(sx, sy):
+            pygame.draw.circle(surf, OUT, (sx, sy), 20 + pulse, 5)
+            pygame.draw.circle(surf, ESCAPE_BG, (sx, sy), 19 + pulse, 3)
+            busy = busy[:len(busy) - n_soft]  # the Späti label wins over bollard / Hausprojekt labels
+            label("Späti: abtauchen!", (sx, sy - 36 - pulse)) or label("Späti: abtauchen!", (sx, sy + 36 + pulse))
+            self.escape_hint = "marker"
+            return
+        if self.level < 2:
+            return
+        cx, cy = VIEW.center
+        ang = math.atan2(sy - cy, sx - cx)
+        ring = VIEW.inflate(-170, -170)
+        t = min(abs((ring.w / 2) / math.cos(ang)) if math.cos(ang) else 9e9,
+                abs((ring.h / 2) / math.sin(ang)) if math.sin(ang) else 9e9)
+        ax, ay = cx + math.cos(ang) * t, cy + math.sin(ang) * t
+        if ax < 130 and ay < MINI.bottom + 40:
+            ax = 130
+        banner = self._banner_rect()
+        if banner and banner.inflate(30, 30).collidepoint(ax, ay):
+            ay = banner.bottom + 28
+        self.escape_arrow = (pygame.Rect(int(ax) - 30, int(ay) - 30, 60, 60), door)
+        pts = [(ax + math.cos(ang) * 18, ay + math.sin(ang) * 18),
+               (ax + math.cos(ang + 2.4) * 15, ay + math.sin(ang + 2.4) * 15),
+               (ax + math.cos(ang - 2.4) * 15, ay + math.sin(ang - 2.4) * 15)]
+        pygame.draw.polygon(surf, OUT, [(x + 2, y + 2) for x, y in pts])
+        pygame.draw.polygon(surf, ESCAPE_BG, pts)
+        pygame.draw.polygon(surf, OUT, pts, 2)
+        img = _label_img("Späti", OUT, ESCAPE_BG, 15)
+        dist = 26 + abs(math.cos(ang)) * img.get_width() / 2 + abs(math.sin(ang)) * img.get_height() / 2
+        for side in (1, -1):  # behind the arrow, else beyond it
+            r = img.get_rect(center=(int(ax - side * math.cos(ang) * dist), int(ay - side * math.sin(ang) * dist)))
+            r.clamp_ip(pygame.Rect(104, VIEW.y + 8, W - 112, VIEW.h - 16))
+            if r.collidelist(busy[:hard]) < 0:
+                surf.blit(img, r)
+                break
+        self.escape_hint = "arrow"
+        self.escape_at = (int(ax), int(ay))
+
+    def _make_banner(self, size, title, lines, col):
+        s = _canvas(size[0] + 6, size[1] + 6)
+        win = pygame.Rect((0, 0), size)
+        icon = {"WARNUNG": "power", "TIPP": "help"}.get(title, "note")
+        inner = K.dialog(s, win, title, icon=icon if icon != "help" else "note", buttons=None)
+        if title == "TIPP":
+            pygame.draw.rect(s, K.F_TIP, inner)
+        if len(lines) == 1:
+            size_ = K.fit_size(lines[0], BANNER_TEXT_W, sizes=(17, 16, 15))
+            K.t95(s, lines[0], size_, (inner.centerx, inner.centery + 1), color=col, anchor="center")
+        else:
+            for i, ln in enumerate(lines):
+                K.t95(s, ln, 15, (inner.centerx, inner.centery + 1 + (i * 2 - 1) * 11), color=col, anchor="center")
+        return s
 
     def _edge_arrow(self, surf, sx, sy, target):
         cx, cy = VIEW.center
@@ -2128,7 +2407,7 @@ class KiezKapernGame(party_games._Game):
         thermo = None
         if m and m["kind"] == "suppe" and m["phase"] == "deliver":
             thermo = int(m["temp"])
-        mtext = m["text"] if m else "Warte auf die nächste Mission..."
+        mtext = m["text"] if m else "Das Plenum funkt gleich die nächste Mission..."
         if m and m["kind"] == "pfand":
             mtext += f" ({max(0, int(PFAND_SECONDS - (self.schicht - m['born'])))} s)"
         arrow = self.level_arrow[0] if self.level_arrow and self.t < self.level_arrow[1] else None
@@ -2200,20 +2479,15 @@ class KiezKapernGame(party_games._Game):
         label, sub, enabled, kind = self.action_label() if self.state == "play" else ("AKTION", "", False, None)
         pressed = self.pressed[0] if self.pressed and self.t < self.pressed[1] else None
         bell_ready = self.t >= self.bell_cd_until
-        if self.paint is not None:
-            hint = ("Tipp/wisch auf die", "Wand = malen")
-        elif self.state != "play":
-            hint = ("Schicht", "vorbei")
-        elif self.hidden:
-            hint = ("Bots suchen", "woanders")
-        elif any(mb.kind == "shark" for mb in self.mobs):
-            hint = ("Poller & Parks:", "Hai muss draußen")
-        elif kind == "navi" or kind is None:
-            hint = ("Tipp auf die Karte:", "dahin fahren")
-        elif isinstance(kind, tuple) and kind[0] == "spaeti":
-            hint = ("Späti: abtauchen,", "Mietspiegel sinkt")
-        else:
-            hint = ("Rad steht am Ziel:", "AKTION drücken!")
+        hint = self._ctrl_hint(kind)
+        if hint is None:
+            if kind == "navi" or kind is None:
+                hint = ("Tipp auf die Karte:", "dahin fahren")
+            elif isinstance(kind, tuple) and kind[0] == "spaeti":
+                hint = ("Späti: abtauchen,", "Mietspiegel sinkt")
+            else:
+                hint = ("Rad steht am Ziel:", "AKTION drücken!")
+        self.hint = hint  # for dev/test_kiezkapern.py
         key = (label, sub, enabled, hint, pressed, bell_ready)
         if key != self._ctrl_key:
             self._ctrl_key = key
@@ -2224,19 +2498,44 @@ class KiezKapernGame(party_games._Game):
             bell = BELL_RECT.move(0, -CTRL.y)
             K.button(s, bell, "", pressed=pressed == "bell")
             s.blit(bell_icon(36), (bell.centerx - 18, bell.y + 8))
-            K.t95(s, "KLINGEL", 15, (bell.centerx, bell.bottom - 10), anchor="midbottom", color=K.F_INK if bell_ready else (150, 140, 175))
+            K.t95(s, "KLINGEL" if bell_ready else "lädt...", 15, (bell.centerx, bell.bottom - 10), anchor="midbottom",
+                  color=K.F_INK if bell_ready else (150, 140, 175))
             act = ACT_RECT.move(0, -CTRL.y)
             hot = enabled and label != "NAVI"
             K.button(s, act, "", face=(255, 200, 230) if hot else None, pressed=pressed == "act")
             K.t95(s, label, K.fit_size(label, act.w - 16, sizes=(24, 22, 20, 18)), (act.centerx, act.y + 30),
                   anchor="center", color=K.F_ACCENT if enabled else (150, 140, 175))
-            K.t95(s, sub, K.fit_size(sub, act.w - 12, sizes=(15, 14, 13)), (act.centerx, act.bottom - 12), anchor="midbottom", color=K.F_DARK, bold=False)
+            warn = sub.startswith("VORSICHT")
+            K.t95(s, sub, K.fit_size(sub, act.w - 12, sizes=(15, 14, 13)), (act.centerx, act.bottom - 12), anchor="midbottom",
+                  color=K.F_LATE if warn else K.F_DARK, bold=warn)
             mid = pygame.Rect(bell.right + 6, 12, act.x - bell.right - 12, 76)
             for i, ln in enumerate(hint):
                 K.t95(s, ln, K.fit_size(ln, mid.w, sizes=(15, 14, 13, 12)), (mid.centerx, mid.y + 10 + i * 22), anchor="midtop", color=K.F_DARK, bold=i == 0)
         surf.blit(self._ctrl, CTRL.topleft)
-        if self.state == "play" and enabled and label not in ("NAVI",) and int(self.t * 3) % 2 == 0:
+        blink = int(self.t * 3) % 2 == 0
+        if self.state == "play" and enabled and label not in ("NAVI",) and blink:
             pygame.draw.rect(surf, K.PINK, ACT_RECT.inflate(6, 6), 3)
+        if self.state == "play" and self.bot_near and bell_ready and not self.hidden and blink:
+            pygame.draw.rect(surf, K.SUN, BELL_RECT.inflate(6, 6), 3)  # "press me": a bot is in range
+
+    def _ctrl_hint(self, kind):
+        """Two-line contextual hint between KLINGEL and AKTION, or None for the default ones."""
+        if self.paint is not None:
+            return ("Tipp/wisch auf die", "Wand = malen")
+        if self.state != "play":
+            return ("Schicht", "vorbei")
+        if self.hidden:
+            return ("Mate läuft:", "-1 alle 2 s" if self.level else "Raus = RAUS")
+        if self.bot_near and self.t >= self.bell_cd_until:
+            return ("Bot nah! KLINGEL:", "verwirrt ihn 2 s")
+        if self.level and self.chased:
+            return ("Verfolgt! Späti /", "grünen Pfeil tippen") if self.level >= 2 else ("Verfolgt!", "Abhängen / Späti")
+        if self.level:
+            left = max(0, int(math.ceil(self.lose_track_seconds() - self.unseen)))
+            return ("Keiner folgt dir:", f"Miete -1 in {left} s")
+        if any(mb.kind == "shark" for mb in self.mobs):
+            return ("Poller & Parks:", "Hai muss draußen")
+        return None
 
     def _draw_paint(self, surf):
         p = self.paint
@@ -2263,41 +2562,73 @@ class KiezKapernGame(party_games._Game):
 
     # ------------------------------------------------------------ start screen
     def _draw_ready(self, surf):
+        """Start screen: the story in two lines, LOSFAHREN, and a "Wie geht's?" card with one
+        picture per rule (goal, what raises the Mietspiegel, how to get it down, KLINGEL).
+        Everything static is one cached picture; only the bike / shark bob."""
         if self._title_bg is None:
             bg = pygame.Surface((W, H))
             bg.blit(self.city.surf, (0, 0), area=pygame.Rect(30 * TS - W // 2, 16 * TS - 360, W, H))
             fog = pygame.Surface((W, H), pygame.SRCALPHA)
             fog.fill((40, 16, 70, 150))
             bg.blit(fog, (0, 0))
-            big = pygame.transform.rotate(pygame.transform.scale(bike_sprite("paint"), (90, 162)), -20)
-            shark = pygame.transform.rotate(pygame.transform.scale(suv_sprite(), (84, 140)), -20)
+            story = pygame.Rect(16, 238, W - 32, 52)
+            pygame.draw.rect(bg, OUT, story.move(3, 3))
+            K.tooltip(bg, story)
+            K.t95(bg, "Du fährst Lastenrad fürs Hausprojekt.", 16, (story.centerx, story.y + 15), anchor="center")
+            K.t95(bg, "BETONGOLD will den Kiez. Halt 3 Min dagegen!", 16, (story.centerx, story.y + 37), anchor="center",
+                  color=K.F_ACCENT)
+            win = pygame.Rect(16, 304, W - 32, H - 304 - 10)
+            inner = K.dialog(bg, win, "start.exe - Wie geht's?", icon="games", buttons=None)
+            play = K.button(bg, pygame.Rect(inner.x + 6, inner.y + 4, inner.w - 12, 62), "", face=(255, 200, 230))
+            K.t95(bg, "LOSFAHREN", 26, (play.centerx, play.y + 22), anchor="center", color=K.F_ACCENT)
+            K.t95(bg, "Tippen zum Losfahren · 3-Minuten-Schicht", 15, (play.centerx, play.bottom - 8), anchor="midbottom",
+                  color=K.F_DARK, bold=False)
+            gb = pygame.Rect(inner.x + 2, play.bottom + 16, inner.w - 4, 4 * 64 + 14)
+            K.groupbox(bg, gb, "Wie geht's?")
+            rows = [("map", "Karte antippen: Rad fährt hin.", "Am Ziel: AKTION drücken.", K.F_INK),
+                    ("pips", "MIETSPIEGEL steigt: Kapern, Malen,", "Kippen, Erwischtwerden. 5/5 = raus!", K.F_LATE),
+                    ("spaeti", "Runter: Späti antippen, Kiezblock,", "Hausprojekt oder Verfolger abhängen.", (30, 130, 70)),
+                    ("bell", "KLINGEL: Bots in der Nähe", "stehen 2 Sekunden verwirrt rum.", K.F_INK)]
+            for i, (icon, a, b, col) in enumerate(rows):
+                box = pygame.Rect(gb.x + 10, gb.y + 16 + i * 64, 54, 54)
+                self._howto_icon(bg, icon, box)
+                tw = gb.right - box.right - 20
+                K.t95(bg, a, K.fit_size(a, tw, sizes=(15, 14)), (box.right + 10, box.y + 6), color=col)
+                K.t95(bg, b, K.fit_size(b, tw, sizes=(15, 14)), (box.right + 10, box.y + 28), color=K.F_DARK, bold=False)
+            K.t95(bg, party_games.record_line(type(self)), 15, (inner.centerx, inner.bottom - 2), anchor="midbottom",
+                  color=K.F_DARK, bold=False)
+            big = pygame.transform.rotate(pygame.transform.scale(bike_sprite("paint"), (66, 119)), -20)
+            shark = pygame.transform.rotate(pygame.transform.scale(suv_sprite(), (63, 105)), -20)
             self._title_art = (big, shark)
             self._title_bg = bg.convert() if pygame.display.get_surface() else bg
         surf.blit(self._title_bg, (0, 0))
         big, shark = self._title_art
-        bob = int(math.sin(self.last_tick * 3) * 6)
-        K.wordart(surf, "KIEZ", 64, (W // 2 + 40, 76), wave=6)
-        K.wordart(surf, "KAPERN", 64, (W // 2 + 20, 152), wave=6)
-        _label_box(surf, "Die Stadt gehört allen. Hol sie dir zurück.", (W // 2, 214), size=15)
-        surf.blit(big, big.get_rect(center=(130, 330 + bob)))
-        surf.blit(shark, shark.get_rect(center=(380, 360 - bob)))
-        K.speech(surf, pygame.Rect(236, 236, 224, 58), ["INDEX-MIETE!", "INDEX-MIETE!"], (360, 300), size=15)
-        win = pygame.Rect(22, 430, W - 44, 322)
-        inner = K.dialog(surf, win, "start.exe", icon="games", buttons=None)
-        play = K.button(surf, pygame.Rect(inner.x + 8, inner.y + 6, inner.w - 16, 70), "", face=(255, 200, 230))
-        K.t95(surf, "LOSFAHREN", 26, (play.centerx, play.y + 26), anchor="center", color=K.F_ACCENT)
-        K.t95(surf, "3-Minuten-Schicht im Kiez", 15, (play.centerx, play.bottom - 10), anchor="midbottom", color=K.F_DARK, bold=False)
-        gb = pygame.Rect(inner.x + 4, play.bottom + 18, inner.w - 8, 148)
-        K.groupbox(surf, gb, "So geht's")
-        lines = [("Tipp auf die Karte: Rad fährt hin.", True), ("AKTION: kapern, kippen, malen.", False),
-                 ("Mietspiegel 5/5 = rausmodernisiert!", True), ("Runter: Späti, Kiezblock, Hausprojekt.", False),
-                 ("KLINGEL verwirrt Bots.", False)]
-        for i, (ln, bold) in enumerate(lines):
-            K.t95(surf, ln, K.fit_size(ln, gb.w - 20, sizes=(15, 14, 13)), (gb.x + 10, gb.y + 14 + i * 26),
-                  color=K.F_LATE if i == 2 else K.F_INK, bold=bold)
-        K.t95(surf, party_games.record_line(type(self)), 15, (inner.centerx, inner.bottom - 4), anchor="midbottom", color=K.F_DARK, bold=False)
-        if int(self.last_tick * 2) % 2 == 0:
-            otext(surf, self.READY_TEXT, 20, WHITE, (W // 2, 406))
+        bob = int(math.sin(self.last_tick * 3) * 5)
+        surf.blit(big, big.get_rect(center=(58, 168 + bob)))
+        surf.blit(shark, shark.get_rect(center=(424, 160 - bob)))
+        K.wordart(surf, "KIEZ", 56, (W // 2 + 10, 58), wave=6)
+        K.wordart(surf, "KAPERN", 56, (W // 2, 128), wave=6)
+        K.speech(surf, pygame.Rect(262, 182, 150, 36), ["INDEX-MIETE!"], (400, 140), size=15)
+
+    def _howto_icon(self, s, kind, box):
+        """Little pictures for the "Wie geht's?" card."""
+        pygame.draw.rect(s, ASPH, box)
+        pygame.draw.rect(s, OUT, box, 2)
+        cx, cy = box.center
+        if kind == "map":
+            pygame.draw.circle(s, OUT, (cx, cy), 16, 4)
+            pygame.draw.circle(s, K.PINK, (cx, cy), 14, 3)
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                pygame.draw.line(s, K.PINK, (cx + dx * 8, cy + dy * 8), (cx + dx * 22, cy + dy * 22), 3)
+        elif kind == "pips":
+            s.blit(house_pip(True, 24), (box.x + 3, cy - 12))
+            s.blit(house_pip(False, 24), (box.x + 27, cy - 12))
+        elif kind == "spaeti":
+            pygame.draw.rect(s, (60, 30, 90), (box.x + 4, cy - 12, box.w - 8, 24))
+            K.t95(s, "SPÄTI", 14, (cx, cy), color=(255, 230, 90), anchor="center")
+            pygame.draw.rect(s, ESCAPE_BG, (box.x + 4, cy - 12, box.w - 8, 24), 2)
+        elif kind == "bell":
+            s.blit(bell_icon(36), (cx - 18, cy - 18))
 
     # ------------------------------------------------------------ Bilanz
     def _draw_bilanz(self, surf):
@@ -2312,6 +2643,14 @@ class KiezKapernGame(party_games._Game):
             K.t95(surf, "RAUSMODERNISIERT!", 22, (inner.x + 68, y + 4), color=K.F_LATE)
             K.t95(surf, "Deine WG wird jetzt", 16, (inner.x + 68, y + 34))
             K.t95(surf, "Co-Living mit Barista.", 16, (inner.x + 68, y + 56))
+            y += 86
+        else:
+            head, a, b = ENDINGS[self.ending()]
+            done = self.ending() != "open"
+            surf.blit(menu_icon(48) if done else warn_icon(48), (inner.x + 8, y + 4))
+            K.t95(surf, head, 22, (inner.x + 68, y + 4), color=(30, 140, 80) if done else K.F_LATE)
+            K.t95(surf, a, 16, (inner.x + 68, y + 34))
+            K.t95(surf, b, 16, (inner.x + 68, y + 56))
             y += 86
         K.t95(surf, "In die Kiezkasse:", 16, (inner.centerx, y), anchor="midtop")
         K.wordart(surf, fmt_eur(self.score), 48, (inner.centerx, y + 56), wave=4)
