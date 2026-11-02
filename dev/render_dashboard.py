@@ -34,7 +34,7 @@ import pandas as pd  # noqa: E402
 import pygame  # noqa: E402
 
 import PiDashboard as P  # noqa: E402
-import party_games  # noqa: E402
+from games import party_games  # noqa: E402
 
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 FAKE = "--fake" in sys.argv[1:]
@@ -81,7 +81,7 @@ def game_shots(prefix):
     """Every party game after a few simulated seconds of random taps/swipes
     (simulated time: draw_active_game() would update with the wall clock)."""
     import random
-    import tictacdada
+    from games import tictacdada
     tictacdada.AVATARS = []  # placeholders, not the WG's pictures
     rng = random.Random(161)
     area = (0, P.GAME_TITLE_HEIGHT, P.DISPLAY_WIDTH, P.DISPLAY_HEIGHT - P.GAME_TITLE_HEIGHT)
@@ -126,7 +126,7 @@ def game_shots(prefix):
 
 def fake_pinnwand():
     """Made-up Pinnwand messages (no MoaBeats calls)."""
-    import pinnwand
+    from kiosk import pinnwand
     now = datetime.datetime.now()
     P.PINNWAND = pinnwand.Pinnwand("http://127.0.0.1:9", "FlurPi", "x")
     msgs = [("Kim", "Wer hat meine Hafermilch leer gemacht?", False, 95),

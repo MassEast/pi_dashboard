@@ -82,12 +82,27 @@ pip install RPi.GPIO
 
 **Test** before running the dashboard:
 ```bash
-python3 dev/test_pir_sensor.py
+python3 dev/check_pir_sensor.py
 ```
 
 The HC-SR505 Mini has a fixed ~8 second trigger time and no adjustment potentiometers. The dashboard handles debouncing automatically.
 
 If `CLEANING_DAY` is active, PIR motion wake is ignored for that day so the cleaning reminder stays visible when people walk by. Touch wake still works.
+
+## Repository layout
+
+```
+PiDashboard.py        the kiosk app (pygame), started by run_dashboard.sh
+web_server.py         the local web dashboard (Flask) with web/
+run_dashboard.sh      restarts PiDashboard.py after a crash
+pidashboard.desktop   autostart entry (copy to ~/.config/autostart/)
+games/                the games (Start -> Spiele), party_games.py = shared base class
+kiosk/                KiezOS drawing helpers, Pinnwand chat, BVG API, mpv touch script
+stores/               append-only JSON stores in logs/ (moods, uptime, quiz, Bestenlisten)
+tests/                headless checks, run all with: python tests/run_all.py
+dev/                  manual tools: play_<game>.py, render_dashboard.py, config_patch.py, ...
+themes/ fonts/ icons/ images/ media/   assets (images/ = README screenshots)
+```
 
 ## Software
 
@@ -304,7 +319,7 @@ default) and ignore this section entirely.
   ticked (ticking only - completing a chore stays in the MoaBeats app).
 - **Pinnwand**: if `PINNWAND_USER`/`PINNWAND_PASSWORD` are set (a normal MoaBeats account just for
   the display), the bottom strip of `wg.txt` shows the newest message of MoaBeats' `pinnwand` chat
-  channel and an unread badge; tapping it opens `pinnwand.exe` (`pinnwand.py`): the last messages as
+  channel and an unread badge; tapping it opens `pinnwand.exe` (`kiosk/pinnwand.py`): the last messages as
   chat bubbles, and an on-screen keyboard to write one, with an optional name ("Oma Erna: ...").
   Bot reminders and emoji are left out. A wrong password is tried once and then not again (MoaBeats
   would lock the account); without network it just says so and retries.
@@ -390,7 +405,7 @@ default) and ignore this section entirely.
 - Disabled by default. `PATH` should point at a file under `media/`, which is gitignored — nothing placed there is ever committed.
 - Requires a video player binary on the Pi, e.g. `sudo apt install mpv`.
 - Unlike the emergency-exit tap, this gesture never swallows the click, so it can't interfere with real UI near the other three corners.
-- **Closing playback**: `mpv_touch_input.conf` at the repo root binds a tap (`MBTN_LEFT`) to quit, since mpv's default binding for that is just pause and there's no keyboard on the kiosk. Tap anywhere on the video to close it and return to the dashboard. This flag is appended automatically (not part of `PLAYER_CMD`) since its path has to be resolved against the script directory, not whatever the process's cwd happens to be.
+- **Closing playback**: `kiosk/mpv_touch_input.lua` (an mpv script passed via `--script=`) handles taps on the video, since mpv's default binding for a tap is just pause and there's no keyboard on the kiosk: a quick tap closes the video and returns to the dashboard, holding the right/left half fast-forwards/rewinds. The flag is appended automatically (not part of `PLAYER_CMD`) since its path has to be resolved against the script directory, not whatever the process's cwd happens to be.
 - **Emotion prompt**: effectively suppressed during playback — the main loop is blocked on the player process, so no prompt logic runs until it exits.
 - **Screen blanking**: `play_secret_video()` explicitly suspends `xset s`/`dpms` for the duration and restores the normal `DISPLAY_BLANK` timers afterward. Without this, X11's idle timer (which runs independent of the blocked dashboard loop) could still blank the physical display mid-playback on a long, untouched video.
 
@@ -433,36 +448,36 @@ default) and ignore this section entirely.
   games: one of them, rotating daily, as the big "SPIEL DES TAGES", then the others, then a
   "Mehr Spiele..." folder with everything else. Fewer choices, more playing. All games are drawn
   in code, tap/swipe only, no sound:
-  - **ENTEIGNEN!** (`enteignen.py`): swipe to cut flying money, yachts and private jets in half
+  - **ENTEIGNEN!** (`games/enteignen.py`): swipe to cut flying money, yachts and private jets in half
     (but not the neighbours' cat or the BVG bus); uncut money escapes as Steuerflucht. Streaks
     multiply the points, three bosses (das Patriarchat, Mietenhai AG, das Kapital) show up during a run.
-  - **KIEZ-KURIER** (`kiezkurier.py`): one new route puzzle a day, the same for the whole WG:
+  - **KIEZ-KURIER** (`games/kiezkurier.py`): one new route puzzle a day, the same for the whole WG:
     drag the Lastenrad from the Kollektiv to the Späti through every free street exactly once;
     Baustellen are closed, at a Kreisel you must turn, on a Fahrradstraße go straight, an
     Einbahnstraße is left in the arrow's direction. Generated from the date and checked by a
     solver to have exactly one solution; fastest time of the day wins.
-  - **LASTENRAD-SIMULATOR** (`lastenrad/`, needs `pymunk`): load an open cargo bike for a DIY rave
+  - **LASTENRAD-SIMULATOR** (`games/lastenrad/`, needs `pymunk`): load an open cargo bike for a DIY rave
     without anything falling off: drag each item from the top bar onto the stack, rotate it with
     two fingers (or the round-arrow buttons), let go - real 2D physics (pymunk) takes over, the
     bike slowly tips under an off-centre load. Endlos, Tagesladung (same items for the whole WG
     each day), Party (2-6 players take turns, whoever drops something is out) and a first Story
-    level; every Bestenliste entry keeps a picture of its stack. Tuning in `lastenrad/config.py`,
-    items in `lastenrad/items.py`, design spec by a friend of the WG. If `pymunk` isn't installed
+    level; every Bestenliste entry keeps a picture of its stack. Tuning in `games/lastenrad/config.py`,
+    items in `games/lastenrad/items.py`, design spec by a friend of the WG. If `pymunk` isn't installed
     the dashboard starts without this game (logged).
-  - **TIC-TAC-DADA** (`tictacdada.py`): tic-tac-toe for 2 Spieler*innen with the WG's MoaBeats
-    profile pictures (pixelated) or X/O, a different win line every round (`tictacdada_lines.py`)
+  - **TIC-TAC-DADA** (`games/tictacdada.py`): tic-tac-toe for 2 Spieler*innen with the WG's MoaBeats
+    profile pictures (pixelated) or X/O, a different win line every round (`games/tictacdada_lines.py`)
     and dadaist rule breaks. `TICTACTOE.SPECIAL_LINES` adds lines for one random round between
     `ROUNDS` per session (`{winner}` / `{loser}` = the players' names, checked at start) - keep
     lines naming real people in your config, not in the code.
-  - **KIEZ KAPERN** (`kiezkapern.py`): a 3-minute shift on a Lastenrad in a made-up Kiez: tap the
+  - **KIEZ KAPERN** (`games/kiezkapern.py`): a 3-minute shift on a Lastenrad in a made-up Kiez: tap the
     map to ride there, free Lastenräder, deliver Soli-Suppe, topple a luxury-loft crane, and keep
     the Mietspiegel (the wanted level) down.
-  - **PATRIAPUTT** (`patriaputt.py`): brick-breaker against a slowly descending wall of
+  - **PATRIAPUTT** (`games/patriaputt.py`): brick-breaker against a slowly descending wall of
     patriarchy, with ball upgrades.
-  - In the folder: **KIEZBLOCK** (`games_kiezblock.py`, tap SUVs into Hochbeete), **STAPEL-TURM** (tap to drop a Plattenbau floor on the
-    tower) and **FLAPPY BVG** (hop a BVG bus through Baustellen) from `party_games.py`, and MERZ (below).
+  - In the folder: **KIEZBLOCK** (`games/kiezblock.py`, tap SUVs into Hochbeete), **STAPEL-TURM** (tap to drop a Plattenbau floor on the
+    tower) and **FLAPPY BVG** (hop a BVG bus through Baustellen) from `games/party_games.py`, and MERZ (below).
 - Every finished round is kept with its score and time in `logs/game_highscores.json`
-  (`highscore_store.py`, gitignored), the name is optional (on-screen keyboard in the game-over
+  (`stores/highscore_store.py`, gitignored), the name is optional (on-screen keyboard in the game-over
   dialog, also kept if the game is closed mid-entry). The game-over dialog shows the whole list,
   scrollable, so a statistic over the year is possible later. The menu/game closes after
   `IDLE_TIMEOUT_SECONDS` without a tap or when the display blanks.

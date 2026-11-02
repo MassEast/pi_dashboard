@@ -19,7 +19,7 @@ Split the work into two phases so the weather layout fix can be committed separa
 **Relevant files**
 - `/Users/jw/Documents/pi_dashboard/PiDashboard.py` — weather surface rendering, forecast text, emotion prompt layout, keyboard/touch handling for the custom row.
 - `/Users/jw/Documents/pi_dashboard/config.json` — editable emotion catalog, default order, emoji, color, and any sentiment metadata.
-- `/Users/jw/Documents/pi_dashboard/emotion_store.py` — event storage/aggregation for deriving usage frequency and replaying event history.
+- `stores/emotion_store.py` — event storage/aggregation for deriving usage frequency and replaying event history.
 - `/Users/jw/Documents/pi_dashboard/web_server.py` — API surface if the web dashboard needs to serve catalog metadata or custom emotion updates.
 - `/Users/jw/Documents/pi_dashboard/web/app.js` — legend ordering, palette/emoji mapping, and fallback rendering based on catalog metadata.
 - `/Users/jw/Documents/pi_dashboard/web/index.html` — any extra UI text or controls on the dashboard.

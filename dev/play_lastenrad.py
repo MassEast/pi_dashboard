@@ -25,10 +25,10 @@ sys.path.insert(0, REPO)
 
 import pygame  # noqa: E402
 
-import kiezos as K  # noqa: E402
-import party_games  # noqa: E402
-from lastenrad import LastenradGame, menu_icon_surface  # noqa: E402
-from lastenrad import config as C  # noqa: E402
+from kiosk import kiezos as K  # noqa: E402
+from games import party_games  # noqa: E402
+from games.lastenrad import LastenradGame, menu_icon_surface  # noqa: E402
+from games.lastenrad import config as C  # noqa: E402
 
 TITLE_H = 36  # = PiDashboard.GAME_TITLE_HEIGHT
 

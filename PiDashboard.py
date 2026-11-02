@@ -48,19 +48,19 @@ import requests
 from PIL import Image, ImageDraw
 import qrcode
 
-from emotion_store import append_emotion_event, read_emotion_events
-from quiz_store import read_quiz_results, submit_quiz_result
-from uptime_store import append_uptime_event, last_channel_is_up
-from utils import get_stop_data
-import kiezos as K
-import party_games
-import pinnwand
-import enteignen
-import games_kiezblock
-import tictacdada
-import patriaputt
-import kiezkapern
-import kiezkurier
+from stores.emotion_store import append_emotion_event, read_emotion_events
+from stores.quiz_store import read_quiz_results, submit_quiz_result
+from stores.uptime_store import append_uptime_event, last_channel_is_up
+from kiosk.bvg import get_stop_data
+from kiosk import kiezos as K
+from games import party_games
+from kiosk import pinnwand
+from games import enteignen
+from games import kiezblock
+from games import tictacdada
+from games import patriaputt
+from games import kiezkapern
+from games import kiezkurier
 
 # Allow the system to manage blanking
 os.environ["SDL_VIDEO_ALLOW_SCREENSAVER"] = "1"
@@ -581,7 +581,7 @@ SECRET_VIDEO_PLAYER_CMD = SECRET_VIDEO_CONFIG.get(
 # hold-to-scrub, see mpv_touch_input.lua. Kept out of PLAYER_CMD so its path
 # can be resolved against PATH here rather than baked as a fragile relative
 # string in config.json.
-SECRET_VIDEO_SCRIPT_ARG = f"--script={PATH}mpv_touch_input.lua"
+SECRET_VIDEO_SCRIPT_ARG = f"--script={PATH}kiosk/mpv_touch_input.lua"
 SECRET_VIDEO_GESTURE_TIMEOUT_SECONDS = SECRET_VIDEO_CONFIG.get("GESTURE_TIMEOUT_SECONDS", 3)
 # Order of corners that must be tapped in sequence to trigger playback.
 SECRET_VIDEO_GESTURE_SEQUENCE = ["TL", "TR", "BR", "BL"]
@@ -618,8 +618,8 @@ WIFI_PASSWORD = WIFI_CONFIG.get("PASSWORD", "")
 GAMES_CONFIG = config.get("GAMES", {})
 GAMES_ENABLED = GAMES_CONFIG.get("ENABLED", False)
 party_games.GAMES.append(enteignen.EnteignenGame)  # swipe game: needs drag()/release(), see the event loop
-party_games.GAMES.append(games_kiezblock.KiezblockGame)
-K.ICON_MAKERS["kiezblock"] = games_kiezblock.menu_icon
+party_games.GAMES.append(kiezblock.KiezblockGame)
+K.ICON_MAKERS["kiezblock"] = kiezblock.menu_icon
 party_games.GAMES.append(tictacdada.TicTacDadaGame)
 K.ICON_MAKERS["tictacdada"] = tictacdada.menu_icon
 party_games.GAMES.append(patriaputt.PatriaputtGame)  # brick-breaker: paddle follows drag()
@@ -631,7 +631,7 @@ K.ICON_MAKERS["kiezkurier"] = kiezkurier.menu_icon_surface
 # LASTENRAD-SIMULATOR needs pymunk (requirements.txt). Without it (e.g. a Pi that hasn't run
 # pip install yet) the dashboard still starts, just without this one game - logged loudly.
 try:
-    import lastenrad
+    from games import lastenrad
 except ImportError as e:
     lastenrad = None
     logger.error(f"LASTENRAD-SIMULATOR disabled, import failed ({e}) - run: ./venv/bin/pip install -r requirements.txt")
@@ -1124,7 +1124,7 @@ MERZ_WANDER_SPEED = 55.0  # px/sec
 # on how high/low he's allowed to go, regardless of screen aspect ratio.
 # Top is low enough that even the longest quote's bubble fits above his head
 # (it may cover the hits/timer row, but never him - asserted in
-# dev/test_party_games.py); bottom keeps him clear of the building.
+# tests/test_party_games.py); bottom keeps him clear of the building.
 MERZ_BOUNDS_TOP_FRACTION = 0.36
 MERZ_BOUNDS_BOTTOM_FRACTION = 0.52
 # The whole scene below the KiezOS title bar + hits/timer row sits this much

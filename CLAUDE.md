@@ -11,12 +11,19 @@ by [WeatherPi_TFT](https://github.com/LoveBootCaptain/WeatherPi_TFT).
 
 ## Running
 
-No test suite or linter/build step exists in this repo. `dev/test_pir_sensor.py` and
-`dev/llm_smoke_test.py` are manual smoke-test scripts, not an automated suite — run them directly
-with `python3` when touching PIR sensor or LLM-classification code.
-`dev/test_merz_burn_and_quiz_zoom.py`, `dev/test_moabeats_checklist.py` and `dev/test_party_games.py` are headless
-(`SDL_VIDEODRIVER=dummy`) assert-based checks of the overlays — run them when touching that code.
-`dev/test_kiezos_loop.py` runs the real `loop()` headless and drives it with posted touch events (Start
+Layout: entry points at the top level (`PiDashboard.py`, `web_server.py`, `run_dashboard.sh`,
+`pidashboard.desktop` - keep them there, the Pi's autostart copy and `config.json["THEME"]` point at
+these paths), code in `games/` (one module per game, `games/party_games.py` = shared `_Game` base),
+`kiosk/` (KiezOS drawing helpers, Pinnwand, BVG API), `stores/` (JSON logs shared by both processes),
+headless tests in `tests/`, manual tools and `play_<game>.py` scripts in `dev/`. Modules import each
+other package-qualified (`from games import party_games`, `from kiosk import kiezos as K`); scripts in
+`tests/`/`dev/` put the repo root on `sys.path` first.
+
+Tests: `tests/run_all.py [filter ...]` runs every `tests/test_*.py` headless (`SDL_VIDEODRIVER=dummy`,
+one process each, assert-based, ~3 min) and prints a summary - run it before every commit.
+`dev/check_pir_sensor.py` and `dev/llm_smoke_test.py` are manual smoke-test scripts (real hardware /
+real LLM) - run them directly when touching PIR sensor or LLM-classification code.
+`tests/test_kiezos_loop.py` runs the real `loop()` headless and drives it with posted touch events (Start
 menu, games, detail views, blank/wake, PIR surprise -> emotion prompt); `dev/render_dashboard.py <dir>`
 saves a screenshot of every screen (`--fake` renders the README's home screen with made-up data).
 Run both after any UI change and look at the screenshots.
@@ -98,7 +105,7 @@ through the JSON files in `logs/`:
   feature) straight onto `tft_surf` (static part cached, rebuilt every 2 s), then
   `draw_dashboard_overlays()` draws whatever popup/fullscreen view is open. All drawing helpers
   (bevels, windows, buttons, the self-drawn pixel icons, 7-segment clock, bus map) live in
-  **`kiezos.py`**; its palette comes from `themes/kiezos.json`'s `KIEZOS` block. The windows' x/o/_
+  **`kiosk/kiezos.py`**; its palette comes from `themes/kiezos.json`'s `KIEZOS` block. The windows' x/o/_
   title buttons do dadaist things (message boxes, `sev.exe`, a "Bin gleich wieder da." note); o or a
   title-bar double-tap opens the detail views (`HOME_WINDOW`: wetter details, `karte.exe`, big clock).
   `karte.exe` is drawn from `config.json["BVG"]["MAP"]` (gitignored on purpose: it shows where the WG
@@ -112,13 +119,13 @@ through the JSON files in `logs/`:
   Chart.js from a CDN) plus a small JSON API (`/api/emotions/raw`, `/api/emotions/bars`,
   `/api/emotions/catalog`, `/api/uptime`) that reads and aggregates the same store files
   `PiDashboard.py` writes to.
-- **`emotion_store.py`** / **`uptime_store.py`** — the shared persistence layer: append-only JSON
+- **`stores/emotion_store.py`** / **`stores/uptime_store.py`** — the shared persistence layer: append-only JSON
   event logs (one file each) with a lock-protected read-modify-write-via-tmp-file-then-`os.replace`
-  pattern for crash-safety, plus a corrupt-file quarantine/recovery path. `emotion_store.py`'s
+  pattern for crash-safety, plus a corrupt-file quarantine/recovery path. `stores/emotion_store.py`'s
   store filename is parameterized (`store_file=` kwarg, defaulting to `STORE_FILE`) specifically so
   callers can point at an alternate/archived event log (e.g. `ARCHIVE_STORE_FILE`) without
   duplicating the read/aggregation logic.
-- **`utils.py`** — thin wrapper around the BVG (Berlin transit) `v6.bvg.transport.rest` API,
+- **`kiosk/bvg.py`** — thin wrapper around the BVG (Berlin transit) `v6.bvg.transport.rest` API,
   used only by `PiDashboard.py`.
 - **MoaBeats integration** (optional, config-gated via `config.json["MOABEATS"]["ENABLED"]`) —
   `PiDashboard.py` polls an external MoaBeats WG-chores instance's `GET /api/display/status` and
@@ -129,20 +136,20 @@ through the JSON files in `logs/`:
   and an overlay opened any day via Start -> Putzdienste. Chores with
   a checklist show `done/total` and open a detail screen on tap (`draw_chore_detail()`), which
   ticks/unticks sub-items via `PATCH /api/display/chores/{id}/checklist` — tick only, completing
-  a chore stays in the app on purpose. `dev/test_moabeats_checklist.py` tests it headless against
-  `dev/fake_moabeats_server.py`, which also runs standalone for a local look (point
+  a chore stays in the app on purpose. `tests/test_moabeats_checklist.py` tests it headless against
+  `tests/fake_moabeats_server.py`, which also runs standalone for a local look (point
   `MOABEATS.API_URL` at it; never test ticking against the real instance).
 - **Spiele** — Start -> Spiele opens a submenu (and a game's MENÜ button the `spiele.exe` window) with
   only the config `GAMES.FEATURED` games (one of them, rotating daily, as "Spiel des Tages",
   `games_menu_split()`) plus a "Mehr Spiele..." folder (`GAMES_MENU_PAGE` "more") with the rest: MERZ
   (in `PiDashboard.py`) plus the party games, all behind one `GAMES` config section: STAPEL-TURM and
-  FLAPPY BVG (`party_games.py`), ENTEIGNEN! (`enteignen.py`, swipe-to-cut), KIEZBLOCK
-  (`games_kiezblock.py`), TIC-TAC-DADA (`tictacdada.py` + `tictacdada_lines.py`, 2 players with the
+  FLAPPY BVG (`games/party_games.py`), ENTEIGNEN! (`games/enteignen.py`, swipe-to-cut), KIEZBLOCK
+  (`games/kiezblock.py`), TIC-TAC-DADA (`games/tictacdada.py` + `games/tictacdada_lines.py`, 2 players with the
   WG's MoaBeats avatars; special lines naming real people only in config `GAMES.TICTACTOE`),
-  PATRIAPUTT (`patriaputt.py`, brick-breaker), KIEZ KAPERN (`kiezkapern.py`, tap-to-drive
-  Kiez sandbox), KIEZ-KURIER (`kiezkurier.py`, daily route puzzle seeded by the date, own
+  PATRIAPUTT (`games/patriaputt.py`, brick-breaker), KIEZ KAPERN (`games/kiezkapern.py`, tap-to-drive
+  Kiez sandbox), KIEZ-KURIER (`games/kiezkurier.py`, daily route puzzle seeded by the date, own
   `IDLE_TIMEOUT_SECONDS` class attribute read by `update_games_timeout()`) and LASTENRAD-SIMULATOR
-  (`lastenrad/` package, pymunk physics, spec: docs/future_massive_prompt.txt (local only, gitignored);
+  (`games/lastenrad/` package, pymunk physics, spec: docs/future_massive_prompt.txt (local only, gitignored);
   import guarded in PiDashboard so a missing pymunk only disables this game; `GAMES.LASTENRAD.DEBUG`
   shows its physics overlay). Shared `_Game` hooks: `score_key()` (one list per mode), `round_stored()`,
   `entry_image()` (tap a Bestenliste row to see its picture), `NAME_MAX`, `finger()` (raw multi-touch,
@@ -150,13 +157,13 @@ through the JSON files in `logs/`:
   optional `drag(x, y)`/`release()` — PiDashboard routes MOUSEMOTION with the finger down and
   MOUSEBUTTONUP to the active game) registered in `PiDashboard.py` with `party_games.GAMES.append`
   and its icon in `kiezos.ICON_MAKERS`. Every finished round (score, time, optional name) is kept via
-  `highscore_store.py` (`logs/game_highscores.json`); the KiezOS game-over dialog shows the whole,
-  scrollable Bestenliste. Each game has a headless `dev/test_<game>.py`, most a `dev/play_<game>.py`.
-- `pinnwand.py` — pinnwand.exe: MoaBeats' "pinnwand" chat channel read/written via a guest account
+  `stores/highscore_store.py` (`logs/game_highscores.json`); the KiezOS game-over dialog shows the whole,
+  scrollable Bestenliste. Each game has a headless `tests/test_<game>.py`, most a `dev/play_<game>.py`.
+- `kiosk/pinnwand.py` — pinnwand.exe: MoaBeats' "pinnwand" chat channel read/written via a guest account
   (config `MOABEATS.PINNWAND_USER/PASSWORD`), opened from the strip at the bottom of wg.txt;
-  `dev/test_pinnwand.py` runs against `dev/fake_moabeats_server.py`.
+  `tests/test_pinnwand.py` runs against `tests/fake_moabeats_server.py`.
 - Night mode (config `NIGHT_MODE`): the finished frame is multiplied with a warm tint in the time
-  window (`apply_night_mode()`, once per frame right before `display.update()`; `dev/test_night_mode.py`).
+  window (`apply_night_mode()`, once per frame right before `display.update()`; `tests/test_night_mode.py`).
 - Two built-in safety mechanisms exist specifically because this runs headless/unattended on a
   touchscreen with no keyboard: an emergency-exit corner tap (top-left corner, 5 rapid taps
   anywhere within the hitbox — deliberately generous, not pixel-exact, because real touchscreen

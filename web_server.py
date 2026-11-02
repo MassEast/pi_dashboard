@@ -6,8 +6,8 @@ import socket
 
 from flask import Flask, jsonify, request, send_from_directory
 
-from emotion_store import ARCHIVE_STORE_FILE, STORE_FILE, build_bar_series, get_recent_events
-from uptime_store import build_internet_outage_log, build_uptime_summary
+from stores.emotion_store import ARCHIVE_STORE_FILE, STORE_FILE, build_bar_series, get_recent_events
+from stores.uptime_store import build_internet_outage_log, build_uptime_summary
 
 PATH = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(PATH, "config.json")
