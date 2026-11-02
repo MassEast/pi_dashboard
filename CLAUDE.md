@@ -141,8 +141,12 @@ through the JSON files in `logs/`:
   WG's MoaBeats avatars; special lines naming real people only in config `GAMES.TICTACTOE`),
   PATRIAPUTT (`patriaputt.py`, brick-breaker), KIEZ KAPERN (`kiezkapern.py`, tap-to-drive
   Kiez sandbox), KIEZ-KURIER (`kiezkurier.py`, daily route puzzle seeded by the date, own
-  `IDLE_TIMEOUT_SECONDS` class attribute read by `update_games_timeout()`) and LASTENRAVE
-  (`lastenrave.py`, crane stacking with its own small physics). Each is a `party_games._Game` subclass (`update(now)`, `draw(surf)`, `tap(x, y)`,
+  `IDLE_TIMEOUT_SECONDS` class attribute read by `update_games_timeout()`) and LASTENRAD-SIMULATOR
+  (`lastenrad/` package, pymunk physics, spec: docs/future_massive_prompt.txt (local only, gitignored);
+  import guarded in PiDashboard so a missing pymunk only disables this game; `GAMES.LASTENRAD.DEBUG`
+  shows its physics overlay). Shared `_Game` hooks: `score_key()` (one list per mode), `round_stored()`,
+  `entry_image()` (tap a Bestenliste row to see its picture), `NAME_MAX`, `finger()` (raw multi-touch,
+  routed from SDL FINGER events), `IDLE_TIMEOUT_SECONDS`; names typed within 2 min are pre-filled. Each is a `party_games._Game` subclass (`update(now)`, `draw(surf)`, `tap(x, y)`,
   optional `drag(x, y)`/`release()` — PiDashboard routes MOUSEMOTION with the finger down and
   MOUSEBUTTONUP to the active game) registered in `PiDashboard.py` with `party_games.GAMES.append`
   and its icon in `kiezos.ICON_MAKERS`. Every finished round (score, time, optional name) is kept via

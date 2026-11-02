@@ -18,6 +18,7 @@ logs/ (highscore_store.py); the game-over panel shows the whole Bestenliste
 
 import math
 import random
+import time
 
 import pygame
 
@@ -40,6 +41,10 @@ MAX_DT_SECONDS = 0.05
 NAME_MAX_CHARS = 10
 KEYBOARD_ROWS = ["QWERTZUIOP", "ASDFGHJKL", "YXCVBNMÄÖÜ"]  # umlauts where row 3 has room (10 keys max)
 ANON_LABEL = "anonym"  # list label of rounds saved without a name
+# A name typed within this many seconds is pre-filled in the next round's
+# name entry (any game), so a group playing in a row doesn't retype it.
+NAME_PREFILL_SECONDS = 120
+_LAST_NAME = {"name": None, "at": 0.0}  # wall-clock time of the last saved name
 
 # Set by configure() from PiDashboard.py: game name -> all rounds, best first.
 LOG_DIR = None
@@ -86,6 +91,7 @@ class _Game:
     ICON = "games"  # kiezos.menu_icon kind for spiele.exe and the title bar
     OVER_TOP = 16  # y of the game-over dialog (MerzResult draws on the full screen, below MERZ's title bar)
     READY_TEXT = "Tippen zum Starten"
+    READY_HOWTO = ()  # up to 2 short lines under the title: the one rule, for first-timers
     SCORE_LABEL = "Punkte"
     SCORE_UNIT = ""  # appended in lists/record lines, e.g. " s"
     LOWER_IS_BETTER = False
@@ -93,6 +99,8 @@ class _Game:
     @staticmethod
     def format_score(score):
         return str(score)
+
+    NAME_MAX = NAME_MAX_CHARS  # longest name the keyboard takes
 
     def __init__(self, width, height, regular_font_path, bold_font_path):
         self.width = width
@@ -118,6 +126,8 @@ class _Game:
         self.list_top = None  # first visible Bestenliste row; None = scrolled to this round
         self._over_key = None  # what the cached game-over dialog (_over_surf) shows
         self._over_surf = None
+        self.row_rects = []  # (rect, entry) of the visible Bestenliste rows
+        self.viewing = None  # (entry, picture) shown over the list after tapping a row that has one
 
     def tap(self, x, y):
         """Returns "close", "menu" or None (tap used by the game)."""
@@ -129,6 +139,9 @@ class _Game:
             if self.name_entry:
                 self._name_tap(x, y)
                 return None
+            if self.viewing is not None:  # the picture window: any tap closes it
+                self.viewing = None
+                return None
             hit = next((k for k, rect in self.buttons.items() if rect.collidepoint((x, y))), None)
             if hit == "again":
                 return self.again()
@@ -136,6 +149,13 @@ class _Game:
                 return "menu"
             if hit == "name":
                 self.name_entry = True
+                if _LAST_NAME["name"] and time.time() - _LAST_NAME["at"] <= NAME_PREFILL_SECONDS:
+                    self.name_text = _LAST_NAME["name"][:self.NAME_MAX]
+            elif hit is None:
+                row = next((entry for rect, entry in self.row_rects if rect.collidepoint((x, y))), None)
+                picture = self.entry_image(row) if row is not None else None
+                if picture is not None:
+                    self.viewing = (row, picture)
             elif hit in ("up", "down"):
                 step = max(1, self.list_rows - 1)
                 self.list_top = max(0, min(self.list_top + (step if hit == "down" else -step), self.list_max_top))
@@ -157,9 +177,26 @@ class _Game:
     def release(self):
         """Finger lifted (PiDashboard: MOUSEBUTTONUP). Tap games ignore it."""
 
+    def finger(self, kind, finger_id, x, y):
+        """Raw multi-touch ("down"/"move"/"up", SDL finger id, game coords) for
+        games using a second finger; the first finger also comes as tap/drag."""
+
     def _entry_extra(self):
         """Extra fields stored with this round's highscore entry."""
         return {}
+
+    def score_key(self):
+        """Which Bestenliste this round belongs to (games with several modes
+        keep one list per mode)."""
+        return self.NAME
+
+    def round_stored(self, entry_id):
+        """Called right after this round was stored (e.g. to save a picture with it)."""
+
+    def entry_image(self, entry):
+        """A picture belonging to a Bestenliste entry (Surface) or None; rows
+        with one get a small mark and open it on tap."""
+        return None
 
     def _draw_entry_mark(self, surf, entry, x, y):
         """Small mark left of the score in a Bestenliste row (x = its right edge)."""
@@ -179,19 +216,21 @@ class _Game:
         self.name_entry = False
         self.name_text = ""
         HIGHSCORES, self.place, self.entry_id = highscore_store.submit_result(
-            LOG_DIR, self.NAME, self.score, self.LOWER_IS_BETTER, self._entry_extra()
+            LOG_DIR, self.score_key(), self.score, self.LOWER_IS_BETTER, self._entry_extra()
         )
+        self.viewing = None
+        self.round_stored(self.entry_id)
 
     def _name_tap(self, x, y):
         token = next((t for rect, t in self.key_rects if rect.collidepoint((x, y))), None)
         if token == "back":
             self.name_text = self.name_text[:-1]
         elif token == "space":
-            if self.name_text and not self.name_text.endswith(" ") and len(self.name_text) < NAME_MAX_CHARS:
+            if self.name_text and not self.name_text.endswith(" ") and len(self.name_text) < self.NAME_MAX:
                 self.name_text += " "
         elif token == "ok":
             self.save_name()
-        elif token is not None and len(self.name_text) < NAME_MAX_CHARS:
+        elif token is not None and len(self.name_text) < self.NAME_MAX:
             self.name_text += token
 
     def save_name(self):
@@ -204,8 +243,9 @@ class _Game:
             return
         name = self.name_text.strip()
         if name:
-            HIGHSCORES = highscore_store.set_name(LOG_DIR, self.NAME, self.entry_id, name)
+            HIGHSCORES = highscore_store.set_name(LOG_DIR, self.score_key(), self.entry_id, name)
             self.named = True
+            _LAST_NAME.update(name=name, at=time.time())
         self.name_entry = False
         self.list_top = None  # back to this round's row
 
@@ -260,10 +300,15 @@ class _Game:
             self._text(surf, "x", 28, BLACK, center=self.close_rect.center)
 
     def _draw_ready(self, surf):
-        self._draw_outlined(surf, self.NAME, 44, WHITE, center=(self.width // 2, int(self.height * 0.22)))
+        howto = self.READY_HOWTO
+        title_y = int(self.height * (0.20 if howto else 0.22))
+        self._draw_outlined(surf, self.NAME, 44, WHITE, center=(self.width // 2, title_y))
+        for i, line in enumerate(howto):
+            self._draw_outlined(surf, line, 20, WHITE, center=(self.width // 2, title_y + 50 + i * 28))
         blink = int(self.last_tick * 2) % 2 == 0
         if blink:
-            self._draw_outlined(surf, self.READY_TEXT, 26, BVG_YELLOW, center=(self.width // 2, int(self.height * 0.30)))
+            y = title_y + 50 + len(howto) * 28 + 14 if howto else int(self.height * 0.30)
+            self._draw_outlined(surf, self.READY_TEXT, 26, BVG_YELLOW, center=(self.width // 2, y))
 
     def _draw_over(self, surf):
         """KiezOS game-over: a Win95 dialog with the result and the whole
@@ -272,8 +317,8 @@ class _Game:
         when something on it changes (~30 text renders per frame are slow on
         the Pi); the game behind keeps animating."""
         key = (self.width, self.height, self.name_entry, self.name_text, self.list_top, self.place, self.named,
-               self.entry_id, self.over_text, self.score, id(top_list(self.NAME)), len(top_list(self.NAME)),
-               self.last_tick - self.over_at >= GAME_OVER_TAP_DELAY_SECONDS)
+               self.entry_id, self.over_text, self.score, id(top_list(self.score_key())), len(top_list(self.score_key())),
+               self.last_tick - self.over_at >= GAME_OVER_TAP_DELAY_SECONDS, self.viewing and self.viewing[0].get("id"))
         if key != self._over_key:
             if self._over_surf is None or self._over_surf.get_size() != (self.width, self.height):
                 self._over_surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
@@ -282,9 +327,25 @@ class _Game:
                 self._draw_name_entry(self._over_surf)
             else:
                 self._draw_leaderboard(self._over_surf)
+                if self.viewing is not None:
+                    self._draw_picture(self._over_surf)
             # list_top is set while drawing (None -> this round's row): key it as drawn
             self._over_key = key[:4] + (self.list_top,) + key[5:]
         surf.blit(self._over_surf, (0, 0))
+
+    def _draw_picture(self, surf):
+        """The picture of a tapped Bestenliste entry in its own window."""
+        entry, picture = self.viewing
+        pw, ph = picture.get_size()
+        win = pygame.Rect(0, 0, min(self.width - 40, pw + 24), min(self.height - 120, ph + 92))
+        win.center = (self.width // 2, self.height // 2)
+        inner = K.dialog(surf, win, f"{entry_name(entry)}: {self.format_score(entry['score'])}{self.SCORE_UNIT}",
+                         icon=self.ICON, buttons=None)
+        img = picture if (pw <= inner.w and ph <= inner.h - 30) else pygame.transform.smoothscale(
+            picture, _fit_size((pw, ph), (inner.w, inner.h - 30)))
+        surf.blit(img, img.get_rect(midtop=(inner.centerx, inner.y)))
+        K.t95(surf, "Tippen zum Schließen", 15, (inner.centerx, inner.bottom - 4), color=K.F_DARK, bold=False,
+              anchor="midbottom")
 
     def _exe(self):
         return self.NAME.lower().replace(" ", "-").replace("!", "") + ".exe"
@@ -299,8 +360,8 @@ class _Game:
         K.t95(surf, line, K.fit_size(line, inner.w - 8, sizes=(16, 15, 14, 13), bold=False),
               (inner.centerx, inner.y + 56), color=K.F_DARK, bold=False, anchor="midtop")
         field = pygame.Rect(inner.x, inner.y + 88, inner.w, 54)
-        K.textfield(surf, field, self.name_text, "Name (optional)", warn=len(self.name_text) >= NAME_MAX_CHARS)
-        K.t95(surf, f"{len(self.name_text)}/{NAME_MAX_CHARS}", 15, (field.right - 10, field.centery), color=K.F_DARK,
+        K.textfield(surf, field, self.name_text, "Name (optional)", warn=len(self.name_text) >= self.NAME_MAX)
+        K.t95(surf, f"{len(self.name_text)}/{self.NAME_MAX}", 15, (field.right - 10, field.centery), color=K.F_DARK,
               bold=False, anchor="midright")
         self.key_rects = K.keyboard95(surf, pygame.Rect(inner.x, field.bottom + 16, inner.w, inner.bottom - field.bottom - 16),
                                       KEYBOARD_ROWS, [("<-", "back", 0.28), ("Leertaste", "space", 0.44), ("OK", "ok", 0.28)])
@@ -318,7 +379,8 @@ class _Game:
         score = self.format_score(self.score) + self.SCORE_UNIT
         K.t95(surf, score, K.fit_size(score, inner.w - 20, sizes=(46, 40, 34, 28)), (inner.centerx, y + 2), anchor="midtop")
         y += 54
-        label = self.SCORE_LABEL + (f"  ·  Platz {self.place + 1}" if self.place is not None else "")
+        n = len(top_list(self.score_key()))
+        label = self.SCORE_LABEL + (f"  ·  Platz {self.place + 1} von {n}" if self.place is not None else "")
         K.t95(surf, label, 16, (inner.centerx, y), color=K.F_DARK, bold=False, anchor="midtop")
         y += 24
         if self.place == 0:
@@ -336,7 +398,7 @@ class _Game:
                                             size=18, enabled=ready)
             bottom -= 58
 
-        entries = top_list(self.NAME)
+        entries = top_list(self.score_key())
         box = pygame.Rect(inner.x + 2, y + 10, inner.w - 4, bottom - y - 14)
         K.groupbox(surf, box, f"Bestenliste ({len(entries)} Runde{'' if len(entries) == 1 else 'n'})")
         area = pygame.Rect(box.x + 8, box.y + 18, box.w - 16 - (50 if len(entries) > 1 else 0), box.h - 26)
@@ -349,6 +411,7 @@ class _Game:
         if not entries:
             K.t95(surf, "Noch keine Einträge", 17, area.center, color=K.F_DARK, bold=False, anchor="center")
         rank_w = K.font(17).size(f"{len(entries)}.")[0]
+        self.row_rects = []
         for i in range(self.list_top, min(len(entries), self.list_top + self.list_rows)):
             entry = entries[i]
             row = pygame.Rect(area.x + 3, area.y + 3 + (i - self.list_top) * row_h, area.w - 6, row_h)
@@ -364,6 +427,7 @@ class _Game:
             name_x = row.x + 14 + rank_w
             K.t95(surf, _fit(K.font(17), name, score_rect.left - 30 - name_x), 17, (name_x, row.centery), color=color, anchor="midleft")
             self._draw_entry_mark(surf, entry, score_rect.left - 8, row.centery)
+            self.row_rects.append((row, entry))
         if len(entries) > 1:
             half_h = (area.height - 6) // 2
             up = pygame.Rect(area.right + 6, area.y, 44, half_h)
@@ -380,6 +444,12 @@ _FOG_COLOR = (30, 12, 50, 150)  # dims the game behind the game-over dialog
 _OUTLINED = {}  # (text, size, color) -> outlined text, see _Game._draw_outlined
 _BARRIERS = {}  # (w, h) -> striped FLAPPY BVG barrier body
 _PUFFS = {}  # (radius, alpha) -> exhaust cloud
+
+
+def _fit_size(size, box):
+    """size scaled down to fit box, aspect kept."""
+    k = min(box[0] / size[0], box[1] / size[1], 1.0)
+    return max(1, int(size[0] * k)), max(1, int(size[1] * k))
 
 
 def _fit(font, text, max_width):
@@ -410,7 +480,9 @@ class StackGame(_Game):
     ICON = "stack"
     NAME = "STAPEL-TURM"
     DESCRIPTION = "Plattenbau hochstapeln"
-    READY_TEXT = "Tippen zum Absetzen"
+    READY_TEXT = "Tippen zum Starten"
+    READY_HOWTO = ("Ein Stockwerk fährt hin und her.", "Tippe, wenn es überm Turm ist!")
+    GUIDE_FLOORS = 3  # the first floors get dashed lines showing where the tower is
     SCORE_LABEL = "Stockwerke"
 
     FLOOR_HEIGHT = 36
@@ -563,6 +635,12 @@ class StackGame(_Game):
         if self.state == "play":
             level = len(self.floors)
             self._draw_floor(surf, self.moving_x, self._floor_top(level), self.floors[-1][1], self._floor_color(level))
+            if self.score < self.GUIDE_FLOORS:  # aim help for first-timers: the tower's edges, dashed, over the floor
+                top_x, top_w, _ = self.floors[-1]
+                y0, y1 = int(self._floor_top(level)) - 16, int(self._floor_top(level - 1))
+                for gx in (int(top_x), int(top_x + top_w) - 2):
+                    for y in range(y0, y1, 10):
+                        pygame.draw.line(surf, (255, 230, 140), (gx, y), (gx, min(y1, y + 5)), 3)
 
         if self.last_tick < self.perfect_flash_until:
             self._draw_outlined(surf, self.perfect_text, 34, BVG_YELLOW, center=(self.width // 2, int(self.height * 0.25)))
@@ -582,15 +660,20 @@ class FlappyGame(_Game):
     NAME = "FLAPPY BVG"
     DESCRIPTION = "Bus durch die Baustellen"
     READY_TEXT = "Tippen zum Abfahren"
+    READY_HOWTO = ("Jeder Tipp: der Bus hüpft.", "Ab durch die Lücken!")
     SCORE_LABEL = "Haltestellen"
 
     GRAVITY = 1500.0  # px/s²
     FLAP_VY = -500.0
     MAX_FALL_VY = 750.0
     BARRIER_WIDTH = 74
-    START_GAP = 230
+    # Forgiving start, then ramping: the gap shrinks to MIN_GAP by ~22 points
+    # and the height jump between gaps grows from START_GAP_SHIFT to
+    # MAX_GAP_SHIFT by ~10 (first-timers died at the 1st/2nd barrier: it could
+    # spawn 200 px away from the bus with a near-minimal gap).
+    START_GAP = 260
     MIN_GAP = 175
-    GAP_SHRINK_PER_POINT = 3
+    GAP_SHRINK_PER_POINT = 4
     BARRIER_SPACING = 270  # px between barriers
     START_SPEED = 165.0
     SPEED_PER_POINT = 3.0
@@ -598,6 +681,8 @@ class FlappyGame(_Game):
     # Max vertical jump between two consecutive gaps: a bus can only climb
     # so fast between barriers, bigger jumps were unbeatable.
     MAX_GAP_SHIFT = 170
+    START_GAP_SHIFT = 80
+    GAP_SHIFT_PER_POINT = 9
     BUS_W, BUS_H = 64, 34
     STREET_HEIGHT = 80
     # Purely cosmetic nonsense, no effect on the score.
@@ -637,9 +722,10 @@ class FlappyGame(_Game):
         # Keep the gap clear of the HUD (score) at the top and the street.
         low = 150 + gap / 2
         high = self._street_top() - 40 - gap / 2
-        if self.barriers:
-            previous = self.barriers[-1]["gap_y"]
-            low, high = max(low, previous - self.MAX_GAP_SHIFT), min(high, previous + self.MAX_GAP_SHIFT)
+        # the first gap sits around the bus's hover height, then each one near the last
+        previous = self.barriers[-1]["gap_y"] if self.barriers else self.height * 0.42
+        shift = min(self.MAX_GAP_SHIFT, self.START_GAP_SHIFT + self.GAP_SHIFT_PER_POINT * self.score)
+        low, high = max(low, previous - shift), min(high, previous + shift)
         self.barriers.append({"x": x, "gap_y": random.uniform(low, high), "gap": gap, "scored": False})
 
     def start(self):
@@ -771,7 +857,9 @@ class FlappyGame(_Game):
                 barrier["scored"] = True
                 self.score += 1
                 self.popups.append({"text": "+1", "x": self.bus_x, "y": self.bus_y - 30, "age": 0.0})
-                if self.score % 5 == 0:
+                if self.score == 1:
+                    self._say("Läuft! Weiter tippen!")  # first-timers: yes, keep tapping
+                elif self.score % 5 == 0:
                     self._say(random.choice(FLAPPY_SCORE_LINES))
         self.barriers = [b for b in self.barriers if b["x"] + self.BARRIER_WIDTH > -10]
         if self.barriers[-1]["x"] < self.width + 60 - self.BARRIER_SPACING:
@@ -970,7 +1058,7 @@ class FlappyGame(_Game):
 STACK_OVER_LINES = [
     "Eingestürzt!",
     "Baustopp!",
-    "Statiker sagt nein.",
+    "Die Statikerin sagt nein.",
     "Abriss genehmigt.",
     "Das wird nix mit der Miete.",
 ]

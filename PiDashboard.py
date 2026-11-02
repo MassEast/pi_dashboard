@@ -61,7 +61,6 @@ import tictacdada
 import patriaputt
 import kiezkapern
 import kiezkurier
-import lastenrave
 
 # Allow the system to manage blanking
 os.environ["SDL_VIDEO_ALLOW_SCREENSAVER"] = "1"
@@ -629,8 +628,17 @@ party_games.GAMES.append(kiezkapern.KiezKapernGame)  # tap-to-drive Kiez sandbox
 K.ICON_MAKERS["kiezkapern"] = kiezkapern.menu_icon
 party_games.GAMES.append(kiezkurier.KiezKurierGame)  # daily route puzzle: drag()/release() draw the route
 K.ICON_MAKERS["kiezkurier"] = kiezkurier.menu_icon_surface
-party_games.GAMES.append(lastenrave.LastenraveGame)  # crane stacking: tap drops, drag() moves the crane
-K.ICON_MAKERS["lastenrave"] = lastenrave.menu_icon_surface
+# LASTENRAD-SIMULATOR needs pymunk (requirements.txt). Without it (e.g. a Pi that hasn't run
+# pip install yet) the dashboard still starts, just without this one game - logged loudly.
+try:
+    import lastenrad
+except ImportError as e:
+    lastenrad = None
+    logger.error(f"LASTENRAD-SIMULATOR disabled, import failed ({e}) - run: ./venv/bin/pip install -r requirements.txt")
+if lastenrad is not None:
+    lastenrad.config.DEBUG = GAMES_CONFIG.get("LASTENRAD", {}).get("DEBUG", False)
+    party_games.GAMES.append(lastenrad.LastenradGame)  # drag + two-finger rotation, pymunk physics
+    K.ICON_MAKERS["lastenrad"] = lastenrad.menu_icon_surface
 # Special win lines (may name real flatmates) live in the gitignored config only.
 tictacdada.SPECIAL_LINES = GAMES_CONFIG.get("TICTACTOE", {}).get("SPECIAL_LINES", {})
 for _line in tictacdada.SPECIAL_LINES.get("WIN", []):  # config boundary: fail at start, not at a win
@@ -648,7 +656,7 @@ GAMES_IDLE_TIMEOUT_SECONDS = GAMES_CONFIG.get("IDLE_TIMEOUT_SECONDS", 60)
 # spiele.exe shows only these (config order; one of them is "Spiel des Tages",
 # rotating daily) plus a "Mehr Spiele..." folder with the rest: a clear "play
 # THIS now" instead of a 100-in-1 game box. Names = game NAMEs, "MERZ" for MERZ.
-GAMES_FEATURED = GAMES_CONFIG.get("FEATURED", ["ENTEIGNEN!", "KIEZ-KURIER", "LASTENRAVE", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT"])
+GAMES_FEATURED = GAMES_CONFIG.get("FEATURED", ["ENTEIGNEN!", "KIEZ-KURIER", "LASTENRAD-SIMULATOR", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT"])
 party_games.configure(GAMES_LOG_PATH)
 # Frame rate while a game is open - the dashboard's own DISPLAY.FPS is
 # kept low (10 on the Pi) to save CPU, which makes taps/throws feel laggy
@@ -6715,6 +6723,17 @@ def loop():
                 if ACTIVE_GAME is not None and event.buttons[0]:
                     GAMES_LAST_ACTIVITY_TS = time.time()
                     ACTIVE_GAME.drag(event.pos[0], event.pos[1] - GAME_TITLE_HEIGHT)
+
+            elif event.type in (pygame.FINGERDOWN, pygame.FINGERMOTION, pygame.FINGERUP):
+                # Raw multi-touch (the Waveshare panel reports up to 5 fingers) for games that
+                # use a second finger (LASTENRAD-SIMULATOR: two-finger rotation). The first
+                # finger also arrives as mouse events, which everything else keeps using.
+                # x/y come normalised 0..1; games should only rely on relative movement.
+                if ACTIVE_GAME is not None:
+                    GAMES_LAST_ACTIVITY_TS = time.time()
+                    kind = {pygame.FINGERDOWN: "down", pygame.FINGERMOTION: "move", pygame.FINGERUP: "up"}[event.type]
+                    ACTIVE_GAME.finger(kind, event.finger_id, event.x * DISPLAY_WIDTH,
+                                       event.y * DISPLAY_HEIGHT - GAME_TITLE_HEIGHT)
 
             elif event.type == pygame.KEYDOWN:
 

@@ -155,6 +155,8 @@ def add_name(game, text, ok=True):
     game.tap(*game.buttons["name"].center)
     assert game.name_entry
     game.draw(P.tft_surf)
+    for _ in range(len(game.name_text)):  # a recently used name comes pre-filled
+        press(game, "back")
     type_name(game, text, ok)
     game.draw(P.tft_surf)
 
@@ -417,11 +419,13 @@ def test_over_dialog_all_games():
         assert game.name_entry and {"Ä", "Ö", "Ü"} <= {t for _, t in game.key_rects}
         assert not any(r.colliderect(exit_zone) for r, _ in game.key_rects)
         assert all(screen.contains(r) for r, _ in game.key_rects)
-        type_name(game, "ÖZLEMWWWWWWWW", ok=False)
-        assert game.name_text == "ÖZLEMWWWWW" and len(game.name_text) == party_games.NAME_MAX_CHARS
+        for _ in range(len(game.name_text)):  # the previous game's name comes pre-filled
+            press(game, "back")
+        type_name(game, "ÖZLEM" + "W" * 20, ok=False)
+        assert game.name_text == ("ÖZLEM" + "W" * 20)[:game.NAME_MAX] and len(game.name_text) == game.NAME_MAX
         game._draw_over(surf)
         press(game, "ok")
-        assert party_games.top_list(cls.NAME)[game.place]["name"] == "ÖZLEMWWWWW"
+        assert party_games.top_list(game.score_key())[game.place]["name"] == ("ÖZLEM" + "W" * 20)[:game.NAME_MAX]
     # name-entry line: the unit once ("7.0 s", not "7.0 s Sekunden"), the label when there is no unit
     log = []
     orig = P.K.t95
@@ -461,6 +465,154 @@ def test_outlined_and_barrier_cache():
     assert body.get_size() == (74, 300) and body.get_at((37, 150))[:3] in ((255, 255, 255), (220, 30, 30))
     assert party_games.FlappyGame._barrier_body(74, 300) is body, "barrier not cached"
     print("CACHES: outlined text position, barrier body ok", flush=True)
+
+
+def test_hooks():
+    """_Game hooks for games with modes/pictures: score_key() picks the list,
+    round_stored() gets the id, NAME_MAX caps the keyboard, a name saved in
+    the last NAME_PREFILL_SECONDS is pre-filled, entry_image() rows open
+    their picture on tap and any tap closes it."""
+    import time as _time
+    stored = []
+    pic = pygame.Surface((120, 200))
+    pic.fill((200, 80, 160))
+
+    class Modes(party_games.StackGame):
+        NAME_MAX = 15
+
+        def score_key(self):
+            return "STAPEL-TURM TEST-MODUS"
+
+        def round_stored(self, entry_id):
+            stored.append(entry_id)
+
+        def entry_image(self, entry):
+            return pic if entry.get("id") in stored else None
+
+    game = Modes(P.DISPLAY_WIDTH, P.DISPLAY_HEIGHT - P.GAME_TITLE_HEIGHT, P.FONT_PATH + P.FONT_MEDIUM, P.FONT_PATH + P.FONT_BOLD)
+    game.reset(1000.0)
+    game.tap(1, 400)
+    game.score = 4
+    game.game_over("test")
+    assert stored == [game.entry_id], stored
+    assert party_games.top_list("STAPEL-TURM TEST-MODUS")[0]["id"] == game.entry_id
+    assert all(e.get("id") != game.entry_id for e in party_games.top_list("STAPEL-TURM")), "went into the wrong list"
+    game.update(game.last_tick + 1.0)
+    game.draw(P.tft_surf)
+    # picture: tap the own row
+    row = next(rect for rect, entry in game.row_rects if entry.get("id") == game.entry_id)
+    game.tap(*row.center)
+    assert game.viewing is not None and game.viewing[1] is pic
+    game.draw(P.tft_surf)
+    shot("11_hook_picture.png")
+    game.tap(10, 10)
+    assert game.viewing is None
+    # 15 characters, then the name is remembered for the next round
+    party_games._LAST_NAME.update(name=None, at=0.0)
+    game.draw(P.tft_surf)
+    game.tap(*game.buttons["name"].center)
+    assert game.name_entry and game.name_text == ""
+    game.draw(P.tft_surf)
+    for _ in range(20):
+        press(game, "A")
+    assert game.name_text == "A" * 15, game.name_text
+    press(game, "ok")
+    assert party_games._LAST_NAME["name"] == "A" * 15
+    game.again()
+    game.tap(1, 400)
+    game.score = 2
+    game.game_over("test")
+    game.update(game.last_tick + 1.0)
+    game.draw(P.tft_surf)
+    game.tap(*game.buttons["name"].center)
+    assert game.name_text == "A" * 15, "recent name not pre-filled"
+    game.save_name()
+    party_games._LAST_NAME["at"] = _time.time() - party_games.NAME_PREFILL_SECONDS - 1
+    game.again()
+    game.tap(1, 400)
+    game.game_over("test")
+    game.update(game.last_tick + 1.0)
+    game.draw(P.tft_surf)
+    game.tap(*game.buttons["name"].center)
+    assert game.name_text == "", "old name must not be pre-filled"
+    party_games._LAST_NAME.update(name=None, at=0.0)
+    print("HOOKS: score_key/round_stored/NAME_MAX/prefill 2 min/entry pictures ok", flush=True)
+
+
+def test_first_timers_and_curve():
+    """Ready screens state the one rule; STAPEL-TURM shows aim guides on the
+    first floors only; FLAPPY BVG starts forgiving (first gap near the bus,
+    wide gaps, small height jumps) and ramps to the old difficulty; the
+    game-over label says "Platz n von N"; gendered texts."""
+    fonts = (P.FONT_PATH + P.FONT_MEDIUM, P.FONT_PATH + P.FONT_BOLD)
+    h = P.DISPLAY_HEIGHT - P.GAME_TITLE_HEIGHT
+    for cls in (party_games.StackGame, party_games.FlappyGame):
+        assert len(cls.READY_HOWTO) == 2 and cls.READY_TEXT
+        game = cls(P.DISPLAY_WIDTH, h, *fonts)
+        game.show_close = False
+        surf = pygame.Surface((game.width, game.height))
+        for line in cls.READY_HOWTO:
+            assert game.fonts.get(20, True).size(line)[0] <= game.width - 24, line
+        game.last_tick = 0.1  # blink on
+        game.draw(surf)
+    assert party_games._Game.READY_HOWTO == (), "other games keep their ready screen"
+
+    stack = party_games.StackGame(P.DISPLAY_WIDTH, h, *fonts)
+    stack.show_close = False
+    surf = pygame.Surface((stack.width, stack.height))
+    guide = (255, 230, 140)
+    gx = int(stack.floors[-1][0])
+    stack.tap(1, 400)
+    stack.draw(surf)
+    y = int(stack._floor_top(1)) - 14
+    assert any(surf.get_at((gx + dx, y + dy))[:3] == guide for dx in (0, 1, 2) for dy in range(10)), "no aim guide"
+    for _ in range(stack.GUIDE_FLOORS):
+        stack.moving_x = stack.floors[-1][0]
+        stack.play_tap()
+    stack.draw(surf)
+    gx, y = int(stack.floors[-1][0]), int(stack._floor_top(len(stack.floors))) - 14
+    assert not any(surf.get_at((gx + dx, y + dy))[:3] == guide for dx in (0, 1, 2) for dy in range(10)), "guide stays"
+
+    flappy = party_games.FlappyGame(P.DISPLAY_WIDTH, h, *fonts)
+    random.seed(7)
+    hover = flappy.height * 0.42
+    for _ in range(200):  # first barrier: near where the bus hovers, wide gap
+        flappy.barriers, flappy.score = [], 0
+        flappy._spawn_barrier(600)
+        b = flappy.barriers[0]
+        assert abs(b["gap_y"] - hover) <= flappy.START_GAP_SHIFT + 1e-6 and b["gap"] == flappy.START_GAP == 260, b
+    for score, shift, gap in ((0, 80, 260), (5, 125, 240), (10, 170, 220), (25, 170, 175)):
+        flappy.barriers, flappy.score = [], score
+        flappy._spawn_barrier(600)
+        for _ in range(300):
+            flappy._spawn_barrier(600)
+            a, b = flappy.barriers[-2:]
+            assert abs(b["gap_y"] - a["gap_y"]) <= shift + 1e-6 and b["gap"] == gap, (score, a, b)
+            assert b["gap_y"] - gap / 2 >= 150 and b["gap_y"] + gap / 2 <= flappy._street_top() - 40
+    flappy.reset(0.0)
+    flappy.tap(1, 400)
+    flappy.barriers = [{"x": -200.0, "gap_y": flappy.bus_y, "gap": 260, "scored": False},
+                       {"x": 600.0, "gap_y": flappy.bus_y, "gap": 260, "scored": False}]
+    flappy.update(0.05)
+    assert flappy.score == 1 and flappy.bubble_text == "Läuft! Weiter tippen!", flappy.bubble_text
+
+    game = open_game("STAPEL-TURM")
+    game.tap(1, 400)
+    game.moving_x = P.DISPLAY_WIDTH * 2
+    game.tap(1, 400)
+    log, orig = [], P.K.t95
+    P.K.t95 = lambda surf, s, *a, **kw: log.append(s) or orig(surf, s, *a, **kw)
+    try:
+        game.update(game.last_tick + 1.0)
+        game.draw(pygame.Surface((game.width, game.height)))
+    finally:
+        P.K.t95 = orig
+    n = len(party_games.top_list("STAPEL-TURM"))
+    assert f"Stockwerke  ·  Platz {game.place + 1} von {n}" in log, [s for s in log if "Platz" in s]
+    P.close_games("test")
+    for line in party_games.STACK_OVER_LINES + party_games.FLAPPY_OVER_LINES:
+        assert "Statiker " not in line, line
+    print("FIRST-TIMERS: how-to, aim guides, forgiving FLAPPY start + ramp, 'Platz n von N' ok", flush=True)
 
 
 def entries_names(name):
@@ -543,6 +695,8 @@ def test_merz_highscores():
             P.handle_merz_click(*result.buttons["name"].center)
             assert result.name_entry
             P.draw_merz_overlay()
+            for _ in range(len(result.name_text)):  # a recently used name comes pre-filled
+                merz_press(result, "back")
             for token in text:
                 merz_press(result, token)
             shot("11_merz_name_entry.png") if text == "FIX" else None
@@ -574,6 +728,7 @@ def test_merz_highscores():
     assert len(party_games.top_list(name)) == 6 and party_games.top_list(name)[-1]["score"] == 999.0
 
     # Closed (x) mid-entry: the typed name is kept.
+    party_games._LAST_NAME.update(name=None, at=0.0)  # no pre-filled name here
     result = merz_win(10.0)
     P.draw_merz_overlay()
     P.handle_merz_click(*result.buttons["name"].center)
@@ -664,8 +819,10 @@ if __name__ == "__main__":
     test_flappy()
     test_highscores()
     test_v1_store()
+    test_hooks()
     test_over_dialog_all_games()
     test_outlined_and_barrier_cache()
+    test_first_timers_and_curve()
     test_merz_hud()
     test_merz_highscores()
     test_timeouts()

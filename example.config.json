@@ -188,7 +188,8 @@
     "PASSWORD": "your-wifi-password"
   },
   "GAMES": {
-        "FEATURED": ["ENTEIGNEN!", "KIEZ-KURIER", "LASTENRAVE", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT"],
+        "FEATURED": ["ENTEIGNEN!", "KIEZ-KURIER", "LASTENRAD-SIMULATOR", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT"],
+        "LASTENRAD": {"DEBUG": false},
         "TICTACTOE": {
             "SPECIAL_LINES": {"ROUNDS": [6, 12], "WIN": ["{winner}, deine Oma wäre stolz auf dich."], "PLAY": ["Oma freut sich, dass ihr spielt."]}
         },

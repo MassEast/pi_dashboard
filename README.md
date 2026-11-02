@@ -18,9 +18,9 @@
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------- |
 | <img src="images/game_tictacdada.png" alt="TIC-TAC-DADA" width="240">   | <img src="images/game_patriaputt.png" alt="PATRIAPUTT" width="240"> | <img src="images/game_kiezkapern.png" alt="KIEZ KAPERN" width="240"> |
 
-| KIEZ-KURIER (daily puzzle)                                              | LASTENRAVE                                                               |
+| KIEZ-KURIER (daily puzzle)                                              | LASTENRAD-SIMULATOR                                                      |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| <img src="images/game_kiezkurier.png" alt="KIEZ-KURIER" width="240">    | <img src="images/game_lastenrave.png" alt="LASTENRAVE" width="240">      |
+| <img src="images/game_kiezkurier.png" alt="KIEZ-KURIER" width="240">    | <img src="images/game_lastenrad.png" alt="LASTENRAD-SIMULATOR" width="240"> |
 
 ## Abstract
 In here, I explain (for my future me and anyone else reading this, feel free to share!) how to successfully set up on a Pi 4B with the Waveshare 4,3 Zoll QLED Touch Display (DSI, 800x480) and Pi OS 20241119 (bookworm).
@@ -425,7 +425,7 @@ default) and ignore this section entirely.
   "ENABLED": false,
   "IDLE_TIMEOUT_SECONDS": 60,
   "FPS": 30,
-  "FEATURED": ["ENTEIGNEN!", "KIEZ-KURIER", "LASTENRAVE", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT"],
+  "FEATURED": ["ENTEIGNEN!", "KIEZ-KURIER", "LASTENRAD-SIMULATOR", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT"],
   "TICTACTOE": {"SPECIAL_LINES": {"ROUNDS": [6, 12], "WIN": ["{winner}, deine Oma wäre stolz auf dich."], "PLAY": ["Oma freut sich, dass ihr spielt."]}}
 }
 ```
@@ -441,9 +441,14 @@ default) and ignore this section entirely.
     Baustellen are closed, at a Kreisel you must turn, on a Fahrradstraße go straight, an
     Einbahnstraße is left in the arrow's direction. Generated from the date and checked by a
     solver to have exactly one solution; fastest time of the day wins.
-  - **LASTENRAVE** (`lastenrave.py`): stack ever more absurd rave gear (speakers, Mischpult,
-    Discokugel, XXL-Pfeffi, Sperrmüll-Sofa, ...) from a swinging crane onto a Lastenrad riding over
-    Kopfsteinpflaster, without the pile tipping over.
+  - **LASTENRAD-SIMULATOR** (`lastenrad/`, needs `pymunk`): load an open cargo bike for a DIY rave
+    without anything falling off: drag each item from the top bar onto the stack, rotate it with
+    two fingers (or the round-arrow buttons), let go - real 2D physics (pymunk) takes over, the
+    bike slowly tips under an off-centre load. Endlos, Tagesladung (same items for the whole WG
+    each day), Party (2-6 players take turns, whoever drops something is out) and a first Story
+    level; every Bestenliste entry keeps a picture of its stack. Tuning in `lastenrad/config.py`,
+    items in `lastenrad/items.py`, design spec by a friend of the WG. If `pymunk` isn't installed
+    the dashboard starts without this game (logged).
   - **TIC-TAC-DADA** (`tictacdada.py`): tic-tac-toe for 2 Spieler*innen with the WG's MoaBeats
     profile pictures (pixelated) or X/O, a different win line every round (`tictacdada_lines.py`)
     and dadaist rule breaks. `TICTACTOE.SPECIAL_LINES` adds lines for one random round between
