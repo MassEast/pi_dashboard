@@ -1873,7 +1873,9 @@ pygame.mouse.set_visible(config["DISPLAY"]["MOUSE"])
 pygame.display.set_caption("PiDashboard")
 
 
-def quit_all():
+def quit_all(exit_code=0):
+    """exit_code 0 = deliberate stop (5-tap exit, ESC): run_dashboard.sh leaves it
+    closed. Anything else makes the wrapper start it again."""
     pygame.display.quit()
     pygame.quit()
 
@@ -1890,7 +1892,7 @@ def quit_all():
         except Exception as e:
             logger.error(f"Error during GPIO cleanup: {e}")
 
-    sys.exit()
+    sys.exit(exit_code)
 
 
 def secret_video_corner_for_click(mx, my):
@@ -6648,8 +6650,12 @@ def loop():
         for event in pygame.event.get():
 
             if event.type == pygame.QUIT:
+                # SDL turns SIGTERM/SIGINT (pkill, systemd, reboot) into QUIT. Exit
+                # non-zero (143 = terminated) so run_dashboard.sh restarts it -
+                # only the 5-tap exit and ESC mean "stay closed".
+                logger.info("QUIT event (signal / window close) - exiting with 143 so the wrapper restarts")
                 running = False
-                quit_all()
+                quit_all(143)
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 # The event's own position, not pygame.mouse.get_pos() (the

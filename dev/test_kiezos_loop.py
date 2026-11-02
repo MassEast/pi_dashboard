@@ -172,7 +172,10 @@ threading.Thread(target=driver, daemon=True).start()
 P.images = P.image_factory(P.ICON_PATH)
 try:
     P.loop()
-except SystemExit:
-    pass
+except SystemExit as e:
+    # QUIT = pkill/SIGTERM: must be non-zero, or run_dashboard.sh won't restart it
+    STEPS.append("QUIT exits non-zero")
+    if e.code in (0, None):
+        FAILURE.append(f"QUIT exited with {e.code!r}, wrapper would not restart")
 print(f"{len(STEPS) - len(FAILURE)}/{len(STEPS)} steps ok" + (f", FAILED: {FAILURE}" if FAILURE else ""), flush=True)
 os._exit(1 if FAILURE else 0)
