@@ -28,9 +28,9 @@ announced by a warning box, with a Win95 health-bar window:
   breaks a letter out. Hitting the ground: -1 heart, it comes back. Minions:
   Grillzange, Protein-Shaker, ALPHA-Mikro, Krawatte, V12-Schlüssel, Bizeps-
   Sticker, Herrenwitz, Zigarre.
-- MIETENHAI AG (~3:00): hydra tower -> 2 Tochter-GmbHs -> 4 Briefkasten-
+- MIETENHAI AG (~2:00): hydra tower -> 2 Tochter-GmbHs -> 4 Briefkasten-
   firmen, all juggled; small pieces falling = +3 Steuerflucht.
-- DAS KAPITAL (~5:00): hovering golden piggy bank shielded by orbiting
+- DAS KAPITAL (~3:15): hovering golden piggy bank shielded by orbiting
   protected things; hits through the gaps spill money, it spits Mieterhöhungen.
 
 The cut is juicy on purpose: 3-frame hit-stop, white flash, slash + glint,
@@ -1260,10 +1260,11 @@ STREAK_STEP = 5  # every 5 cuts in a row: points multiplier +1 (up to STREAK_MAX
 STREAK_MAX_MULT = 5
 RAIN_GAP = (10.0, 15.0)  # a GELDREGEN (row of 4-6 coins/notes, made for one big swipe) every so often
 COMBO_HEART = 5  # a KIEZFEST of 5+ in one swipe -> +1 heart
-RAMP_SECONDS = 150.0  # after 2 min the waves keep getting denser/nastier by one step per this many s
-BOSS_TIMES = (45.0, 180.0, 300.0)  # then a boss every BOSS_REPEAT s, one level stronger per cycle
-BOSS_REPEAT = 110.0
-BOSS_GAP = 30.0  # at least this long between a victory and the next boss
+RAMP_SECONDS = 75.0  # after RAMP_FROM s the waves keep getting denser/nastier by one step per this many s
+RAMP_FROM = 75.0
+BOSS_TIMES = (45.0, 120.0, 195.0)  # then a boss every BOSS_REPEAT s, one level stronger per cycle
+BOSS_REPEAT = 80.0
+BOSS_GAP = 25.0  # at least this long between a victory and the next boss
 BOSS_CALM = 3.0  # normal waves stop this long before a boss, so the screen clears
 WARN_SECONDS = 2.6
 VICTORY_SECONDS = 4.4
@@ -2231,9 +2232,9 @@ class EnteignenGame(party_games._Game):
     def _spawn_wave(self):
         """1-3 things thrown up from below the Kiez; more, more often and more
         protected stuff the longer the run goes (after the 3rd boss: more)."""
-        k = min(1.0, self.play_t / 120.0)
-        e = min(1.0, max(0.0, self.play_t - 300.0) / 240.0)  # escalation after boss 3
-        o = max(0.0, self.play_t - 120.0) / RAMP_SECONDS  # never stops: every run ends eventually (Ju: was barely losable)
+        k = min(1.0, self.play_t / 90.0)
+        e = min(1.0, max(0.0, self.play_t - 195.0) / 150.0)  # escalation after boss 3
+        o = max(0.0, self.play_t - RAMP_FROM) / RAMP_SECONDS  # never stops: every run ends eventually (Ju: was barely losable)
         sizes = [1, 1, 1, 2, 2] if k < 0.4 else [1, 1, 2, 2, 3] if e < 0.3 and o < 0.5 else [1, 2, 2, 3, 3] if o < 1.5 else [2, 2, 3, 3, 4]
         protected_chance = min(0.4, 0.10 + 0.07 * k + 0.07 * e + 0.05 * o) if self.play_t >= PROTECTED_FROM else 0.0
         kinds = list(MONEY)

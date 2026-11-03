@@ -3096,6 +3096,12 @@ def on_motion_detected():
     LAST_TOUCH_TIME = time.time()  # Reset touch timer
     if DISPLAY_BLANK:
         wake_display("motion", reason="pir_sensor")
+    else:
+        # The X server turns the panel off on its own idle timer (xset s/dpms), which only
+        # counts touches. Without this, people walking by kept the app "awake" (so no
+        # wake_display) while X switched the panel off - dark until 3 min without motion.
+        os.system("xset s reset")
+        os.system("xset dpms force on")
 
 
 def get_brightness():

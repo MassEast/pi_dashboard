@@ -729,8 +729,8 @@ def test_balance():
     slow, good = runs["slow"], runs["good"]
     assert statistics.median(r[1] for r in slow) >= 40, "first 45 s must be learnable"
     assert 75 <= statistics.median(r[0] for r in slow) <= 300, "a first-timer loses within a few minutes"
-    assert statistics.median(r[0] for r in good) > 2.5 * statistics.median(r[0] for r in slow)
-    assert statistics.median(r[0] for r in good) < 600, "good players must lose eventually (Ju 2026-11-03: was barely losable)"
+    assert statistics.median(r[0] for r in good) > 2.0 * statistics.median(r[0] for r in slow), "skill must matter"
+    assert statistics.median(r[0] for r in good) < 360, "rounds stay short, good players lose within ~6 min (Ju 2026-11-03)"
 
 
 test_play()
