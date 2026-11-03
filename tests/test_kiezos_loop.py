@@ -83,7 +83,7 @@ def driver():
         check("Start opens the menu", P.START_MENU_OPEN)
         tap(next(r for r, a in P.START_MENU_RECTS if a == "games_sub"))
         tap(next(r for r, a in P.START_MENU_RECTS if a == "game:__more__"))
-        check("Mehr Spiele... opens the spiele.exe folder", P.GAMES_MENU_OPEN and P.GAMES_MENU_PAGE == "more")
+        check("Alle Spiele... opens spiele.exe scrolled to the rest", P.GAMES_MENU_OPEN and P.GAMES_MENU_SCROLL > 0)
         tap(next(r for r, k in P.GAMES_MENU_RECTS if k == "STAPEL-TURM"))
         check("STAPEL-TURM running", P.ACTIVE_GAME is not None and P.ACTIVE_GAME.NAME == "STAPEL-TURM")
         check("emergency exit off in the game", not P.emergency_exit_active())

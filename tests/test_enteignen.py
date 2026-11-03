@@ -6,7 +6,7 @@ start via spiele.exe, first swipe starts the run, a swipe through money cuts
 it (two halves, hit-stop, +1 point), a resting finger never cuts, the blade
 bounces off protected things (-1 heart, dead until lifted), 3+ cuts in one
 swipe = KIEZFEST combo + slow-mo, uncut money fills the Steuerflucht meter
-(full = -1 heart), hearts come back for a 4+ combo / a cut streak / a boss,
+(full = -1 heart), hearts come back for a 5+ combo / a cut streak / a boss,
 losing all hearts ends the run and stores it in the Bestenliste, PiDashboard
 routes MOUSEMOTION/MOUSEBUTTONUP to the game, and a busy frame stays cheap.
 
@@ -77,11 +77,12 @@ def vswipe(game, x, y0, y1, step=20):
 
 
 def open_enteignen():
-    P.open_games_menu()
+    P.open_games_menu(show=E.EnteignenGame.NAME)
     P.draw_games_menu()
     rect = next(r for r, key in P.GAMES_MENU_RECTS if key == E.EnteignenGame.NAME)
-    assert rect.bottom < P.GAMES_MENU_CLOSE_RECT.top, "all games must fit spiele.exe"
+    assert rect.bottom <= P.GAMES_MENU_LIST_RECT.bottom < P.GAMES_MENU_CLOSE_RECT.top
     assert P.handle_tap(*rect.center)
+    P.handle_games_menu_release()
     game = P.ACTIVE_GAME
     assert isinstance(game, E.EnteignenGame) and game.state == "ready"
     assert not P.emergency_exit_active()
@@ -157,14 +158,21 @@ def test_play():
     game.things.clear()
     frames(game, 40)
 
-    # combo: 4 in one swipe = 4 + bonus, slow-mo, and the lost heart comes back
+    # combo: 4 in one swipe = 4 + bonus + slow-mo, but no heart (that needs COMBO_HEART = 5)
     for i, kind in enumerate(["bag", "miete", "ticker", "yacht"]):
         throw(game, kind, 80 + i * 105, 360)
     before = game.score
     swipe(game, [(20, 362)] + [(x, 360) for x in range(40, 470, 20)])
     assert not game.things and game.best_combo == 4 and game.t < game.slowmo_until
     assert game.score - before == 4 + E.combo_bonus(4), game.score - before
-    assert game.lives == E.LIVES and game.heart_flies, "4+ combo gives a heart back"
+    assert game.lives == E.LIVES - 1 and not game.heart_flies, "a 4er combo no longer gives a heart"
+    frames(game, 30)
+    # 5 in one swipe: the lost heart comes back
+    for i, kind in enumerate(["bag", "miete", "ticker", "yacht", "coin"]):
+        throw(game, kind, 50 + i * 92, 360)
+    swipe(game, [(10, 362)] + [(x, 360) for x in range(30, 475, 15)])
+    assert game.best_combo == 5, game.best_combo
+    assert game.lives == E.LIVES and game.heart_flies, "5+ combo gives a heart back"
     frames(game, 3)
     shot("04_combo.png")
 
@@ -208,7 +216,7 @@ def test_steuerflucht_and_hearts():
         swipe(game, [(150, 300), (200, 300), (260, 300), (320, 300)])
         game.things.clear()
     frames(game, 6)
-    assert game.state == "over" and any(game.over_text == ln.format(t="0:01") for ln in E.OVER_LINES), game.over_text
+    assert game.state == "over" and any(game.over_text == ln.format(t=f"0:{int(game.play_t):02d}") for ln in E.OVER_LINES), game.over_text
     assert party_games.best(E.EnteignenGame.NAME)["score"] == game.score
     frames(game, 20)
     shot("06_gameover.png")
@@ -722,6 +730,7 @@ def test_balance():
     assert statistics.median(r[1] for r in slow) >= 40, "first 45 s must be learnable"
     assert 75 <= statistics.median(r[0] for r in slow) <= 300, "a first-timer loses within a few minutes"
     assert statistics.median(r[0] for r in good) > 2.5 * statistics.median(r[0] for r in slow)
+    assert statistics.median(r[0] for r in good) < 600, "good players must lose eventually (Ju 2026-11-03: was barely losable)"
 
 
 test_play()

@@ -65,7 +65,7 @@ def test_menu():
     P.DISPLAY_BLANK = False
     P.GAMES_ENABLED = True
     exit_zone = pygame.Rect(0, 0, P.EMERGENCY_EXIT_MAX_X, P.EMERGENCY_EXIT_MAX_Y)
-    # Start -> Spiele: the favourites (game of the day first) + "Mehr Spiele...".
+    # Start -> Spiele: the favourites (game of the day first) + "Alle Spiele...".
     P.GAMES_FEATURED = ["ENTEIGNEN!", "TIC-TAC-DADA", "KIEZ KAPERN", "PATRIAPUTT", "MERZ"]
     daily, featured, more = P.games_menu_split()
     order = [e[0] for e in [daily] + featured]
@@ -90,44 +90,80 @@ def test_menu():
     assert P.MERZ_VISIBLE and not P.START_MENU_OPEN
     P.dismiss_merz_game("test")
 
-    # spiele.exe (where a game's MENÜ button leads): game of the day, favourites, folder
+    # spiele.exe (where a game's MENÜ button leads): one scrollable list - game of the day,
+    # favourites, "Weitere Spiele" heading, the rest.
     P.open_games_menu()
     assert P.emergency_exit_active(), "emergency exit must stay on in the menu"
     P.draw_home()
     P.draw_dashboard_overlays()
     shot("01_menu.png")
-    keys = [key for _, key in P.GAMES_MENU_RECTS]
-    assert keys == order + ["__more__"], keys
-    for page in ("main", "more"):
-        P.open_games_menu(page)
+    items, total = P.games_menu_layout()
+    assert [it[1] for it in items] == order + ["__more__"] + more_keys, [it[1] for it in items]
+    assert items[0][0] == "daily" and P.GAMES_MENU_SCROLL == 0 and P.GAMES_MENU_MAX_SCROLL > 0
+    view = P.GAMES_MENU_LIST_RECT
+    assert view.bottom < P.GAMES_MENU_CLOSE_RECT.top and not view.colliderect(exit_zone)
+    for rect, _ in P.GAMES_MENU_ARROW_RECTS:
+        assert not rect.colliderect(view) and not rect.colliderect(P.GAMES_MENU_CLOSE_RECT)
+    # every scroll position: hit rects only inside the list, all games reachable
+    seen = set()
+    for scroll in range(0, P.GAMES_MENU_MAX_SCROLL + 1, 40):
+        P.GAMES_MENU_SCROLL = scroll
         P.draw_games_menu()
         for rect, key in P.GAMES_MENU_RECTS:
-            assert not rect.colliderect(exit_zone), f"menu card {key} in the emergency-exit zone"
-            assert not rect.colliderect(P.GAMES_MENU_CLOSE_RECT), f"menu card {key} overlaps Schließen"
-            assert not (P.GAMES_MENU_BACK_RECT and rect.colliderect(P.GAMES_MENU_BACK_RECT)), f"{key} overlaps Zurück"
-            assert 0 <= rect.left and rect.right <= P.DISPLAY_WIDTH
-    # folder page: the rest + < Zurück
+            assert view.contains(rect), f"menu card {key} outside the list at scroll {scroll}"
+            seen.add(key)
+    assert seen == set(order + more_keys), seen
+    # Names fit the card (text starts 112 px in); record lines are cut with "...".
+    card_w = view.w
+    for game_cls in list(party_games.GAMES) + [party_games.MerzResult]:
+        assert 112 + P.K.font(22).size(game_cls.NAME)[0] < card_w - 8, f"{game_cls.NAME} name too long"
+
+    # swipe up scrolls and doesn't start the card it began on; arrows scroll by one card
     P.open_games_menu()
     P.draw_games_menu()
-    assert P.handle_tap(*P.GAMES_MENU_RECTS[-1][0].center) and P.GAMES_MENU_PAGE == "more"
+    first = P.GAMES_MENU_RECTS[1][0]
+    assert P.handle_tap(*first.center)
+    for dy in (5, 40, 120, 200):
+        P.handle_games_menu_motion(first.centerx, first.centery - dy)
+    P.handle_games_menu_release()
+    assert P.GAMES_MENU_OPEN and P.ACTIVE_GAME is None and P.GAMES_MENU_SCROLL == min(200, P.GAMES_MENU_MAX_SCROLL)
+    P.draw_games_menu()
+    down = next(r for r, step in P.GAMES_MENU_ARROW_RECTS if step == 1)
+    before = P.GAMES_MENU_SCROLL
+    assert P.handle_tap(*down.center) and P.GAMES_MENU_SCROLL > before and P.GAMES_MENU_OPEN
+    P.handle_games_menu_release()
+    for _ in range(20):
+        P.handle_tap(*down.center)
+        P.handle_games_menu_release()
+    assert P.GAMES_MENU_SCROLL == P.GAMES_MENU_MAX_SCROLL
     P.draw_home()
     P.draw_dashboard_overlays()
-    shot("01b_menu_mehr.png")
-    assert [key for _, key in P.GAMES_MENU_RECTS] == more_keys
-    assert P.handle_tap(*P.GAMES_MENU_BACK_RECT.center) and P.GAMES_MENU_PAGE == "main"
+    shot("01b_menu_scrolled.png")
+    # a small wobble while tapping is still a tap
     P.draw_games_menu()
-    # Names fit the card (text starts 112 px in); record lines are cut with "...".
-    for game_cls in list(party_games.GAMES) + [party_games.MerzResult]:
-        card = P.GAMES_MENU_RECTS[0][0]
-        assert 112 + P.K.font(22).size(game_cls.NAME)[0] < card.width - 8, f"{game_cls.NAME} name too long"
+    rect, key = P.GAMES_MENU_RECTS[-1]
+    assert P.handle_tap(*rect.center)
+    P.handle_games_menu_motion(rect.centerx + 3, rect.centery + P.GAMES_MENU_DRAG_SLOP - 2)
+    P.handle_games_menu_release()
+    assert (P.MERZ_VISIBLE if key == "merz" else P.ACTIVE_GAME is not None and P.ACTIVE_GAME.NAME == key), key
+    P.dismiss_merz_game("test") if key == "merz" else P.close_games("test")
+    # Start -> Spiele -> Alle Spiele...: opens the list with "Weitere Spiele" at the top
+    P.open_games_menu(show="__more__")
+    P.draw_games_menu()
+    assert [k for _, k in P.GAMES_MENU_RECTS][0] == more_keys[0]
 
     # Taps on empty menu space are swallowed, not passed to the dashboard.
+    P.open_games_menu()
+    P.draw_games_menu()
     assert P.handle_tap(P.DISPLAY_WIDTH // 2, P.GAMES_MENU_CLOSE_RECT.top - 4)
     assert P.GAMES_MENU_OPEN
 
     # MERZ card: closes the menu, opens MERZ.
+    P.open_games_menu(show="merz")
+    P.draw_games_menu()
     merz_rect = next(r for r, key in P.GAMES_MENU_RECTS if key == "merz")
     assert P.handle_tap(*merz_rect.center)
+    P.handle_games_menu_release()
     assert P.MERZ_VISIBLE and not P.games_open()
     P.dismiss_merz_game("test")
 
@@ -169,13 +205,11 @@ def type_name(game, text, ok=True):
 
 
 def open_game(name):
-    P.open_games_menu()
+    P.open_games_menu(show=name)
     P.draw_games_menu()
-    if name not in [key for _, key in P.GAMES_MENU_RECTS]:  # not a favourite: in the folder
-        P.handle_tap(*next(r for r, key in P.GAMES_MENU_RECTS if key == "__more__").center)
-        P.draw_games_menu()
     rect = next(r for r, key in P.GAMES_MENU_RECTS if key == name)
     assert P.handle_tap(*rect.center)
+    P.handle_games_menu_release()  # cards start when the finger lifts
     assert P.ACTIVE_GAME is not None and P.ACTIVE_GAME.NAME == name
     assert not P.emergency_exit_active(), "emergency exit must be off inside a game"
     return P.ACTIVE_GAME

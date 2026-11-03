@@ -14,8 +14,9 @@ blade bounces off ("KLONK!") and one of three Kündigungsschutz hearts is gone.
 
 A round is a survival run until the hearts are gone. Uncut money that falls
 back down is Steuerflucht: it fills a meter (FLUCHT_MAX), a full meter costs
-a heart. Hearts come back for good play: a 4+ KIEZFEST, STREAK_HEART cuts in
-a row without a miss, every boss beaten. Waves get denser over time.
+a heart. Hearts come back for good play: a 5+ KIEZFEST, STREAK_HEART cuts in
+a row without a miss, every boss beaten. Waves get denser over time and
+never stop doing so (RAMP_SECONDS), so even perfect runs end.
 Learning phase: no protected things in the first PROTECTED_FROM s, and before
 the first boss the meter forgives a miss now and then (FLUCHT_DRAIN).
 First-time hints (speech bubbles at the thing) explain cutting, protected
@@ -1254,11 +1255,12 @@ def _backdrop(w, h):
 # ------------------------------------------------------------ run pacing
 
 FLUCHT_MAX = 10  # uncut money that falls back down fills the Steuerflucht meter; full = -1 heart
-STREAK_HEART = 15  # cuts in a row without letting money escape -> +1 heart
+STREAK_HEART = 40  # cuts in a row without letting money escape -> +1 heart
 STREAK_STEP = 5  # every 5 cuts in a row: points multiplier +1 (up to STREAK_MAX_MULT), "5er-Serie!"
 STREAK_MAX_MULT = 5
 RAIN_GAP = (10.0, 15.0)  # a GELDREGEN (row of 4-6 coins/notes, made for one big swipe) every so often
-COMBO_HEART = 4  # a KIEZFEST of 4+ in one swipe -> +1 heart
+COMBO_HEART = 5  # a KIEZFEST of 5+ in one swipe -> +1 heart
+RAMP_SECONDS = 150.0  # after 2 min the waves keep getting denser/nastier by one step per this many s
 BOSS_TIMES = (45.0, 180.0, 300.0)  # then a boss every BOSS_REPEAT s, one level stronger per cycle
 BOSS_REPEAT = 110.0
 BOSS_GAP = 30.0  # at least this long between a victory and the next boss
@@ -2231,13 +2233,14 @@ class EnteignenGame(party_games._Game):
         protected stuff the longer the run goes (after the 3rd boss: more)."""
         k = min(1.0, self.play_t / 120.0)
         e = min(1.0, max(0.0, self.play_t - 300.0) / 240.0)  # escalation after boss 3
-        sizes = [1, 1, 1, 2, 2] if k < 0.4 else [1, 1, 2, 2, 3] if e < 0.3 else [1, 2, 2, 3, 3]
-        protected_chance = 0.10 + 0.07 * k + 0.07 * e if self.play_t >= PROTECTED_FROM else 0.0
+        o = max(0.0, self.play_t - 120.0) / RAMP_SECONDS  # never stops: every run ends eventually (Ju: was barely losable)
+        sizes = [1, 1, 1, 2, 2] if k < 0.4 else [1, 1, 2, 2, 3] if e < 0.3 and o < 0.5 else [1, 2, 2, 3, 3] if o < 1.5 else [2, 2, 3, 3, 4]
+        protected_chance = min(0.4, 0.10 + 0.07 * k + 0.07 * e + 0.05 * o) if self.play_t >= PROTECTED_FROM else 0.0
         kinds = list(MONEY)
         weights = [MONEY[m][1] for m in kinds]
         for _ in range(random.choice(sizes)):
             self._throw(random.choice(list(PROTECTED)) if random.random() < protected_chance else random.choices(kinds, weights)[0])
-        self.next_wave_at = self.play_t + random.uniform(1.6, 2.1) - 0.5 * k - 0.3 * e
+        self.next_wave_at = self.play_t + max(0.55, random.uniform(1.6, 2.1) - 0.5 * k - 0.3 * e - 0.25 * o)
 
     def _spawn_rain(self):
         """GELDREGEN: 4-6 coins/notes thrown one after another (0.15-0.35 s

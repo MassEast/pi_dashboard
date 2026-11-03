@@ -27,6 +27,6 @@ P.images = P.image_factory(P.ICON_PATH)
 P.DISPLAY_BLANK = False
 P.open_games_menu()
 P.draw_games_menu()
-assert "LASTENRAD-SIMULATOR" not in [k for _, k in P.GAMES_MENU_RECTS]
+assert "LASTENRAD-SIMULATOR" not in [item[1] for item in P.games_menu_layout()[0]]
 print(f"WITHOUT PYMUNK: dashboard starts with {len(names)} games, LASTENRAD-SIMULATOR left out - passed", flush=True)
 P.quit_all()

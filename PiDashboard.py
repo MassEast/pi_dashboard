@@ -1048,8 +1048,17 @@ WIFI_QR_AUTO_CLOSE_SECONDS = 20
 PLAY_BUTTON_RECT = None
 GAMES_MENU_OPEN = False
 GAMES_MENU_RECTS = []  # (rect, key) - key "merz" or a party_games class NAME
-GAMES_MENU_PAGE = "main"  # "main" (Spiel des Tages + favourites) or "more" (the folder)
-GAMES_MENU_BACK_RECT = None
+GAMES_MENU_SCROLL = 0  # px the spiele.exe list is scrolled down
+GAMES_MENU_MAX_SCROLL = 0
+GAMES_MENU_SHOW = None  # key ("__more__" = the "Weitere Spiele" heading) to scroll into view on the next draw
+GAMES_MENU_LIST_RECT = None  # the scrolling part of spiele.exe
+GAMES_MENU_ARROW_RECTS = []  # (rect, -1 up / +1 down): the Win95 scrollbar arrows
+GAMES_MENU_PRESS = None  # finger down in the list: [y at press, scroll at press, moved?]
+GAMES_MENU_CARD_H = 92
+GAMES_MENU_DAILY_H = 116
+GAMES_MENU_HEADER_H = 34
+GAMES_MENU_GAP = 8
+GAMES_MENU_DRAG_SLOP = 12  # px a finger may wander before a press counts as scrolling, not a tap
 GAMES_MENU_CLOSE_RECT = None
 GAMES_MENU_TITLE_X = None
 ACTIVE_GAME = None  # a running party_games game object
@@ -3151,9 +3160,12 @@ def games_menu_split(today=None):
     return featured[day], featured[:day] + featured[day + 1:], more
 
 
-def open_games_menu(page="main"):
-    global GAMES_MENU_OPEN, ACTIVE_GAME, GAMES_LAST_ACTIVITY_TS, GAMES_MENU_PAGE
-    GAMES_MENU_PAGE = page
+def open_games_menu(show=None):
+    """show: a game key (or "__more__") to scroll into view, else the list opens at the top."""
+    global GAMES_MENU_OPEN, ACTIVE_GAME, GAMES_LAST_ACTIVITY_TS, GAMES_MENU_SCROLL, GAMES_MENU_SHOW, GAMES_MENU_PRESS
+    GAMES_MENU_SCROLL = 0
+    GAMES_MENU_SHOW = show
+    GAMES_MENU_PRESS = None
     GAMES_MENU_OPEN = True
     ACTIVE_GAME = None
     GAMES_LAST_ACTIVITY_TS = time.time()
@@ -3202,37 +3214,74 @@ def update_games_timeout():
         close_games("idle-timeout")
 
 
+def games_menu_layout():
+    """spiele.exe list contents, top to bottom: [(kind, key, name, icon, record, y, h)] with kind
+    "daily" (Spiel des Tages, taller, highlighted), "card" or "header" (the "Weitere Spiele" heading,
+    key "__more__"), y relative to the list's top; and the total height."""
+    daily, featured, more = games_menu_split()
+    items, y = [], 0
+
+    def add(kind, entry, h):
+        nonlocal y
+        key, name, icon, record = entry
+        items.append((kind, key, name, icon, record, y, h))
+        y += h + GAMES_MENU_GAP
+
+    if daily:
+        add("daily", daily, GAMES_MENU_DAILY_H)
+    for entry in featured:
+        add("card", entry, GAMES_MENU_CARD_H)
+    if daily and more:
+        add("header", ("__more__", "Weitere Spiele", None, None), GAMES_MENU_HEADER_H)
+    for entry in more:
+        add("card", entry, GAMES_MENU_CARD_H)
+    return items, max(0, y - GAMES_MENU_GAP)
+
+
 def draw_games_menu():
-    """spiele.exe: the game of the day (big, highlighted), the other favourites
-    and a "Mehr Spiele..." folder; the folder page lists the rest."""
-    global GAMES_MENU_RECTS, GAMES_MENU_CLOSE_RECT, GAMES_MENU_TITLE_X, GAMES_MENU_BACK_RECT
+    """spiele.exe: one scrollable list of all games - the game of the day (big,
+    highlighted), the other favourites, then "Weitere Spiele". Scrolls by
+    dragging the list or with the Win95 scrollbar arrows; a card starts its
+    game when the finger lifts without having scrolled (handle_games_menu_release)."""
+    global GAMES_MENU_RECTS, GAMES_MENU_CLOSE_RECT, GAMES_MENU_TITLE_X, GAMES_MENU_SCROLL, GAMES_MENU_MAX_SCROLL
+    global GAMES_MENU_SHOW, GAMES_MENU_LIST_RECT, GAMES_MENU_ARROW_RECTS
 
     if not GAMES_MENU_OPEN:
         return
 
     win = pygame.Rect(16, 150, DISPLAY_WIDTH - 32, 604)  # down to the taskbar; the top stays out of the emergency corner
-    daily, featured, more = games_menu_split()
-    folder = GAMES_MENU_PAGE == "more" or daily is None
-    inner = K.dialog(tft_surf, win, "spiele.exe" + (" - Mehr Spiele" if folder else ""), icon="folder" if folder else "games")
+    inner = K.dialog(tft_surf, win, "spiele.exe", icon="games")
     GAMES_MENU_TITLE_X = K.close_box(win)
-    hint = "Noch mehr Spaß. Oder Prokrastination." if folder else "Doppeltippen... ach, einmal reicht."
-    K.t95(tft_surf, hint, 15, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
-    if folder:
-        entries = more
-    else:
-        entries = [daily] + featured
-        if more:
-            names = ", ".join(e[1] for e in more)
-            entries.append(("__more__", "Mehr Spiele...", "folder", names))
+    K.t95(tft_surf, "Doppeltippen... ach, einmal reicht.", 15, (inner.x + 4, inner.y + 2), color=K.F_DARK, bold=False)
+    bar_w = 30
+    view = pygame.Rect(inner.x, inner.y + 28, inner.w - bar_w - 6, inner.bottom - 48 - (inner.y + 28))
+    GAMES_MENU_LIST_RECT = view
+    items, total = games_menu_layout()
+    GAMES_MENU_MAX_SCROLL = max(0, total - view.h)
+    if GAMES_MENU_SHOW is not None:
+        for kind, key, _, _, _, y, h in items:
+            if key == GAMES_MENU_SHOW:
+                if kind == "header" or y < GAMES_MENU_SCROLL:
+                    GAMES_MENU_SCROLL = y
+                elif y + h > GAMES_MENU_SCROLL + view.h:
+                    GAMES_MENU_SCROLL = y + h - view.h
+                break
+        GAMES_MENU_SHOW = None
+    GAMES_MENU_SCROLL = max(0, min(GAMES_MENU_MAX_SCROLL, GAMES_MENU_SCROLL))
+
+    pygame.draw.rect(tft_surf, K.F_DARK, view.inflate(4, 4), 1)
+    tft_surf.set_clip(view)
     rects = []
-    y = inner.y + 28
-    gap = 8
-    n = len(entries) + (0.25 if not folder else 0)  # the game of the day gets a bit more height
-    entry_h = min(104, int((inner.bottom - 48 - y) / n) - gap)
-    for i, (key, name, icon, record) in enumerate(entries):
-        top_pick = not folder and i == 0
-        h = int(entry_h * 1.25) if top_pick else entry_h
-        rect = pygame.Rect(inner.x, y, inner.w, h)
+    for kind, key, name, icon, record, y, h in items:
+        rect = pygame.Rect(view.x, view.y + y - GAMES_MENU_SCROLL, view.w, h)
+        if rect.bottom <= view.top or rect.top >= view.bottom:
+            continue
+        if kind == "header":
+            K.t95(tft_surf, name, 18, (rect.x + 6, rect.centery - 10), color=K.F_DARK)
+            pygame.draw.line(tft_surf, K.F_DARK, (rect.x + 4, rect.bottom - 4), (rect.right - 4, rect.bottom - 4))
+            pygame.draw.line(tft_surf, K.F_LIGHT, (rect.x + 4, rect.bottom - 3), (rect.right - 4, rect.bottom - 3))
+            continue
+        top_pick = kind == "daily"
         K.button(tft_surf, rect, "")
         if top_pick:
             pygame.draw.rect(tft_surf, K.F_SEL, rect.inflate(-8, -8))
@@ -3248,10 +3297,27 @@ def draw_games_menu():
         while K.font(16, False).size(line)[0] > rect.right - 8 - (rect.x + 112):
             line = line[:-4] + "..."
         K.t95(tft_surf, line, 16, (rect.x + 112, rect.centery + 13 if top_pick else rect.centery + 6), color=sub, bold=False)
-        rects.append((rect, key))
-        y += h + gap
+        rects.append((rect.clip(view), key))
+    tft_surf.set_clip(None)
+
+    # Win95 scrollbar: arrows at both ends, a thumb showing where in the list we are.
+    track = pygame.Rect(view.right + 6, view.y - 2, bar_w, view.h + 4)
+    pygame.draw.rect(tft_surf, K.F_LIGHT, track)
+    arrows = []
+    for direction, rect in (("up", pygame.Rect(track.x, track.y, bar_w, bar_w)), ("down", pygame.Rect(track.x, track.bottom - bar_w, bar_w, bar_w))):
+        enabled = GAMES_MENU_MAX_SCROLL > 0 and (GAMES_MENU_SCROLL > 0 if direction == "up" else GAMES_MENU_SCROLL < GAMES_MENU_MAX_SCROLL)
+        K.button(tft_surf, rect, "")
+        img = K.arrow_icon(direction, 18, K.F_INK if enabled else (150, 140, 175))
+        tft_surf.blit(img, img.get_rect(center=rect.center))
+        arrows.append((rect, -1 if direction == "up" else 1))
+    lane = pygame.Rect(track.x, track.y + bar_w, bar_w, track.h - 2 * bar_w)
+    if GAMES_MENU_MAX_SCROLL > 0:
+        thumb_h = max(30, int(lane.h * view.h / total))
+        thumb_y = lane.y + int((lane.h - thumb_h) * GAMES_MENU_SCROLL / GAMES_MENU_MAX_SCROLL)
+        K.bevel(tft_surf, pygame.Rect(lane.x, thumb_y, bar_w, thumb_h))
+    GAMES_MENU_ARROW_RECTS = arrows
+
     GAMES_MENU_CLOSE_RECT = K.button(tft_surf, pygame.Rect(inner.right - 130, inner.bottom - 40, 130, 40), "Schließen", size=16)
-    GAMES_MENU_BACK_RECT = K.button(tft_surf, pygame.Rect(inner.x, inner.bottom - 40, 130, 40), "< Zurück", size=16) if folder and daily else None
     GAMES_MENU_RECTS = rects
 
 
@@ -3271,7 +3337,7 @@ def draw_active_game():
 
 
 def handle_games_menu_click(mx, my):
-    global GAMES_LAST_ACTIVITY_TS
+    global GAMES_LAST_ACTIVITY_TS, GAMES_MENU_PRESS
     if not GAMES_MENU_OPEN:
         return False
     GAMES_LAST_ACTIVITY_TS = time.time()
@@ -3279,17 +3345,43 @@ def handle_games_menu_click(mx, my):
         if rect and rect.collidepoint((mx, my)):
             close_games("close-button")
             return True
-    if GAMES_MENU_BACK_RECT and GAMES_MENU_BACK_RECT.collidepoint((mx, my)):
-        open_games_menu("main")
-        return True
-    for rect, key in GAMES_MENU_RECTS:
+    for rect, step in GAMES_MENU_ARROW_RECTS:
         if rect.collidepoint((mx, my)):
-            if key == "__more__":
-                open_games_menu("more")
-            else:
-                start_game(key)
+            games_menu_scroll_by(step * (GAMES_MENU_CARD_H + GAMES_MENU_GAP))
             return True
+    if GAMES_MENU_LIST_RECT and GAMES_MENU_LIST_RECT.collidepoint((mx, my)):
+        GAMES_MENU_PRESS = [mx, my, GAMES_MENU_SCROLL, False]  # a card starts on release, so a swipe can scroll
     return True  # modal: swallow every other tap
+
+
+def games_menu_scroll_by(dy):
+    global GAMES_MENU_SCROLL
+    GAMES_MENU_SCROLL = max(0, min(GAMES_MENU_MAX_SCROLL, GAMES_MENU_SCROLL + dy))
+
+
+def handle_games_menu_motion(mx, my):
+    """Finger moving with a press in the spiele.exe list: past GAMES_MENU_DRAG_SLOP it scrolls."""
+    global GAMES_MENU_SCROLL, GAMES_LAST_ACTIVITY_TS
+    if not GAMES_MENU_OPEN or GAMES_MENU_PRESS is None:
+        return
+    x0, y0, scroll0, moved = GAMES_MENU_PRESS
+    if not moved and abs(my - y0) < GAMES_MENU_DRAG_SLOP:
+        return
+    GAMES_MENU_PRESS[3] = True
+    GAMES_LAST_ACTIVITY_TS = time.time()
+    GAMES_MENU_SCROLL = max(0, min(GAMES_MENU_MAX_SCROLL, scroll0 - (my - y0)))
+
+
+def handle_games_menu_release():
+    """Finger lifted: a press that didn't scroll starts the card it began on."""
+    global GAMES_MENU_PRESS
+    press, GAMES_MENU_PRESS = GAMES_MENU_PRESS, None
+    if not GAMES_MENU_OPEN or press is None or press[3]:
+        return
+    for rect, key in GAMES_MENU_RECTS:
+        if rect.collidepoint((press[0], press[1])):
+            start_game(key)
+            return
 
 
 def handle_game_click(mx, my):
@@ -5980,7 +6072,7 @@ def draw_start_menu():
         daily, featured, more = games_menu_split()
         entries = [(key, icon, name) for key, name, icon, _ in ([daily] if daily else []) + featured]
         if more:
-            entries.append(("__more__", "folder", "Mehr Spiele..."))
+            entries.append(("__more__", "folder", "Alle Spiele..."))
         sm = pygame.Rect(menu.right - 4, games_row.y - 4, 216, len(entries) * 46 + 10)
         K.bevel(tft_surf, sm)
         for j, (key, icon, label) in enumerate(entries):
@@ -6007,7 +6099,7 @@ def _start_menu_action(action):
         return
     close_start_menu()
     if action == "game:__more__":
-        open_games_menu("more")
+        open_games_menu(show="__more__")  # the full list, scrolled to the games not in this submenu
     elif action.startswith("game:"):
         start_game(action[len("game:"):])
     elif action == "quiz":
@@ -6719,6 +6811,7 @@ def loop():
                     handle_merz_release()  # stops the BURN flamethrower stream
                 if ACTIVE_GAME is not None:
                     ACTIVE_GAME.release()  # ENTEIGNEN!: end of a swipe
+                handle_games_menu_release()  # spiele.exe: a tap (no scroll) starts the card
 
             elif event.type == pygame.MOUSEMOTION:
                 # Only used to pan the zoomed AFM results triangle by drag.
@@ -6729,6 +6822,8 @@ def loop():
                 if ACTIVE_GAME is not None and event.buttons[0]:
                     GAMES_LAST_ACTIVITY_TS = time.time()
                     ACTIVE_GAME.drag(event.pos[0], event.pos[1] - GAME_TITLE_HEIGHT)
+                elif event.buttons[0]:
+                    handle_games_menu_motion(*event.pos)
 
             elif event.type in (pygame.FINGERDOWN, pygame.FINGERMOTION, pygame.FINGERUP):
                 # Raw multi-touch (the Waveshare panel reports up to 5 fingers) for games that

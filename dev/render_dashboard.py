@@ -62,6 +62,7 @@ def shot(name, frames=1):
 def tap(rect):
     pos = pygame.Rect(rect).center
     assert P.handle_tap(*pos), f"tap at {pos} not handled"
+    P.handle_games_menu_release()  # finger up (spiele.exe starts a card on release)
     frame()  # loop() redraws (and so refreshes every hit rect) before the next tap
 
 
@@ -271,7 +272,7 @@ def main():
         P.open_games_menu()
         shot("30_spiele")
         tap(P.GAMES_MENU_CLOSE_RECT)
-        start_menu("game:__more__")  # Start -> Spiele -> Mehr Spiele... = the spiele.exe folder
+        start_menu("game:__more__")  # Start -> Spiele -> Alle Spiele... = spiele.exe scrolled to "Weitere Spiele"
         shot("30b_spiele_mehr")
         tap(P.GAMES_MENU_CLOSE_RECT)
         assert not P.games_open()

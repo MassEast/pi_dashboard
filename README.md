@@ -34,7 +34,7 @@ The 480x800 screen is dressed up as *KiezOS 161*, a purple 90s desktop, ordered 
 - `wetter.exe`: current weather, today's low/high and whether rain is coming in the next 12 hours (hourly forecast from [Open-Meteo](https://open-meteo.com/), no API key needed). `Mehr...` opens the details: feels-like, humidity, wind, UV, the rain chart, sunrise/sunset, moon phase and the next 3 days.
 - `bvg.exe`: one row per configured bus connection with its destination landmark, "in x min" plus the departures after it, and delays in red. `Karte...` draws the same connections on a little map of the Kiez.
 - `wg.txt`: what's due, what to buy and who's visiting, plus a strip that opens `pinnwand.exe`, the WG's chat, where guests can read along and leave a message (optional MoaBeats integration, see below).
-- The `Start` menu bundles everything else: Spiele (a game of the day, a few favourites and a folder with the rest), AFM-Quiz, Putzdienste, WLAN-Zugang, Stimmung & Stats and `Herunterfahren...` (try it).
+- The `Start` menu bundles everything else: Spiele (a game of the day, a few favourites and a scrollable list of all games), AFM-Quiz, Putzdienste, WLAN-Zugang, Stimmung & Stats and `Herunterfahren...` (try it).
 - At night the whole screen turns warm red, so it doesn't light up the hallway (optional).
 - Some surprises when you walk past. Not telling.
 
@@ -444,9 +444,10 @@ default) and ignore this section entirely.
   "TICTACTOE": {"SPECIAL_LINES": {"ROUNDS": [6, 12], "WIN": ["{winner}, deine Oma wäre stolz auf dich."], "PLAY": ["Oma freut sich, dass ihr spielt."]}}
 }
 ```
-- `Start` → `Spiele` (and `spiele.exe`, where a game's MENÜ button leads) shows the `FEATURED`
-  games: one of them, rotating daily, as the big "SPIEL DES TAGES", then the others, then a
-  "Mehr Spiele..." folder with everything else. Fewer choices, more playing. All games are drawn
+- `Start` → `Spiele` shows the `FEATURED` games (one of them, rotating daily, as "SPIEL DES TAGES")
+  and "Alle Spiele...". That opens `spiele.exe` (also where a game's MENÜ button leads): one
+  scrollable list, the game of the day big on top, then the favourites, then "Weitere Spiele" with
+  everything else. Swipe or use the scrollbar arrows; tap a card to play. All games are drawn
   in code, tap/swipe only, no sound:
   - **ENTEIGNEN!** (`games/enteignen.py`): swipe to cut flying money, yachts and private jets in half
     (but not the neighbours' cat or the BVG bus); uncut money escapes as Steuerflucht. Streaks
@@ -474,7 +475,7 @@ default) and ignore this section entirely.
     the Mietspiegel (the wanted level) down.
   - **PATRIAPUTT** (`games/patriaputt.py`): brick-breaker against a slowly descending wall of
     patriarchy, with ball upgrades.
-  - In the folder: **KIEZBLOCK** (`games/kiezblock.py`, tap SUVs into Hochbeete), **STAPEL-TURM** (tap to drop a Plattenbau floor on the
+  - Further down the list: **KIEZBLOCK** (`games/kiezblock.py`, tap SUVs into Hochbeete), **STAPEL-TURM** (tap to drop a Plattenbau floor on the
     tower) and **FLAPPY BVG** (hop a BVG bus through Baustellen) from `games/party_games.py`, and MERZ (below).
 - Every finished round is kept with its score and time in `logs/game_highscores.json`
   (`stores/highscore_store.py`, gitignored), the name is optional (on-screen keyboard in the game-over

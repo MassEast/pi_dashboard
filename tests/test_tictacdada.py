@@ -58,10 +58,11 @@ def tap(game, key):
 
 
 def open_game():
-    P.open_games_menu()
+    P.open_games_menu(show=T.TicTacDadaGame.NAME)
     P.draw_games_menu()
     rect = next(r for r, key in P.GAMES_MENU_RECTS if key == T.TicTacDadaGame.NAME)
     assert P.handle_tap(*rect.center)
+    P.handle_games_menu_release()
     game = P.ACTIVE_GAME
     assert isinstance(game, T.TicTacDadaGame) and game.state == "setup"
     frame(game)

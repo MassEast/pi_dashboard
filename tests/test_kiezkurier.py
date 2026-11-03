@@ -413,12 +413,10 @@ def test_dashboard_menu_and_timeout():
     """Registered in PiDashboard: reachable from spiele.exe (folder or
     favourites), and the longer idle timeout: thinking 61 s doesn't close it."""
     P.DISPLAY_BLANK = False
-    P.open_games_menu()
+    P.open_games_menu(show=KK.KiezKurierGame.NAME)
     P.draw_games_menu()
-    if KK.KiezKurierGame.NAME not in [k for _, k in P.GAMES_MENU_RECTS]:
-        P.handle_tap(*next(r for r, k in P.GAMES_MENU_RECTS if k == "__more__").center)
-        P.draw_games_menu()
     assert P.handle_tap(*next(r for r, k in P.GAMES_MENU_RECTS if k == KK.KiezKurierGame.NAME).center)
+    P.handle_games_menu_release()
     assert isinstance(P.ACTIVE_GAME, KK.KiezKurierGame)
     P.GAMES_LAST_ACTIVITY_TS = time.time() - 61
     P.update_games_timeout()

@@ -139,9 +139,12 @@ through the JSON files in `logs/`:
   a chore stays in the app on purpose. `tests/test_moabeats_checklist.py` tests it headless against
   `tests/fake_moabeats_server.py`, which also runs standalone for a local look (point
   `MOABEATS.API_URL` at it; never test ticking against the real instance).
-- **Spiele** — Start -> Spiele opens a submenu (and a game's MENÜ button the `spiele.exe` window) with
-  only the config `GAMES.FEATURED` games (one of them, rotating daily, as "Spiel des Tages",
-  `games_menu_split()`) plus a "Mehr Spiele..." folder (`GAMES_MENU_PAGE` "more") with the rest: MERZ
+- **Spiele** — Start -> Spiele opens a submenu with the config `GAMES.FEATURED` games (one of them,
+  rotating daily, as "Spiel des Tages", `games_menu_split()`) plus "Alle Spiele...", which opens the
+  `spiele.exe` window (also where a game's MENÜ button leads): one scrollable list of all games
+  (`games_menu_layout()`: daily, favourites, "Weitere Spiele" heading, the rest), scrolled by dragging
+  or the scrollbar arrows; a card starts its game on finger-up without scrolling
+  (`handle_games_menu_release()`, routed from MOUSEBUTTONUP). The games: MERZ
   (in `PiDashboard.py`) plus the party games, all behind one `GAMES` config section: STAPEL-TURM and
   FLAPPY BVG (`games/party_games.py`), ENTEIGNEN! (`games/enteignen.py`, swipe-to-cut), KIEZBLOCK
   (`games/kiezblock.py`), TIC-TAC-DADA (`games/tictacdada.py` + `games/tictacdada_lines.py`, 2 players with the
