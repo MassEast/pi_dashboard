@@ -68,7 +68,10 @@ After `git pull` on the Pi, restart whichever process actually changed:
 - `web_server.py` changes: safe to restart any time, invisible to whoever's using the kiosk
   display. It isn't managed by systemd, so a manual restart needs `setsid` (not just `nohup ... &`)
   to actually detach from the SSH session — otherwise it dies the moment the SSH connection closes:
-  `sudo pkill -f 'web_server.py'; sudo setsid ./venv/bin/python3 web_server.py > /tmp/web_server_manual.log 2>&1 < /dev/null &`
+  two separate ssh calls (a `pkill -f` pattern matching "web_server.py" in the same call as the relaunch
+  matches the ssh command line itself and kills it): `sudo pkill -f '[w]eb_server.py'`, then
+  `cd ~/pi_dashboard && sudo -b setsid ./venv/bin/python3 web_server.py > /tmp/web_server_manual.log 2>&1 < /dev/null`
+  (`sudo -b`: a plain `sudo ... &` keeps the ssh call hanging).
 - `PiDashboard.py` changes: restarting it is visible on the physical touchscreen (the display
   blanks/reloads) — don't restart it without confirming with Ju first, since someone may be looking
   at it. A full `sudo reboot` restarts both processes cleanly via the `pidashboard.desktop`
